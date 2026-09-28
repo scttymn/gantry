@@ -15,7 +15,7 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 | `db` | Opens SQLite or Postgres from a URL; SQLite gets one writer and a read pool. goose migrations, and a data version that changes on every write. |
 | `web` | Handlers that return errors, one place that turns them into pages, the middleware every app wants, and the page cache. |
 | `assets` | Fingerprinted, minified, gzipped-once assets, and stylesheet bundles drawn into the page or linked by size. |
-| `images` | Resized copies at fixed widths, 320 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. |
+| `images` | Resized copies at fixed widths, 160 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. |
 | `sign`, `mail`, `compress`, `testkit` | Signed tokens, email, gzip, and a database with fixtures for each test. |
 
 ## Working on gantry

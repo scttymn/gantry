@@ -174,12 +174,13 @@ func TestWidths(t *testing.T) {
 	p := &Pipeline{}
 	t.Run("a photo comes in each width up to its own, never enlarged", func(t *testing.T) {
 		for original, want := range map[int][]int{
-			800:  {320, 480, 720},
-			720:  {320, 480, 720},
-			2400: {320, 480, 720, 1080, 1600, 2400},
-			6000: {320, 480, 720, 1080, 1600, 2400},
-			200:  {320}, // the smallest, at its own size
-			0:    {320, 480, 720, 1080, 1600, 2400},
+			800:  {160, 240, 320, 480, 720},
+			720:  {160, 240, 320, 480, 720},
+			2400: {160, 240, 320, 480, 720, 1080, 1600, 2400},
+			6000: {160, 240, 320, 480, 720, 1080, 1600, 2400},
+			200:  {160}, // below 240: just the smallest
+			100:  {160}, // the smallest, at its own size
+			0:    {160, 240, 320, 480, 720, 1080, 1600, 2400},
 		} {
 			if got := p.WidthsFor(original); !slices.Equal(got, want) {
 				t.Errorf("%dpx: %v", original, got)
@@ -189,13 +190,13 @@ func TestWidths(t *testing.T) {
 
 	t.Run("a request above the photo's largest gets its largest; one off the list gets nothing", func(t *testing.T) {
 		for _, c := range []struct{ width, original, want int }{
-			{1080, 800, 720}, {2400, 800, 720}, {480, 800, 480}, {720, 800, 720}, {2400, 0, 2400}, {1600, 200, 320},
+			{1080, 800, 720}, {2400, 800, 720}, {480, 800, 480}, {720, 800, 720}, {2400, 0, 2400}, {1600, 200, 160}, {160, 800, 160},
 		} {
 			if got, ok := p.Fit(c.width, c.original); !ok || got != c.want {
 				t.Errorf("%d of %dpx: %d %v", c.width, c.original, got, ok)
 			}
 		}
-		for _, w := range []int{440, 800, 32, 0, 5000} {
+		for _, w := range []int{440, 800, 200, 32, 0, 5000} {
 			if _, ok := p.Fit(w, 3000); ok {
 				t.Errorf("%d fit", w)
 			}
@@ -214,7 +215,7 @@ func TestWidths(t *testing.T) {
 
 	t.Run("WidthsFor's result can't be appended into the list", func(t *testing.T) {
 		got := append(p.WidthsFor(800), 999)
-		if Widths[3] != 1080 || len(got) != 4 {
+		if Widths[5] != 1080 || len(got) != 6 {
 			t.Error(Widths)
 		}
 	})
