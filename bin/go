@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# The toolchain (Go, templ, sqlc) in Docker, on this repo: bin/go go test ./...
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# .cache/ holds Go's caches: its own go.mod keeps them out of every module
+# here, and its dot keeps templ's watcher out of it.
+mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
+docker build -q --target toolchain -t gantry-toolchain . >/dev/null
+tty=; [ -t 0 ] && tty=-t
+exec docker run --rm -i $tty -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" \
+  -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+  -e GANTRY_TEST_POSTGRES_URL="${GANTRY_TEST_POSTGRES_URL:-}" \
+  gantry-toolchain "$@"
