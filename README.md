@@ -14,9 +14,10 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 |---|---|
 | `db` | Opens SQLite or Postgres from a URL; SQLite gets one writer and a read pool. goose migrations, and a data version that changes on every write. |
 | `web` | Handlers that return errors, one place that turns them into pages, the middleware every app wants, and the page cache. |
-| `assets` | Fingerprinted, minified, gzipped-once assets, and stylesheet bundles drawn into the page or linked by size. |
-| `images` | Resized copies at fixed widths, 160 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. |
-| `sign`, `mail`, `compress`, `testkit` | Signed tokens, email, gzip, and a database with fixtures for each test. |
+| `assets` | Fingerprinted, minified, gzipped-once assets; stylesheet bundles drawn into the page or linked by size, with the first screen's fonts preloaded by name (`Face{Family: "Oswald", Weight: 600}`). |
+| `images` | Resized copies at fixed widths, 160 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. One `Server` serves the copies and writes the `<img>` tags that ask for them, so a page can't ask for one it doesn't serve. |
+| `testkit` | A database with fixtures for each test, and `Links`/`Crawl`: every image, font, script and link a page (or a whole section) refers to must load. |
+| `sign`, `mail`, `compress` | Signed tokens, email, and gzip. |
 
 ## Working on gantry
 Everything runs in Docker: `bin/go go test ./...`. The plan, with what was measured and found: [`docs/plans/gantry.md`](docs/plans/gantry.md).

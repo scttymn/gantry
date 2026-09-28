@@ -353,7 +353,7 @@ Found while building it:
 - **A decoder package can register itself with `image.Decode` just by being imported.** gen2brain/heic does, so any binary importing it would read HEIC in every pipeline. `Resize` checks the sniffed type against the pipeline's own formats first, so its configuration decides.
 - **The example's test for "a type Go can't resize" used HEIC**, which now resizes: it uses TIFF, and a new test attaches a real HEIC (made by libheif's `heif-enc`) and checks it's sized, warmed and given a placeholder.
 
-Not done yet, from this batch's map: a generic image component for new apps (the example keeps its own `ui.Photo`; gantry has `images.Srcset` and `Pipeline.WidthsFor`), and the defaults for new apps (linked stylesheets, precompressed static files), which land with `gantry new`.
+Not done yet, from this batch's map: the defaults for new apps (linked stylesheets, precompressed static files), which land with `gantry new`. (The image component, listed here at first, came after the switch-over: see "One server for photos, links checked, fonts by name".)
 
 ### Inlined or linked stylesheets, 2026-09-28
 The example's production image as it is (the three stylesheets inlined) against the same with them linked, each at 0.5 CPU and 384 MB on a copy of the same data, with photos warmed. Lighthouse 12.8 (headless Chrome, simulated throttling as PageSpeed does), in a container on the same Docker network; five runs each, medians. The runs agreed closely: every score identical, LCP within 0.02 s.
@@ -428,3 +428,15 @@ Copies for the live site's photos (from the 2026-09-28 export: a 5184px hero, fi
 What it costs: a photo can come a step larger than a hand-picked width would give. The owners' photo, 440px wide on the page, is the 1080 copy on a 2× screen where it was 880, and a coach's is 720 where it was 680. The 1.5× steps bound that. The route now also refuses any quality but the admin's current one, where it took anything from 40 to 100.
 
 The set first started at 320. Lighthouse then flagged a program card: it draws about 110px wide on phones, so its 1.75× emulated phone needs about 190px, and the smallest copy was the 320 (14.7 KiB, "12.7 KiB" of it wasted). The per-kind presets had given it a 200px copy. 160 and 240 now continue the steps down (320 / 1.5 is about 213, then 142): small photos, avatars and thumbnails especially, get a small copy with nothing set per page, for two copies of a few KiB each per photo.
+
+### One server for photos, links checked, fonts by name, 2026-09-28
+
+Three of the live site's Lighthouse findings, and the broken admin preview before them, came from lists kept in step by hand: widths per kind of photo, photo URLs the app built itself, and preloads written as hashed file names (IBM Plex Mono 400, on the hero, was missing from them). gantry now owns each.
+
+- **`images.Server`** serves `/<prefix>/<key>/<name>` and writes the tags that ask for it (`Img`, `Sources`, `Blurred`): one value does both, so a page can only ask for a copy the server makes. The app supplies `Find` (a key's original: path, type, width) and `Quality`. The example's photo controller and its URL helpers are gone; its `ui.Photo` keeps only the site's frame (the stripes, the placeholder under the photo) around `Server.Img`.
+- **`testkit.Links` and `testkit.Crawl`** fetch a page, or every page under a prefix, and request everything it refers to: `src` and `srcset`, `<link>` hrefs, `url()`s in its styles, and `<a>` hrefs. Files must answer 200; links may redirect. The example crawls the whole admin signed in, with a photo in every slot. Put back as it was, the old preview fails it on `/admin/site/hero/edit` (`img src /photos/…/440w-q80.webp: 404`), and on the program and staff forms too.
+- **`Styles.Preload(Face{Family, Weight, Italic})`** finds a face among the bundle's `@font-face` rules (its Latin, WOFF2 file) and `Tag` preloads it; a face that isn't there panics at start. The example's six preloads resolve to the same six files its hand-kept list named (a test says so).
+
+A first cut of `Links` split `srcset` at every comma, which breaks a data: URL (`data:image/webp;base64,…`); the example's hero, whose phone image is its inline placeholder, caught it. It now reads `srcset` as the HTML standard does.
+
+The head's order changed by one step: the preloads come out of `Styles.Tag`, after the theme's small `<style>` rather than before it. Preloads start when the parser reaches them either way.

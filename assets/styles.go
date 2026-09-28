@@ -27,6 +27,8 @@ type Styles struct {
 	inline bool
 	path   string // the bundle's URL when it's linked
 	hash   string // "sha256-…", for a Content-Security-Policy
+	// preloads are the faces Tag fetches first (Preload).
+	preloads []string
 }
 
 // Styles bundles the named stylesheets, to be drawn into the page when the
@@ -73,16 +75,23 @@ func (a *Assets) bundle(names []string) *Styles {
 	return s
 }
 
-// Tag is the bundle for a page's head: a <style> with it when it's inline,
-// else a <link> to it.
+// Tag is the bundle for a page's head: a preload for each face it fetches
+// first (Preload), then a <style> with it when it's inline, else a <link>
+// to it.
 func (s *Styles) Tag() templ.Component {
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
-		var err error
-		if s.inline {
-			_, err = io.WriteString(w, "<style>"+string(s.body)+"</style>")
-		} else {
-			_, err = io.WriteString(w, `<link rel="stylesheet" href="`+s.path+`">`)
+		var b strings.Builder
+		for _, font := range s.preloads {
+			// crossorigin: fonts are always fetched in CORS mode, and a
+			// preload without it is fetched a second time.
+			b.WriteString(`<link rel="preload" href="` + templ.EscapeString(font) + `" as="font" type="font/woff2" crossorigin="anonymous">`)
 		}
+		if s.inline {
+			b.WriteString("<style>" + string(s.body) + "</style>")
+		} else {
+			b.WriteString(`<link rel="stylesheet" href="` + s.path + `">`)
+		}
+		_, err := io.WriteString(w, b.String())
 		return err
 	})
 }
