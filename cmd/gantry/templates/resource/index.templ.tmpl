@@ -1,0 +1,8 @@
+package {{.Package}}
+
+import "{{.Module}}/app/admin"
+
+// index is the list: each {{lower .Singular}}'s {{range $i, $f := .List}}{{if $i}} and {{end}}{{lower $f.Label}}{{end}}.
+templ index(p admin.AdminPage, rows []admin.Row) {
+	@admin.ResourceIndex(p, admin.ResourceList{Path: "{{.Table}}", Title: title, Singular: singular, Columns: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}"{{$f.Column}}"{{end -}} }, Rows: rows})
+}

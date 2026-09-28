@@ -1,0 +1,8 @@
+package programs
+
+import "example.com/gym/app/admin"
+
+// index is the list: each program's name and blurb.
+templ index(p admin.AdminPage, rows []admin.Row) {
+	@admin.ResourceIndex(p, admin.ResourceList{Path: "programs", Title: title, Singular: singular, Columns: []string{"name", "blurb"}, Rows: rows})
+}

@@ -1,0 +1,144 @@
+// Package {{.Package}} is the {{.Namespace}}'s {{lower .Title}}, at {{.Base}}.
+package {{.Package}}
+
+import (
+	"net/http"
+	"strings"
+
+	"github.com/a-h/templ"
+
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/admin"
+	"{{.Module}}/app/models"
+)
+
+const (
+	path     = "{{.Base}}"
+	param    = "{{.Param}}" // the form's fields are {{.Param}}[{{(index .Fields 0).Column}}], …
+	title    = "{{.Title}}"
+	singular = "{{.Singular}}"
+{{- if .Photos}}
+	// recordType is the {{lower .Singular}}'s photos' owner, as Active Storage names it.
+	recordType = "{{.Model}}"
+{{- end}}
+)
+
+// Controller is the {{lower .Title}}' pages: the list, the forms, and deleting.
+type Controller struct{ admin.Controller }
+
+var fields = []admin.Field{ {{- range $i, $f := .Fields}}{{if $i}}, {{end}}{{field $f}}{{end -}} }
+
+// formValues are a {{lower .Singular}} as its form holds them: text, as typed.
+func formValues({{var}} models.{{.Model}}) map[string]string {
+	return map[string]string{ {{- range $i, $f := .Columns}}{{if $i}}, {{end}}"{{$f.Column}}": {{toText $f}}{{end -}} }
+}
+
+// fromForm reads a form's values back into a {{lower .Singular}}.
+func fromForm(v map[string]string) models.{{.Model}} {
+	return models.{{.Model}}{ {{- range $i, $f := .Columns}}{{if $i}}, {{end}}{{$f.Go}}: {{fromText $f}}{{end -}} }
+}
+
+func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
+	list, err := models.New(c.DB.Read).List{{.Plural}}(r.Context())
+	if err != nil {
+		return err
+	}
+	rows := make([]admin.Row, len(list))
+	for i, {{var}} := range list {
+		rows[i] = admin.Row{ID: {{var}}.ID, Cells: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}{{cell $f}}{{end -}} }}
+	}
+	return c.Render(w, r, http.StatusOK, title, func(p admin.AdminPage) templ.Component { return index(p, rows) })
+}
+
+func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
+	return c.form(w, r, http.StatusOK, 0, map[string]string{}, nil)
+}
+
+func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
+	v := admin.Overlay(r, param, map[string]string{})
+	{{var}} := fromForm(v)
+	if errs := {{var}}.Errors(); len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
+	}
+	q := models.New(c.DB.Write)
+{{- if .Position}}
+	if !{{var}}.Position.Valid {
+		next, err := q.Next{{.Model}}Position(r.Context())
+		if err != nil {
+			return err
+		}
+		{{var}}.Position.Int64, {{var}}.Position.Valid = next, true
+	}
+{{- end}}
+	{{if .Photos}}id{{else}}_{{end}}, err := q.Create{{.Model}}(r.Context(), models.Create{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now()})
+	if err != nil {
+		return err
+	}
+{{- range .Photos}}
+	if err := c.SavePhoto(r, param, "{{.Column}}", recordType, id); err != nil {
+		return err
+	}
+{{- end}}
+	return c.Created(w, r, path, singular)
+}
+
+func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
+	{{var}}, err := models.New(c.DB.Read).Get{{.Model}}(r.Context(), web.ID(r, "id"))
+	if err != nil {
+		return err
+	}
+	return c.form(w, r, http.StatusOK, {{var}}.ID, formValues({{var}}), nil)
+}
+
+func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
+	was, err := models.New(c.DB.Read).Get{{.Model}}(r.Context(), web.ID(r, "id"))
+	if err != nil {
+		return err
+	}
+	v := admin.Overlay(r, param, formValues(was))
+	{{var}} := fromForm(v)
+	if errs := {{var}}.Errors(); len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
+	}
+	err = models.New(c.DB.Write).Update{{.Model}}(r.Context(), models.Update{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now(), ID: was.ID})
+	if err != nil {
+		return err
+	}
+{{- range .Photos}}
+	if err := c.SavePhoto(r, param, "{{.Column}}", recordType, was.ID); err != nil {
+		return err
+	}
+{{- end}}
+	return c.Saved(w, r, path, singular)
+}
+
+func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
+	q := models.New(c.DB.Write)
+	{{var}}, err := q.Get{{.Model}}(r.Context(), web.ID(r, "id"))
+	if err != nil {
+		return err
+	}
+{{- range .Photos}}
+	if err := c.Photos.Purge(r.Context(), recordType, {{var}}.ID, "{{.Column}}"); err != nil {
+		return err
+	}
+{{- end}}
+	if err := q.Delete{{.Model}}(r.Context(), {{var}}.ID); err != nil {
+		return err
+	}
+	return c.Deleted(w, r, path, singular)
+}
+
+// form is the new or edit form, with what's wrong when it's sent back.
+func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
+	f := admin.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
+	heading := "New " + strings.ToLower(singular)
+	if id != 0 {
+		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
+{{- if .Photos}}
+		f.Photos = c.PhotoPreviews(r.Context(), recordType, id{{range .Photos}}, "{{.Column}}"{{end}})
+{{- end}}
+	}
+	return c.Render(w, r, status, heading, func(p admin.AdminPage) templ.Component { return form(p, heading, f) })
+}

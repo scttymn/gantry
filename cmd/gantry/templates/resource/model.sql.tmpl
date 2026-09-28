@@ -1,0 +1,28 @@
+{{if .Position}}-- A sortable list: by position, then id, as the Rails app's
+-- order(:position, :id); an unset position sorts first.
+{{- else}}-- Newest first.
+{{- end}}
+
+-- name: List{{.Plural}} :many
+SELECT * FROM {{.Table}} ORDER BY {{if .Position}}position, id{{else}}id DESC{{end}};
+
+-- name: Get{{.Model}} :one
+SELECT * FROM {{.Table}} WHERE id = sqlc.arg(id);
+
+-- name: Create{{.Model}} :one
+INSERT INTO {{.Table}} ({{range .Columns}}{{.Column}}, {{end}}created_at, updated_at)
+VALUES ({{range .Columns}}{{arg .}}, {{end}}sqlc.arg(now), sqlc.arg(now))
+RETURNING id;
+
+-- name: Update{{.Model}} :exec
+UPDATE {{.Table}} SET {{range .Columns}}{{.Column}} = {{arg .}}, {{end}}updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id);
+
+-- name: Delete{{.Model}} :exec
+DELETE FROM {{.Table}} WHERE id = sqlc.arg(id);
+{{- if .Position}}
+
+-- A new {{lower .Singular}} with no position goes last, as Rails' Positioned.
+-- name: Next{{.Model}}Position :one
+SELECT CAST(COALESCE(MAX(position), 0) + 1 AS INTEGER) AS position FROM {{.Table}};
+{{- end}}

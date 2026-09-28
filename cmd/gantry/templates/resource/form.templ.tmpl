@@ -1,0 +1,8 @@
+package {{.Package}}
+
+import "{{.Module}}/app/admin"
+
+// form is a {{lower .Singular}}'s new or edit page.
+templ form(p admin.AdminPage, heading string, f admin.Form) {
+	@admin.ResourceForm(p, heading, f)
+}

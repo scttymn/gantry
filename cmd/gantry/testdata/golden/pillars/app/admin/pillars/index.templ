@@ -1,0 +1,8 @@
+package pillars
+
+import "example.com/gym/app/admin"
+
+// index is the list: each pillar's title and body.
+templ index(p admin.AdminPage, rows []admin.Row) {
+	@admin.ResourceIndex(p, admin.ResourceList{Path: "pillars", Title: title, Singular: singular, Columns: []string{"title", "body"}, Rows: rows})
+}

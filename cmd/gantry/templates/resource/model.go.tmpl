@@ -1,0 +1,19 @@
+package models
+
+// Errors are the Rails model's validations, as its full messages.
+func ({{recv}} {{.Model}}) Errors() []string {
+	var errs []string
+{{- range .Columns}}{{if .Required}}
+{{- if eq .Type "date"}}
+	if !{{recv}}.{{.Go}}.Valid {
+		errs = append(errs, "{{.Label}} can't be blank")
+	}
+{{- else if or (eq .Type "int") (eq .Type "position")}}
+	if !{{recv}}.{{.Go}}.Valid {
+		errs = append(errs, "{{.Label}} can't be blank")
+	}
+{{- else}}
+	errs = append(errs, Required("{{.Label}}", {{recv}}.{{.Go}})...)
+{{- end}}{{end}}{{end}}
+	return errs
+}

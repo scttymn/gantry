@@ -1,0 +1,8 @@
+package workouts
+
+import "example.com/gym/app/admin"
+
+// form is a workout's new or edit page.
+templ form(p admin.AdminPage, heading string, f admin.Form) {
+	@admin.ResourceForm(p, heading, f)
+}

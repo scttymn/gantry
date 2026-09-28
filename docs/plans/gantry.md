@@ -13,6 +13,7 @@
 - "You should do this in a docker container too. Use houston. Then we can spin it up locally … so I can follow progress in a browser too."
 - On IDs: "int64 default is fine with the option of UUIDv7."
 - On performance: "I would like … to be able to configure default image compression in gantry … no matter what the image is, we can compress it. In the valleybuiltcrossfit site, I currently convert things to webp 80%. But both should be configurable." "It would be nice if it automatically served up mobile, tablet, or desktop images based on the size too." "I would appreciate pushback or suggestions on how we can be blazing fast no matter the app." "What if we just did webp by default for simplicity with caching? It can be written in a way that is extensible: image pipeline adapters?"
+- On the admin's shape: "Folders, via generator": a folder per table, Programs-style code written by hand once, `gantry g resource` extracted from it, and the generator writing the rest.
 - On stylesheets: "In-line CSS just seems to go against good practices." "If CSS was in separate files and added to the page as part of the compilation process, that would probably be OK."
 - On the example: "Before we commit to the local gantry repo, I want to get rid of the example project. Instead, I would like to update the existing ValleybuiltCrossFit website. Although we need to make sure to preserve data." "Is it something that I could install on the system and then run 'gantry new'? … Then we can basically use gantry on a real site instead of something we're just gonna throw away. It's already proven to me that it's good enough for this website." On making gantry a public repo: "Yep!"
 - On the layout: "We don't have to follow rails idioms to the letter." "What helps us write the least amount of code? What structure plays well with goLang." "I just prefer not having everything in one folder because it makes organization a pain in the butt." "The agent's gonna be writing all of this code."
@@ -262,6 +263,22 @@ Each batch gets its full map (contract pin, tests, evidence) before its code, as
 
 **Developing gantry and the site together:** `go.work` (ignored by git and Docker) uses `../gantry`, and `bin/go` and the dev container mount it at `/gantry`, which is `../gantry` from `/app`. Deploys build against the tagged gantry: `v0.2.0` when this batch is done.
 
+## Batch 3: the admin (full map)
+**The slice:** everything the POC's admin does, on the `gantry` branch: the seven content tables (pillars, programs, steps, membership options, staff, FAQs, workouts), the site's copy (six sections and the announcement), the settings (theme with its preview, photos, PushPress), inquiries, and admins. The POC's admin tests (`admin_test.go`, `admin_more_test.go`, `admin_theme_test.go`, and the site rules left out in batch 1) pass under their names. With this, the branch can replace the live site.
+
+**The shape (your choice: folders, via generator):**
+- `app/admin` keeps the admin's shared parts, ported from the POC's templates so their markup (and its tests) carries over: the layout, form fields (`Field`, `RecordForm`, `Errors`), the list table (`ResourceIndex`) and the delete button.
+- Each table is a folder, `app/admin/<table>/`: `controller.go` (its handlers, and the form's values as typed), `index.templ` and `form.templ` built from the shared parts.
+- Its queries and rules sit beside its model: `app/models/<table>.sql` (get, create, update, delete, the next position) and `<table>.go` (`Errors()`, the Rails model's validations).
+- The special pages (site sections, announcement, settings, inquiries, admins) are ordinary controllers in folders of their own.
+
+**gantry gains:**
+- `web.Resources(rt, "/admin/pillars", controller, wrap)`: the seven REST routes, each from the method the controller has (`Index`, `New`, `Create`, `Show`, `Edit`, `Update`, `Delete`), `Update` on both PATCH and PUT.
+- `web.Sent(r, "pillar")`: the fields a form sent, as `pillar[title]` (form and multipart alike); a field it didn't send isn't there, as Rails' permitted params. `web.Upload(r, name)`: a file field's file, if one was chosen.
+- `cmd/gantry` with `g resource`: `gantry g resource admin/pillars title:string body:text position:position` writes the model's SQL and rules, the admin folder, and a test, and prints the route to add. Written from Pillars by hand, then run for the other six, each finished by hand (photos, choices, hints, the Rails validations), as a scaffold is.
+
+**Order:** gantry's pieces and the shared admin parts; Pillars by hand; the generator; the other six generated and finished; then the special pages and the tests, in parallel. gantry `v0.3.0` at the end.
+
 ## Open questions (decide when their batch starts)
 - **Jobs:** River is Postgres-only. An SQLite app needs another queue, or gantry's own small one. Nothing needs jobs until the example's lead hand-off (the POC's is a ticker).
 - **File uploads and storage:** the site's photos need them. Decide whether it's a gantry package or stays the example's service.
@@ -368,3 +385,12 @@ gantry `v0.2.0` (`auth`, `web` cookies and flash); the site's branch `gantry` ru
 Found while building it:
 - **The local dev data has no admins**: it was seeded, not copied from production. `valleybuiltcrossfit adduser EMAIL` (password on stdin, the site's rules) adds one, and is how a fresh install gets its first admin.
 - **`go get` in a workspace resolves to the local gantry**, so pinning a new gantry version runs with `GOWORK=off`: the site's tests then run against the published tag, as a deploy would.
+
+### Batch 3: the admin, 2026-09-28
+- **The generator writes what was written by hand.** Pillars was written by hand first; `gantry g resource admin/pillars title:string:required body:string position:position` then gave the same SQL and list page, and the same controller but for two choices made while extracting it: the record's variable is its full name (`pillar`, `workout`), since a first letter would shadow the handler's own (`w` for a Workout is the response writer, `c` for a Category the controller), and `Errors` builds a list, to take any number of rules. Its output is pinned by golden files in `cmd/gantry/testdata`.
+- **Two of the seven tables showed what the generator lacked:** photo slots (`photo:photo`: a file field, saved or removed with the record, shown on its edit form) and headings from the table's `singular` constant, so "FAQ" or "Staff" is changed in one line. The six others were generated, then finished by hand, as a scaffold is: labels, hints, choices, list columns, and the Rails validations that read the table (a program's unique key, one workout a day).
+- **sqlc edits SQL at byte offsets**, so a non-ASCII character ("…") in a comment before a `SELECT *` shifts its edits and mangles the query (`SELECid`). SQL files stay ASCII.
+- **The whole admin matches the POC.** Signed in on a copy of the same data, 20 admin pages (the dashboard, every list and new form, the site's copy, the announcement, the three settings pages, inquiries, a new admin) are the POC's byte for byte. The POC's admin tests pass under their names: `TestAdmin`, `TestAdminNavigation`, `TestAdminSettings`, `TestSiteContent`, `TestAdminTheme` (17), `TestResources`, `TestAdminPhotos`, `TestDashboard`, `TestAdminLeads`, `TestAdminUsers`, `TestAdminGateEverywhere`, and the seven site rules batch 1 left out.
+- **`web.Sent` keeps a repeated field's last value, as Rails**: a checkbox sends a hidden "0" and then, ticked, its "1". It kept the first, so a ticked box read as unticked (found porting the announcement's).
+- **One change from the POC, on purpose:** changing your own password on the admins' page keeps the browser you did it from signed in (every other session ends). The POC signed you out there too.
+- **The site's copy is written through an allow-list:** the six sections and the settings each write a different set of `sites` columns, so their UPDATE is built from a fixed map of the columns the admin may write, never from the request (`app/admin/site/row.go`).

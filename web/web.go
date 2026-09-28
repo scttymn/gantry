@@ -194,3 +194,6 @@ func (w *trackingWriter) Write(b []byte) (int, error) {
 }
 
 func (w *trackingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// IDText is an id for a path: "7".
+func IDText(id int64) string { return strconv.FormatInt(id, 10) }
