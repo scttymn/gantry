@@ -1,5 +1,5 @@
 // Package images turns the pictures people upload into the copies pages
-// show: fitted to the widths a layout uses, upright, in one format at one
+// show: fitted to a few fixed widths (never wider than the upload), upright, in one format at one
 // quality (WebP at 80 unless the app says otherwise), each made once and
 // kept, with a tiny blurred placeholder to show while the photo loads.
 //
@@ -55,12 +55,4 @@ type Decoder interface {
 	Match(data []byte) bool // the bytes are in this format
 	Decode(r io.Reader) (image.Image, error)
 	DecodeConfig(r io.Reader) (image.Config, error)
-}
-
-// Preset is a slot on a page: the widths its copies are made at, and the
-// sizes hint that tells the browser how wide the slot draws, so it can pick
-// the copy that fits its screen and pixel density.
-type Preset struct {
-	Widths []int
-	Sizes  string // "(max-width: 640px) 100vw, 50vw"
 }

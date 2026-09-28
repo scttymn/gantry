@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +26,13 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
+// Widths are the widths copies come in, about 1.5× apart. Every photo on
+// every page picks from these, so there's no list per kind of photo: a page
+// says how wide a photo draws (a srcset's sizes) and the browser picks the
+// copy. A copy is never wider than its original, so an 800px photo stops at
+// 720, and a page asking for more gets that.
+var Widths = []int{320, 480, 720, 1080, 1600, 2400}
+
 // Pipeline makes and keeps an app's copies. The zero value, with Dir set,
 // makes WebP at quality 80 in this process.
 type Pipeline struct {
@@ -32,6 +40,9 @@ type Pipeline struct {
 	Dir string
 	// Encoder writes the copies. WebP when nil.
 	Encoder Encoder
+	// Widths are the widths copies come in, smallest first. images.Widths
+	// when nil.
+	Widths []int
 	// Quality is the copies' quality when a call gives none. 80 when zero.
 	Quality int
 	// Decoders read formats beyond JPEG, PNG, GIF and WebP.
@@ -55,6 +66,41 @@ func (p *Pipeline) encoder() Encoder {
 		return p.Encoder
 	}
 	return WebP{}
+}
+
+func (p *Pipeline) widths() []int {
+	if p.Widths != nil {
+		return p.Widths
+	}
+	return Widths
+}
+
+// WidthsFor is the widths a photo original pixels wide comes in: each of the
+// pipeline's up to its own. A photo narrower than the smallest comes in that
+// one, at its own size (Resize never enlarges); one whose width isn't known
+// (0) comes in all of them.
+func (p *Pipeline) WidthsFor(original int) []int {
+	all := p.widths()
+	if original <= 0 {
+		return all
+	}
+	n := 1
+	for n < len(all) && all[n] <= original {
+		n++
+	}
+	return all[:n:n]
+}
+
+// Fit is the copy to serve for a request for width of a photo original
+// pixels wide: that width, or the photo's largest when width is above it.
+// ok is false when width isn't one of the pipeline's, so a request can't
+// have the server make copies at any width it likes.
+func (p *Pipeline) Fit(width, original int) (fitted int, ok bool) {
+	if !slices.Contains(p.widths(), width) {
+		return 0, false
+	}
+	own := p.WidthsFor(original)
+	return min(width, own[len(own)-1]), true
 }
 
 // QualityOr is quality, or the pipeline's when quality is zero.

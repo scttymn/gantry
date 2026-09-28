@@ -227,7 +227,8 @@ Each batch gets its full map (contract pin, tests, evidence) before its code, as
 - **WebP at quality 80 by default**, and both are configurable. Encoders are adapters (`ContentType`, `Ext`, `Encode(w, img, quality)`); gantry ships WebP and JPEG.
 - **An adapter that needs cgo lives in its own module** (a native AVIF encoder, say), so apps that don't use it keep the static binary. AVIF in pure Go took 24–41 s and up to 680 MB for one photo at half a CPU (Evidence), so it isn't a default.
 - **Decoders are adapters too.** HEIC, which iPhones upload, is the first.
-- **Named presets give each slot its widths and `sizes` hint.** The page lists the widths (`srcset`) and the browser picks the one that fits its screen and pixel density. The server never guesses the device: guessing gets tablets and dense screens wrong, and varying by user agent defeats caching.
+- **One set of widths for every photo: 320, 480, 720, 1080, 1600 and 2400 (`images.Widths`), about 1.5× apart.** A photo comes in each of them up to its own width, never enlarged, so an 800px photo stops at 720. The page lists those (`srcset`) with a `sizes` hint saying how wide the photo draws, and the browser picks the one that fits its screen and pixel density. The server never guesses the device: guessing gets tablets and dense screens wrong, and varying by user agent defeats caching. (First built as named presets, a list of widths per kind of photo; replaced, since every new kind of photo needed one and a page asking for a width outside its kind's list got a 404: see Evidence, "Fixed widths".)
+- **The route serves only those widths, at the app's current quality.** A request for a width above the photo's own gets its largest copy. Anything else is a 404, so an address can't make the server build files.
 - The component sets width and height (no layout shift), lazy-loads everything but the first-screen photo, and shows a blurred placeholder.
 - **URLs carry the width, quality and format** (`/images/<key>/1400w-q80.webp`), so a changed setting is a new URL, and every copy is cached forever by browsers and Cloudflare.
 - **Copies are made in the background when a photo is uploaded**, in a short-lived child process that keeps the encoder's memory out of the server. A request for a copy that doesn't exist yet makes it once, however many people ask for it at the same time.
@@ -352,7 +353,7 @@ Found while building it:
 - **A decoder package can register itself with `image.Decode` just by being imported.** gen2brain/heic does, so any binary importing it would read HEIC in every pipeline. `Resize` checks the sniffed type against the pipeline's own formats first, so its configuration decides.
 - **The example's test for "a type Go can't resize" used HEIC**, which now resizes: it uses TIFF, and a new test attaches a real HEIC (made by libheif's `heif-enc`) and checks it's sized, warmed and given a placeholder.
 
-Not done yet, from this batch's map: a generic image component for new apps (the example keeps its own `ui.Photo`; gantry has `images.Srcset`), and the defaults for new apps (linked stylesheets, precompressed static files), which land with `gantry new`.
+Not done yet, from this batch's map: a generic image component for new apps (the example keeps its own `ui.Photo`; gantry has `images.Srcset` and `Pipeline.WidthsFor`), and the defaults for new apps (linked stylesheets, precompressed static files), which land with `gantry new`.
 
 ### Inlined or linked stylesheets, 2026-09-28
 The example's production image as it is (the three stylesheets inlined) against the same with them linked, each at 0.5 CPU and 384 MB on a copy of the same data, with photos warmed. Lighthouse 12.8 (headless Chrome, simulated throttling as PageSpeed does), in a container on the same Docker network; five runs each, medians. The runs agreed closely: every score identical, LCP within 0.02 s.
@@ -408,3 +409,20 @@ Houston's new export of the live project (commit `e403bc6`, the POC): the databa
 | Memory | Idle after 200 requests: POC 17.5 MiB, gantry 18.0 MiB. After the load: POC 41.4 MiB, gantry 20.4 MiB. |
 
 Left for after the switch: dropping what only Rails and the POC used (`schema_migrations`, `ar_internal_metadata`, `go_migrations`, `go_settings`, `active_storage_variant_records` and the Rails variant blobs), once a rollback to the POC is no longer wanted.
+
+### Fixed widths, 2026-09-28
+
+After the switch-over the admin's hero preview was broken: the form asked every photo for a 440px copy, and the hero's preset (800, 1400, 2000) didn't include it, so the route returned 404 (live: `440w` 404, `800w` 200). Each kind of photo had its own list of widths, and each list had to agree with every page that showed that kind.
+
+The fix removes the lists. `images.Widths` is one set for every photo, and `WidthsFor(original)` is the part of it a photo comes in; `Fit` maps a request above a photo's own width to its largest copy. Pages give only a `sizes` hint. The example's `photos.Sizes`, the slots' widths and the preview's special case are gone.
+
+Copies for the live site's photos (from the 2026-09-28 export: a 5184px hero, five staff photos about 1638px wide, three program photos 480–700px wide):
+
+| | Presets | Fixed widths |
+|---|---|---|
+| Hero | 3 (800, 1400, 2000) | 6 (320–2400) |
+| Staff, each | 4 (340, 440, 680, 880) | 5 (320–1600) |
+| Programs, each | 3 (200, 440, 880; the 880 no wider than 480, since copies never enlarge) | 2 (320, 480) |
+| Total | 32 | 37 |
+
+What it costs: a photo can come a step larger than a hand-picked width would give. The owners' photo, 440px wide on the page, is the 1080 copy on a 2× screen where it was 880, and a coach's is 720 where it was 680. The 1.5× steps bound that. The route now also refuses any quality but the admin's current one, where it took anything from 40 to 100.
