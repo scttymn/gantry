@@ -394,3 +394,17 @@ Found while building it:
 - **`web.Sent` keeps a repeated field's last value, as Rails**: a checkbox sends a hidden "0" and then, ticked, its "1". It kept the first, so a ticked box read as unticked (found porting the announcement's).
 - **One change from the POC, on purpose:** changing your own password on the admins' page keeps the browser you did it from signed in (every other session ends). The POC signed you out there too.
 - **The site's copy is written through an allow-list:** the six sections and the settings each write a different set of `sites` columns, so their UPDATE is built from a fixed map of the columns the admin may write, never from the request (`app/admin/site/row.go`).
+
+### The switch-over, rehearsed on the live data, 2026-09-28
+Houston's new export of the live project (commit `e403bc6`, the POC): the database as SQLite's backup wrote it, and the volume's photos. Every run below was on a copy; the export itself was only read.
+
+| Check | Result |
+|---|---|
+| The backup | `PRAGMA integrity_check` ok. 1 admin, 4 sessions, 1 lead, the site's content (4 pillars, 3 programs, 4 steps, 7 membership options, 5 staff, 5 FAQs), 105 photo blobs (most of them Rails' own resized copies), 8 cached schedule weeks. |
+| The new version started on it | Migrations 1–3 applied; up within about a second (docker run included). |
+| After | Integrity ok, 0 foreign key violations. Every table's rows the same but `sessions` (4 → 0, by design: admins sign in once more). Every AUTOINCREMENT counter kept (attachments and blobs at 139, …). The admin's password hash is bcrypt (`$2a$12$`), which gantry's auth reads. |
+| Pages, both versions on the live data | 27 of 28 byte for byte: `/`, the schedule, manifest, favicon, the 404, and signed in, the admin's lists, edit forms of real records, the live inquiry, the site's copy and every settings page. The one difference is the home page's form token (a signed time, per render). |
+| `/`, 32 workers for 15 s, 0.5 CPU | POC 110 req/s, p99 980 ms; gantry 6,506 req/s, p99 76 ms. |
+| Memory | Idle after 200 requests: POC 17.5 MiB, gantry 18.0 MiB. After the load: POC 41.4 MiB, gantry 20.4 MiB. |
+
+Left for after the switch: dropping what only Rails and the POC used (`schema_migrations`, `ar_internal_metadata`, `go_migrations`, `go_settings`, `active_storage_variant_records` and the Rails variant blobs), once a rollback to the POC is no longer wanted.
