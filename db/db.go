@@ -33,6 +33,13 @@ type DB struct {
 	versioner *versioner
 }
 
+// Querier is a pool or a transaction: what a query needs to run.
+type Querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // Open opens the database at url:
 //
 //	sqlite:///data/app.sqlite3   (an absolute path)

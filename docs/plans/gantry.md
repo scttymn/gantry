@@ -239,6 +239,29 @@ Each batch gets its full map (contract pin, tests, evidence) before its code, as
 - The home page's throughput is measured before and after, as in Evidence.
 - The cache is tested in gantry: a hit doesn't call the handler; a write, the max age, a non-200 or a cookie each keep a response out; gzip and plain, ETag and 304, HEAD, concurrent misses, and the cap on entries.
 
+## Batch 2: sign-in (full map)
+**The slice:** the site's admin sign-in, password reset and admin gate run on gantry's `auth`, on the `gantry` branch of valleybuiltcrossfit, behind the admin's layout and a first admin page (the dashboard). The rest of the admin is batch 3.
+
+**Who owns the tables: the app, as Rails 8 does.** Rails 8's `generate authentication` writes the migrations, models and controllers into the app, and the app then owns its `users` table (and adds its own columns: a name, a role). gantry does the same: `auth` works on a minimal schema it documents, and the app's own migrations create it (later written by `gantry g auth`). The alternative, gantry running its own migrations, would collide with any app that already has a `users` table (this one does, from Rails), and would force gantry's shape onto columns apps want to own.
+- `users`: `id`, `email_address` (unique, stored lowercased), `password_digest`, `created_at`, `updated_at`. Rails 8's own shape, so a Rails app's users carry over as they are, bcrypt hashes included.
+- `sessions`: `id`, `user_id`, `token_digest` (unique), `ip_address`, `user_agent`, `created_at`, `last_seen_at`.
+
+**`gantry/auth`:**
+- **Sessions:** the cookie holds a random 32-byte token; the table holds its SHA-256. A copy of the database gives nobody a usable session, and ending a session is deleting its row. (The POC signed the session's id instead: anyone with the signing key could forge any session.) The cookie is HttpOnly, SameSite=Lax, Secure except on a local host, and lasts until sign-out (Rails 8's permanent cookie). `last_seen_at` is written at most every hour.
+- **Passwords:** bcrypt, cost 12. An unknown email costs the same time as a wrong password. Changing a password ends every session. The rules are the app's (`Rules`); gantry's default is 8 to 72 bytes and a matching confirmation.
+- **Reset:** an emailed link carrying a signed token of the user, an expiry (15 minutes) and a fingerprint of the password hash, so a used link dies. The same answer whether or not the address has an account. Links use the app's configured address, never the request's Host.
+- **Rate limits** on sign-in and reset (10 in 3 minutes per address, the POC's).
+- **`Require` and `Current`:** a wrapper for routes that need a user, which sends others to sign in and brings them back after (a signed return address, on-site only), and the user of a request. Only the routes that need it look a session up: the public pages stay cached and never touch the sessions table.
+- **Routes and views:** `Routes` mounts sign-in, sign-out and reset at paths the app can change (defaults: `/login`, `/logout`, `/passwords/…`, the POC's). The views are the app's to give (`Views`); gantry's defaults are plain HTML forms.
+- **`web.Flash`:** a one-page message in a signed cookie (the POC's), in `web`, since the admin will use it everywhere.
+
+**The site:**
+- A migration turns the Rails `sessions` table into gantry's shape. Its rows are dropped: their cookies were signed with a key the new version doesn't have, so admins sign in once more, as planned. `users` already has the shape.
+- The admin's layout and its sign-in, forgot-password and new-password views move over from the POC as they are, and `/admin` shows the dashboard.
+- The POC's auth tests are ported under their names. One changes meaning: "the session cookie is signed…" becomes the cookie holding a random token.
+
+**Developing gantry and the site together:** `go.work` (ignored by git and Docker) uses `../gantry`, and `bin/go` and the dev container mount it at `/gantry`, which is `../gantry` from `/app`. Deploys build against the tagged gantry: `v0.2.0` when this batch is done.
+
 ## Open questions (decide when their batch starts)
 - **Jobs:** River is Postgres-only. An SQLite app needs another queue, or gantry's own small one. Nothing needs jobs until the example's lead hand-off (the POC's is a ticker).
 - **File uploads and storage:** the site's photos need them. Decide whether it's a gantry package or stays the example's service.
