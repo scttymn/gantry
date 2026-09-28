@@ -355,3 +355,16 @@ The example's production image as it is (the three stylesheets inlined) against 
 - **`assets.Styles(names...)`** bundles stylesheets once at start, in order. `Tag()` draws the bundle into the page when it's under `assets.InlineLimit` (10 KB gzipped) and links it when it's over. `InlineStyles` and `LinkStyles` force either. The bundle is also served at its own fingerprinted URL, and `Hash()` gives its `'sha256-…'` for a Content-Security-Policy.
 - **The CSS is always separate files** (`assets/css/*.css`); a template never holds any. The example declares `var Styles = All.Styles("application.css", "fonts.css", "site.css")` beside its assets, and its layout draws `@assets.Styles.Tag()`. The bundle is 8.1 KB gzipped, so it's inlined, and the pages are byte-for-byte what they were.
 - **A strict `style-src` isn't possible yet, and it's not the bundle's fault.** The example's templates carry about 20 inline `style="…"` attributes: spacing (`gap:12px`), each card's `--i`, the program grid's shape, each photo's placeholder, and the honeypot's hiding. htmx also injects a `<style>` of its own unless `includeIndicatorStyles` is off. A hash covers a `<style>` block, not attributes. Making the site CSP-strict means moving those into classes (the placeholders into a hashed `<style>` of their own) and turning htmx's injection off. That changes the pages, so it's a step of its own.
+
+### Batch 2: sign-in, 2026-09-28
+gantry `v0.2.0` (`auth`, `web` cookies and flash); the site's branch `gantry` runs its admin sign-in on it.
+
+| Check | Result |
+|---|---|
+| gantry's `auth` tests | Sign-in, sign-out, the cookie (a random token; the table holds its SHA-256), tampered and ended sessions, the rate limit, `last_seen_at` at most hourly, reset (sent, unknown address, expiry, used link, rules, every session ended, the configured address), the gate and its return address, moved paths. 1.5 s with bcrypt at its minimum cost in tests (12 in production). |
+| The site's ported tests | The POC's `TestSessions`, `TestPasswords`, `TestAdminGate` and `TestProtection` under their names, and the two admin tests batch 1 left out (the admin's stylesheets, the admin's icons). All pass against the published `v0.2.0` in `houston test`. |
+| Pages, on a copy of the same data | `/login`, `/passwords/bogus/edit`, and `/admin` and `/admin/programs` signed out (redirects), the POC's byte for byte, headers included. `/passwords/new` the same but for `Transfer-Encoding: chunked` (the POC streamed it; gantry sends its length). |
+
+Found while building it:
+- **The local dev data has no admins**: it was seeded, not copied from production. `valleybuiltcrossfit adduser EMAIL` (password on stdin, the site's rules) adds one, and is how a fresh install gets its first admin.
+- **`go get` in a workspace resolves to the local gantry**, so pinning a new gantry version runs with `GOWORK=off`: the site's tests then run against the published tag, as a deploy would.
