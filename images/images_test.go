@@ -173,14 +173,19 @@ func TestNames(t *testing.T) {
 func TestWidths(t *testing.T) {
 	p := &Pipeline{}
 	t.Run("a photo comes in each width up to its own, never enlarged", func(t *testing.T) {
+		// The phones' widths are there: 414 CSS pixels at 2× (828), and at 3×
+		// (1242: 1200), and PageSpeed's phone (412 at 1.75×, 721: 828), so
+		// none is sent a copy half again too big.
 		for original, want := range map[int][]int{
 			800:  {160, 240, 320, 480, 720},
 			720:  {160, 240, 320, 480, 720},
-			2400: {160, 240, 320, 480, 720, 1080, 1600, 2400},
-			6000: {160, 240, 320, 480, 720, 1080, 1600, 2400},
+			1400: {160, 240, 320, 480, 720, 828, 1080, 1200},
+			1000: {160, 240, 320, 480, 720, 828},
+			2400: {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
+			6000: {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
 			200:  {160}, // below 240: just the smallest
 			100:  {160}, // the smallest, at its own size
-			0:    {160, 240, 320, 480, 720, 1080, 1600, 2400},
+			0:    {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
 		} {
 			if got := p.WidthsFor(original); !slices.Equal(got, want) {
 				t.Errorf("%dpx: %v", original, got)
@@ -215,7 +220,7 @@ func TestWidths(t *testing.T) {
 
 	t.Run("WidthsFor's result can't be appended into the list", func(t *testing.T) {
 		got := append(p.WidthsFor(800), 999)
-		if Widths[5] != 1080 || len(got) != 6 {
+		if Widths[5] != 828 || len(got) != 6 {
 			t.Error(Widths)
 		}
 	})
@@ -389,7 +394,7 @@ func TestPrepare(t *testing.T) {
 	close(maker.gate)
 	dir := t.TempDir()
 	p := &Pipeline{Dir: dir, Maker: maker}
-	src := source(t) // 1600 wide: 160 to 1600, seven widths
+	src := source(t) // 1600 wide: 160 to 1600, nine widths
 	os.MkdirAll(filepath.Join(dir, "gone"), 0o755)
 	os.WriteFile(filepath.Join(dir, "gone", "160w-q80.webp"), []byte("x"), 0o644)
 	originals := map[string]Original{
@@ -397,7 +402,7 @@ func TestPrepare(t *testing.T) {
 		"doc":   {Path: src, ContentType: "application/pdf"}, // not resizable: skipped
 	}
 	made, err := p.Prepare(ctx, originals, 0)
-	if err != nil || made != 7 || maker.n.Load() != 7 {
+	if err != nil || made != 9 || maker.n.Load() != 9 {
 		t.Fatalf("made %d, maker %d (%v)", made, maker.n.Load(), err)
 	}
 	for _, w := range p.WidthsFor(1600) {
@@ -409,11 +414,11 @@ func TestPrepare(t *testing.T) {
 		t.Error("another key's copies kept")
 	}
 	// Again: all there, nothing made.
-	if made, err := p.Prepare(ctx, originals, 0); err != nil || made != 0 || maker.n.Load() != 7 {
+	if made, err := p.Prepare(ctx, originals, 0); err != nil || made != 0 || maker.n.Load() != 9 {
 		t.Errorf("again: made %d, maker %d (%v)", made, maker.n.Load(), err)
 	}
 	// Another quality is other copies.
-	if made, _ := p.Prepare(ctx, originals, 60); made != 7 || !p.Has("photo", 160, 60) || !p.Has("photo", 1600, 60) {
+	if made, _ := p.Prepare(ctx, originals, 60); made != 9 || !p.Has("photo", 160, 60) || !p.Has("photo", 1600, 60) {
 		t.Errorf("at 60: made %d", made)
 	}
 	// A failure says which.

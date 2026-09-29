@@ -138,12 +138,12 @@ func TestImagesPrecompiled(t *testing.T) {
 		if err == nil && !d.IsDir() {
 			rel, _ := filepath.Rel(dir, path)
 			b, _ := os.ReadFile(path)
-			fsys["resized/"+filepath.ToSlash(rel)] = &fstest.MapFile{Data: b}
+			fsys["built/images/"+filepath.ToSlash(rel)] = &fstest.MapFile{Data: b}
 		}
 		return err
 	})
 	key := im.byName["hero.png"].key
-	fsys["resized/"+key+"/160w-q80.webp"] = &fstest.MapFile{Data: []byte("the build's")}
+	fsys["built/images/"+key+"/160w-q80.webp"] = &fstest.MapFile{Data: []byte("the build's")}
 	a, err := New(fsys)
 	if err != nil {
 		t.Fatal(err)
@@ -166,7 +166,7 @@ func TestImagesPrecompiled(t *testing.T) {
 		t.Error("a copy was made on request")
 	}
 	// A copy of a picture that isn't in the assets isn't served.
-	fsys["resized/stale-12345678/160w-q80.webp"] = &fstest.MapFile{Data: []byte("x")}
+	fsys["built/images/stale-12345678/160w-q80.webp"] = &fstest.MapFile{Data: []byte("x")}
 	a2, _ := New(fsys)
 	a2.Images(nil)
 	mux2 := http.NewServeMux()

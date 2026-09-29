@@ -26,13 +26,15 @@ import (
 	xdraw "golang.org/x/image/draw"
 )
 
-// Widths are the widths copies come in, about 1.5× apart, from thumbnails
-// and avatars up to wide screens. Every photo on
-// every page picks from these, so there's no list per kind of photo: a page
-// says how wide a photo draws (a srcset's sizes) and the browser picks the
-// copy. A copy is never wider than its original, so an 800px photo stops at
-// 720, and a page asking for more gets that.
-var Widths = []int{160, 240, 320, 480, 720, 1080, 1600, 2400}
+// Widths are the widths copies come in, from thumbnails and avatars up to
+// wide screens: about 1.5× apart, closer where phones draw a full-width
+// photo (828 is 414 CSS pixels at 2×, 1200 a phone at 3×, and 720, 828 and
+// 1080 bracket the rest), so a phone isn't sent a copy half again too big.
+// Every photo on every page picks from these, so there's no list per kind
+// of photo: a page says how wide a photo draws (a srcset's sizes) and the
+// browser picks the copy. A copy is never wider than its original, so an
+// 800px photo stops at 720, and a page asking for more gets that.
+var Widths = []int{160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400}
 
 // Pipeline makes and keeps an app's copies. The zero value, with Dir set,
 // makes WebP at quality 80 in this process.

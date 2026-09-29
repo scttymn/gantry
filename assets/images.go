@@ -25,8 +25,8 @@ import (
 //	@assets.Images.Img("hero.jpg", images.Img{Alt: "…", Sizes: "100vw", Priority: true})
 //
 // The build makes the copies, as Rails' assets:precompile does: the app's
-// `assets` command runs Precompile into assets/resized/ before go build,
-// which embeds them with the rest, so the server serves them from memory
+// `assets` command runs Assets.Precompile into assets/built/ before go
+// build, which embeds them with the rest, so the server serves them from memory
 // and never runs the encoder. Precompile makes only what's missing, and a
 // changed picture is a new one (its key is its fingerprint). Without the
 // build's copies (in development, in tests), a copy is made when it's first
@@ -101,8 +101,8 @@ func (im *Images) find(_ context.Context, key string) (images.Original, bool, er
 	return images.Original{Path: path, ContentType: pic.contentType, Width: pic.width}, err == nil, err
 }
 
-// Precompile writes every picture's copies into dir (assets/resized, for
-// the build to embed), making only those missing, and removes the copies
+// Precompile writes every picture's copies into dir (Assets.Precompile's
+// images/, for the build to embed), making only those missing, and removes the copies
 // of pictures no longer in the assets: Pipeline.Prepare. made is how many
 // it made.
 func (im *Images) Precompile(ctx context.Context, dir string) (made int, err error) {

@@ -39,7 +39,7 @@ func main() {
 const usage = `usage:
   {{.Name}}                        serve (the default), and run the jobs unless JOBS_IN_SERVER=false
   {{.Name}} jobs                   run the background jobs alone
-  {{.Name}} assets                 the pictures' copies, into assets/resized (the build runs it)
+  {{.Name}} assets                 the assets precompiled, into assets/built (the build runs it)
   {{.Name}} db migrate|rollback [N]|status|seed|reset|console
   {{.Name}} tasks                  the app's own tasks (app/tasks.go)
   {{.Name}} task NAME [ARGS...]    run one
@@ -59,11 +59,12 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 		err = runJobs(ctx, cfg, logger)
 	case "assets":
 		// Rails' assets:precompile: the Dockerfile runs it before go build,
-		// which embeds the copies.
+		// which embeds what it makes (the scripts minified, the pictures'
+		// copies).
 		var made int
-		made, err = assets.Images.Precompile(ctx, filepath.Join("assets", "resized"))
+		made, err = assets.All.Precompile(ctx, filepath.Join("assets", "built"))
 		if err == nil {
-			fmt.Fprintf(out, "assets: %d copies made in assets/resized\n", made)
+			fmt.Fprintf(out, "assets: precompiled into assets/built (%d picture copies made)\n", made)
 		}
 	case "db":
 		return dbCommand(ctx, cfg, args, in, out, errOut)

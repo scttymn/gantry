@@ -46,7 +46,7 @@ func TestServer(t *testing.T) {
 		for part := range strings.SplitSeq(srcset, ", ") {
 			urls = append(urls, strings.Fields(part)[0])
 		}
-		if len(urls) != 8 { // src, and 160 to 1600
+		if len(urls) != 10 { // src, and 160 to 1600
 			t.Fatal(urls)
 		}
 		for _, u := range urls {

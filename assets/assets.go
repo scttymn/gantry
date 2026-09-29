@@ -11,7 +11,8 @@
 //	  fonts/oswald.woff2   → Path("oswald.woff2")
 //	  images/maps/a.png    → Path("maps/a.png")
 //	  public/robots.txt    → served at /robots.txt
-//	  resized/…            → the pictures' copies the build made (Images)
+//	  built/…              → what the build made (Precompile): the pictures'
+//	                         copies, and each script minified
 //
 // A file is named by its path under its top folder, as Rails' Propshaft
 // names them, so a stylesheet refers to a font as url("oswald.woff2").
@@ -54,9 +55,14 @@ type Assets struct {
 	byDigest map[string]*asset // digested name → asset
 	public   map[string]*asset // root name → asset ("robots.txt")
 	images   *Images           // the pictures' copies, once Images is called
-	// copies are resized/<key>/<name>: the pictures' copies the build made
-	// (Images.Precompile), embedded with the rest.
+	// copies are built/images/<key>/<name>: the pictures' copies the build
+	// made (Precompile), embedded with the rest.
 	copies map[string]map[string][]byte
+	// minified are built/js/<source's hash>.js: each script as the build
+	// minified it, found by its source, so an edited script is never
+	// shadowed by an old build's.
+	minified map[string][]byte
+	sources  map[string][]byte // each script as it is, for Precompile
 }
 
 var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
@@ -64,7 +70,7 @@ var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
 // New reads every file in fsys (see the package doc). Two files with the
 // same name under different top folders are an error.
 func New(fsys fs.FS) (*Assets, error) {
-	a := &Assets{byName: map[string]*asset{}, byDigest: map[string]*asset{}, public: map[string]*asset{}, copies: map[string]map[string][]byte{}}
+	a := &Assets{byName: map[string]*asset{}, byDigest: map[string]*asset{}, public: map[string]*asset{}, copies: map[string]map[string][]byte{}, minified: map[string][]byte{}, sources: map[string][]byte{}}
 	var css []string
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || strings.HasPrefix(path.Base(p), ".") {
@@ -82,12 +88,16 @@ func New(fsys fs.FS) (*Assets, error) {
 			a.public[name] = a.digest(name, body)
 			return nil
 		}
-		if top == "resized" {
-			if key, copyName, ok := strings.Cut(name, "/"); ok && !strings.Contains(copyName, "/") {
+		if top == "built" {
+			kind, rest, _ := strings.Cut(name, "/")
+			switch key, copyName, ok := strings.Cut(rest, "/"); {
+			case kind == "images" && ok && !strings.Contains(copyName, "/"):
 				if a.copies[key] == nil {
 					a.copies[key] = map[string][]byte{}
 				}
 				a.copies[key][copyName] = body
+			case kind == "js" && !ok:
+				a.minified[strings.TrimSuffix(rest, ".js")] = body
 			}
 			return nil
 		}
@@ -104,7 +114,17 @@ func New(fsys fs.FS) (*Assets, error) {
 		return nil, err
 	}
 	for name, f := range a.byName {
-		if path.Ext(name) != ".css" {
+		switch path.Ext(name) {
+		case ".css":
+		case ".js":
+			// The build's minified copy, when there's one of this source.
+			body := f.body
+			a.sources[name] = body
+			if min, ok := a.minified[sourceHash(body)]; ok {
+				body = min
+			}
+			*f = *a.digest(name, body)
+		default:
 			*f = *a.digest(name, f.body)
 		}
 	}
@@ -263,4 +283,10 @@ func serve(w http.ResponseWriter, r *http.Request, f *asset) {
 		return
 	}
 	w.Write(body)
+}
+
+// sourceHash names a script's minified copy in built/js/.
+func sourceHash(body []byte) string {
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:])[:16]
 }

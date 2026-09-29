@@ -50,7 +50,8 @@ COPY . .
 {{- if .InModule}}
 WORKDIR {{.Work}}
 {{- end}}
-# The pictures' copies first (Rails' assets:precompile), for go build to embed.
+# The assets precompiled first (Rails' assets:precompile: the scripts
+# minified, the pictures' copies), for go build to embed.
 RUN templ generate -path {{.Work}} && go run ./cmd/{{.Name}} assets && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/{{.Name}}
 RUN mkdir -p /out/data
 
