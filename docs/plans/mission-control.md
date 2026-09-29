@@ -14,6 +14,7 @@
 - "conceptually rails but ideal golang is the goal"
 - On session expiry: "it doesn't belong in the framework, but the recipe is a good fit"
 - On encrypted fields: keys set at startup, "same as rails"; the extras wait: "yes".
+- On G2 and G3: "do rails defaults that make sense in go. I only want to address questions that you are unsure about"
 
 ## Goal
 gantry can carry Mission Control (MC): today Rails 8.1, about 7,300 lines of Ruby, SQLite, Solid Queue, Solid Cache, Solid Cable, Turbo and Stimulus, under Puma and Thruster. Target: one Go process, memory that stays flat while it streams, and no regressions against the Rails version run beside it.
@@ -67,17 +68,34 @@ Each lands with its tests, and in the gym site where it applies, before the next
 - Sessions: sign-in has two sides, a method that proves who someone is once (password, emailed code, TOTP, passkey, OAuth), and a database session that holds the result, its key carried by a cookie (browsers) or `Authorization: Bearer` (the CLI, agents, apps). Expiry and revocation live in the row, whichever way the key came. Expiry: `Idle` and `Lifetime` (zero: never, Rails' default); an ended session is deleted when found and the request goes on signed out; the cookie's own expiry matches `Lifetime`; `last_seen_at` written at most hourly; return-to after sign-in. Tested with testkit's clock. JWT is left to a recipe for an app that needs stateless tokens. Today's `auth` package becomes this recipe.
 - API tokens: their own table, built as sessions are (a random key, its digest stored): named, shown once, never expiring, revoked in the app's UI, and not ended by signing out everywhere.
 
-**G2: jobs** (Rails: Active Job + Solid Queue)
-- In the app's database and process: named queues with their own concurrency; enqueue now or later; retries with a wait, a number of attempts, and a hook when they run out; at most N at a time per key; recurring schedules (every N seconds, daily at a time in a zone); finished jobs cleared; a job's context cancelled on shutdown
-- In tests: run inline, or assert what was queued
+**G2: jobs** (Rails: Active Job + Solid Queue; Rails' defaults unless noted)
+- A job is a name, a typed argument struct and a function: `jobs.Define(q, "backup", perform, opts)` gives a `Job[A]` with `Enqueue(ctx, a)`, `EnqueueAt` and `EnqueueIn`. Arguments are stored as JSON; the name, not the Go type, identifies the job, so renaming code doesn't strand queued ones. Defined on the app's queue value, not a global registry.
+- Stored in the app's database, on both engines, in gantry's own tables (its own migration version table, as `auth`'s). Claimed with `FOR UPDATE SKIP LOCKED` on Postgres, through the single writer on SQLite. Enqueuing wakes the process's own workers at once; polling (Solid Queue's 0.1 s) is only for jobs scheduled later or enqueued by another process.
+- Run in the web process by default (Rails 8: Solid Queue in Puma), started by `app.Run`; or on its own, by an app subcommand.
+- Queues: named, each with its own concurrency (3 workers by default, as Solid Queue's threads), and a priority within a queue (lower first, 0 by default).
+- Failures: no retries unless asked, as Active Job. `Retry{Attempts: 5, Wait: 3 * time.Second}` (Rails' `retry_on` defaults), or `jobs.Polynomial` for Rails' `:polynomially_longer`; `OnExhausted` runs when attempts run out; `jobs.Discard(err)` gives up at once (`discard_on`). A failed job is kept, with its error, to inspect and retry by hand (Solid Queue's failed executions).
+- `Timeout` per job, none by default: the job's context ends at it. Rails can't do this (Ruby can't stop a thread safely); Go's contexts can, so it's the framework's. (Stopping the processes a job started is still MC's.)
+- At most N at a time per key: `Limit{To: 1, Key: func(A) string}`, a job over the limit waits (Solid Queue's `limits_concurrency`, `on_conflict: :block`; `Discard` as the other choice); a limit held by a crashed process expires after 3 minutes (Solid Queue's default period).
+- Recurring: in code, `jobs.Every(30 * time.Second)` and `jobs.Cron("0 3 * * *", loc)`, in a time zone (Solid Queue's `recurring.yml`). Each tick is enqueued once however many processes run: a unique (task, time) row, so a second insert is `db.IsUnique` and skipped.
+- Finished jobs kept a day, then cleared (Solid Queue's `clear_finished_jobs_after`).
+- Shutdown: workers stop claiming, running jobs get a grace period (5 s, Solid Queue's `shutdown_timeout`), then their contexts are cancelled and they go back to the queue. Each process heartbeats; a process silent for 5 minutes has its claimed jobs released (Solid Queue's defaults).
+- Enqueued inside a transaction: waits for its commit (G1's `AfterCommit`; Rails 7.2).
+- Logged as Rails does: enqueued, started, finished with its duration, failed with the error.
+- In tests: `testkit` runs jobs inline, or records them to assert on (`assert_enqueued_with`) and run later (`perform_enqueued_jobs`).
+- A page to see and retry jobs (Mission Control — Jobs) is a recipe, not the framework.
 
-**G3: pages and live updates** (Rails: turbo-rails, importmap-rails, Action Cable)
-- Live updates as Server-Sent Events carrying Turbo Stream HTML (refresh, append, replace), sent after commit, stream names signed, subscribers signed in; fragments rendered outside a request
-- `web.Frame(r)`: the Turbo Frame a request is for
-- An import map for Turbo, Stimulus and the app's modules, with no build step
-- A flash size limit
-- A cache with expiry times (Rails: `Rails.cache`)
-- Text helpers: time ago in words, byte sizes, pluralize; times in a zone (Rails: ActionView helpers, `Time.use_zone`)
+**G3: pages and live updates** (Rails: turbo-rails, Action Cable, importmap-rails, `Rails.cache`, ActionView helpers)
+- Live updates, over Server-Sent Events (decision 2):
+  - `live.Stream` serves a page's streams as SSE; it's an ordinary route, so the app's pipeline decides who may subscribe (signed in, and so on). Stream names are signed with `sign` (purpose "stream"), as `turbo_stream_from` does, so a page can only subscribe to what it was given.
+  - `Broadcast(ctx, stream, event)` sends to every subscriber; inside a transaction it waits for the commit. Refreshes to one stream within half a second are merged into one (turbo-rails' debounced `broadcast_refresh_to`).
+  - A comment line every 30 s keeps proxies from closing idle streams (Cloudflare closes after 100 s). A subscriber too slow to keep up is disconnected rather than buffered, so memory stays flat; the browser reconnects.
+  - In one process, the hub is in memory. Rails defaults to Solid Cable (the database) because Rails runs many processes; a gantry app is one. A database-backed hub waits for an app that runs several.
+  - Fragments render outside a request: a templ component renders to any writer, and `turbo` wraps it as a stream action.
+- Turbo (`turbo` package): stream actions (`turbo.Append(target, c)`, `Prepend`, `Replace`, `Update`, `Remove`, `Refresh`), `turbo.Frame(r)` (the `Turbo-Frame` header: the frame a request is for), and Turbo's HTTP rules as defaults: a redirect after a form submission is 303, a form with errors answers 422 (Rails 7).
+- Import map, no build step (importmap-rails, Rails 8's default): `pin` names to files under the app's assets, served digested; the page gets `<script type="importmap">` and `modulepreload` links. `gantry importmap pin turbo` downloads a package into the app's vendored assets (no CDN at run time). Stimulus controllers under `app/javascript/controllers` are pinned and registered by name, as `pin_all_from` and `eagerLoadControllersFrom`.
+- Flash size: a flash that would push its cookie past 4 KB (browsers' limit) is cut to fit, with a warning logged. Rails raises `CookieOverflow`; a cut message beats a 500.
+- A cache, `Rails.cache` in Go: `cache.Fetch(ctx, key, ttl, func() (T, error))`, `Read`, `Write`, `Delete`. In memory, capped at 32 MB (Rails' memory store default), least recently used out first; concurrent misses for one key compute it once (`singleflight`). A database-backed store (Solid Cache) waits for an app that runs several processes. Separate from `web.PageCache`, which keeps whole responses.
+- Text helpers, with Rails' exact wording so pages match: `TimeAgo` (`time_ago_in_words`: "less than a minute", "about 1 hour"), `ByteSize` (`number_to_human_size`: 1024-based, "1.23 MB"), `Pluralize` (`pluralize(2, "person")`, the generator's inflections). Times: the app's zone (UTC by default, `config.time_zone`) and a request's own zone in Current (`Time.use_zone`); helpers format in it.
 
 **Throughout**
 - Migrations run by a release hook on deploy; each migration's down and up run in a test
@@ -86,7 +104,7 @@ Each lands with its tests, and in the gym site where it applies, before the next
 ## MC's own, or Houston's (not gantry)
 These are real patterns, but they come from MC being an operations app, not from Rails:
 - Leases: a claim with a token, heartbeat, takeover after silence, a finish fenced by the token (`backup_run.rb`, `deploy.rb`)
-- A hard deadline per job, stopping everything it started (`DataRun`)
+- Stopping everything a job started when its deadline passes (`DataRun`); the deadline itself is G2's `Timeout`
 - Safe process calls (argv only, secrets in the environment, process-group kill, stdout and stderr apart, pipes) and their test double: next to Houston's `internal/docker`, which already exists
 - Sessions tied to tunnel vs LAN: MC's check, on top of gantry's sessions
 - The setup flow with a one-time code, and the installer's subcommands
@@ -97,6 +115,7 @@ These are real patterns, but they come from MC being an operations app, not from
 1. **Docker: the CLI or the Go SDK** (Houston's decision). I recommend the CLI, through Houston's `internal/docker`: Houston already runs docker only that way, MC's inventory has about 25 call sites written against it, and the SDK is a large dependency tree for a binary meant to be small. The SDK would give typed results and no parsing of CLI output; worth it only if parsing turns out fragile.
 2. **Live transport.** Server-Sent Events read by `<turbo-stream-source>` (recommended; plain HTTP, one process), rather than ActionCable's WebSocket protocol.
 3. **Jobs: build or adopt.** Needs SQLite and Postgres, per-key limits and recurring entries; G2 starts by checking libraries (goqite covers part), and I expect our own small package.
+   G2 and G3 take Rails' defaults as they make sense in Go (your direction, 2026-09-29: "Go through G2 and G3 and do rails defaults that make sense in go").
 4. **Turbo and Stimulus stay.** The 6 Stimulus controllers (175 lines) and the stylesheet move over as they are.
 5. **Moving MC's data.** Encrypted fields read with `crypt.Rails` and rewritten with gantry's keys; sessions reset (everyone signs in again); API tokens keep working (SHA-256 digests).
 6. **Filters are handlers.** A pipeline is a list of `web.Handler`s, so there's one type and nothing new to learn; values pass forward through Current. Considered: a separate type returning the request (`Step`, `Plug`, `Gate`), and an output added to `Handler`, which every action would return and throw away. `Middleware` stays the name for wrappers only.
