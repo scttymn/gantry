@@ -40,7 +40,7 @@ type NewApp struct {
 
 // latestRelease is what a new app requires when this gantry isn't a release
 // itself (built from a checkout): the newest tag when it was built.
-const latestRelease = "v0.7.0"
+const latestRelease = "v0.8.0"
 
 const templVersion = "v0.3.1020"
 
