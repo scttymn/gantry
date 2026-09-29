@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/a-h/templ"
 )
@@ -35,6 +36,16 @@ type Server struct {
 	Quality func(ctx context.Context) (int, error)
 	// Log gets the copies that fail to make. slog's default when nil.
 	Log *slog.Logger
+	// AVIF, when set (AVIFFor(Pipeline)), is a second format offered first:
+	// about half WebP's size, and slow to make, so an app makes its copies
+	// ahead (Pipeline.Prepare, at start or after an upload) and a page
+	// offers them once they're made. Its quality is its own.
+	AVIF *Pipeline
+	// HasAVIF says whether a photo's AVIF copies are ready to offer; nil:
+	// every width of them is on disk (remembered once it is).
+	HasAVIF func(key string) bool
+
+	avifReady sync.Map // key → true, once every AVIF copy is on disk
 }
 
 // Original is an uploaded file the server makes copies of.
@@ -86,30 +97,37 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if name == "original" && !s.Pipeline.Resizable(o.ContentType) {
 		path, contentType = o.Path, o.ContentType
 	} else {
-		width, quality, ok := s.Pipeline.ParseName(name)
-		if ok {
-			width, ok = s.Pipeline.Fit(width, o.Width)
+		// The name's extension says the format: WebP, or AVIF.
+		p, avif := s.Pipeline, s.AVIF != nil && strings.HasSuffix(name, s.AVIF.encoder().Ext())
+		if avif {
+			p = s.AVIF
 		}
-		if !ok || !s.Pipeline.Resizable(o.ContentType) {
+		width, quality, ok := p.ParseName(name)
+		if ok {
+			width, ok = p.Fit(width, o.Width)
+		}
+		if !ok || !p.Resizable(o.ContentType) {
 			http.NotFound(w, r)
 			return
 		}
-		current, err := s.quality(ctx)
-		if err != nil {
-			s.log().Error("images: quality", "err", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
+		current := p.QualityOr(0)
+		if !avif {
+			if current, err = s.quality(ctx); err != nil {
+				s.log().Error("images: quality", "err", err)
+				http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
+			}
 		}
 		if quality != current {
 			http.NotFound(w, r)
 			return
 		}
-		if path, err = s.Pipeline.Copy(ctx, key, o.Path, width, quality); err != nil {
+		if path, err = p.Copy(ctx, key, o.Path, width, quality); err != nil {
 			s.log().Error("images: copy", "key", key, "width", width, "err", err)
 			http.NotFound(w, r)
 			return
 		}
-		contentType = s.Pipeline.ContentType()
+		contentType = p.ContentType()
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -178,6 +196,36 @@ func (s *Server) Img(p Photo, o Img) templ.Component {
 	return templ.Raw(s.imgHTML(p, o))
 }
 
+// withAVIF: the photo comes in AVIF (Server.AVIF, HasAVIF).
+func (s *Server) withAVIF(p Photo) bool {
+	if s.AVIF == nil || !s.AVIF.Resizable(p.ContentType) {
+		return false
+	}
+	if s.HasAVIF != nil {
+		return s.HasAVIF(p.Key)
+	}
+	if _, ok := s.avifReady.Load(p.Key); ok {
+		return true
+	}
+	for _, w := range s.AVIF.WidthsFor(p.Width) {
+		if !s.AVIF.Has(p.Key, w, 0) {
+			return false
+		}
+	}
+	s.avifReady.Store(p.Key, true)
+	return true
+}
+
+// avifSource is the <source> of the photo's AVIF copies.
+func (s *Server) avifSource(p Photo, o Img) string {
+	esc := templ.EscapeString[string]
+	widths := s.AVIF.WidthsFor(p.Width)
+	srcset := Srcset(widths, func(w int) string {
+		return s.Prefix + p.Key + "/" + s.AVIF.Name(w, s.AVIF.QualityOr(0))
+	})
+	return `<source type="image/avif" sizes="` + esc(o.Sizes) + `" srcset="` + esc(srcset) + `">`
+}
+
 func (s *Server) imgHTML(p Photo, o Img) string {
 	esc := templ.EscapeString[string]
 	loading := `loading="lazy"`
@@ -194,14 +242,21 @@ func (s *Server) imgHTML(p Photo, o Img) string {
 	}
 	img := fmt.Sprintf(`<img alt="%s" sizes="%s" %s%s srcset="%s" src="%s">`,
 		esc(o.Alt), esc(o.Sizes), loading, dimensions, esc(srcset), esc(src))
+	avif := ""
+	if s.withAVIF(p) {
+		avif = s.avifSource(p, o)
+	}
 	if o.PlaceholderWhen == "" {
-		return img
+		if avif == "" {
+			return img
+		}
+		return "<picture>" + avif + img + "</picture>"
 	}
 	placeholder := p.Placeholder
 	if placeholder == "" {
 		placeholder = transparent
 	}
-	return `<picture><source media="` + esc(o.PlaceholderWhen) + `" srcset="` + esc(placeholder) + `">` + img + `</picture>`
+	return `<picture><source media="` + esc(o.PlaceholderWhen) + `" srcset="` + esc(placeholder) + `">` + avif + img + `</picture>`
 }
 
 // Blurred is a photo's placeholder as a CSS image, for a background under

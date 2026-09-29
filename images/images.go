@@ -11,6 +11,21 @@
 // Making a copy takes far more memory than serving one (a 24-megapixel photo
 // takes a few hundred megabytes), so the server has a short-lived copy of
 // itself do it (Child): the memory goes when the child exits.
+//
+// The standard way, for every picture an app shows:
+//   - every picture comes in AVIF (offered first, about half WebP's size) and
+//     WebP, at the standard widths up to its own (Widths);
+//   - its copies are made ahead: a picture shipped with the app, in the build
+//     (assets.Images); an upload, just after it arrives, in a child
+//     (Pipeline.Prepare with Server.AVIF, from a job or the upload's handler),
+//     so no visitor waits for one; a WebP copy asked for before then is made
+//     on request, and AVIF is offered once it's made;
+//   - a page draws it with Server.Img: a <picture>, AVIF first, the WebP <img>
+//     sized so nothing shifts, fetched first when it's on screen at once
+//     (Img.Priority) and lazily otherwise.
+//
+// On a machine that would make AVIF at a crawl (AVIFSlow), an app makes WebP
+// alone, and pages offer WebP alone.
 package images
 
 import (
@@ -18,6 +33,7 @@ import (
 	"image/jpeg"
 	"io"
 	"runtime"
+	"strings"
 
 	"golang.org/x/sys/cpu"
 
@@ -70,6 +86,24 @@ func AVIFSlow() string {
 		return "this is " + runtime.GOARCH + ", where the encoder isn't compiled"
 	}
 	return ""
+}
+
+// AVIFFor is p's AVIF: the same folder, widths, readers and maker, AVIF at
+// AVIFQuality. An app's Server offers it first (Server.AVIF).
+func AVIFFor(p *Pipeline) *Pipeline {
+	return &Pipeline{Dir: p.Dir, Encoder: AVIF{}, Quality: AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker,
+		PlaceholderWidth: p.PlaceholderWidth, PlaceholderQuality: p.PlaceholderQuality}
+}
+
+// encoderFor is the encoder that writes a file named so: a copy's name says
+// its format, so one resizing child makes every format.
+func encoderFor(path string) (Encoder, bool) {
+	for _, e := range []Encoder{WebP{}, AVIF{}, JPEG{}} {
+		if strings.HasSuffix(path, e.Ext()) {
+			return e, true
+		}
+	}
+	return nil, false
 }
 
 func (AVIF) ContentType() string { return "image/avif" }

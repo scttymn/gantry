@@ -3,7 +3,6 @@ package assets
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path"
@@ -34,13 +33,12 @@ import (
 // build's copies (in development, in tests), a copy is made when it's first
 // asked for.
 type Images struct {
-	a          *Assets
-	pipeline   *images.Pipeline // WebP, what every browser takes
-	avif       *images.Pipeline // AVIF, offered first
-	server     *images.Server
-	avifServer *images.Server
-	byName     map[string]*picture
-	byKey      map[string]*picture
+	a        *Assets
+	pipeline *images.Pipeline // WebP, what every browser takes
+	avif     *images.Pipeline // AVIF, offered first
+	server   *images.Server   // AVIF beside WebP, as uploads' (images.Server.AVIF)
+	byName   map[string]*picture
+	byKey    map[string]*picture
 }
 
 type picture struct {
@@ -94,8 +92,7 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 		im.byName[name], im.byKey[key] = pic, pic
 	}
 	im.avif = &images.Pipeline{Dir: p.Dir, Encoder: images.AVIF{}, Quality: images.AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker}
-	im.server = &images.Server{Pipeline: p, Prefix: ImagesPrefix, Find: im.find}
-	im.avifServer = &images.Server{Pipeline: im.avif, Prefix: ImagesPrefix, Find: im.find}
+	im.server = &images.Server{Pipeline: p, AVIF: im.avif, HasAVIF: im.withAVIF, Prefix: ImagesPrefix, Find: im.find}
 	a.images = im
 	return im
 }
@@ -180,9 +177,9 @@ func (im *Images) Precompiled() bool {
 // request.
 func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, ImagesPrefix), "/")
-	p, server := im.pipeline, im.server
+	p := im.pipeline
 	if strings.HasSuffix(name, im.avif.Encoder.Ext()) {
-		p, server = im.avif, im.avifServer
+		p = im.avif
 		if _, built := im.a.copies[key][name]; !built && !im.withAVIF(key) {
 			http.NotFound(w, r)
 			return
@@ -197,13 +194,13 @@ func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	server.ServeHTTP(w, r)
+	im.server.ServeHTTP(w, r)
 }
 
 // Img is the picture's <picture>: its AVIF copies (when it comes in AVIF:
-// withAVIF), then an <img> of its WebP ones for a browser without AVIF, the browser picking by o.Sizes, and
-// the <img> sized so the page doesn't shift as it loads. (A picture with
-// o.PlaceholderWhen is its WebP <img> alone, which is a <picture> already.)
+// withAVIF), then an <img> of its WebP ones for a browser without AVIF, the
+// browser picking by o.Sizes, and the <img> sized so the page doesn't shift
+// as it loads: images.Server.Img, as uploads' photos are drawn.
 // An unknown name is a programming error, so it panics: the page that uses
 // it fails in its tests.
 func (im *Images) Img(name string, o images.Img) templ.Component {
@@ -211,21 +208,5 @@ func (im *Images) Img(name string, o images.Img) templ.Component {
 	if !ok {
 		panic("no picture " + name + " in the assets")
 	}
-	photo := images.Photo{Key: pic.key, ContentType: pic.contentType, Width: pic.width, Height: pic.height}
-	img := im.server.Img(photo, o)
-	if o.PlaceholderWhen != "" || !im.withAVIF(pic.key) {
-		return img
-	}
-	_, srcset := im.avifServer.Sources(photo)
-	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
-		esc := templ.EscapeString[string]
-		if _, err := io.WriteString(w, `<picture><source type="image/avif" sizes="`+esc(o.Sizes)+`" srcset="`+esc(srcset)+`">`); err != nil {
-			return err
-		}
-		if err := img.Render(ctx, w); err != nil {
-			return err
-		}
-		_, err := io.WriteString(w, "</picture>")
-		return err
-	})
+	return im.server.Img(images.Photo{Key: pic.key, ContentType: pic.contentType, Width: pic.width, Height: pic.height}, o)
 }

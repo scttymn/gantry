@@ -242,13 +242,18 @@ func (p *Pipeline) Resize(data []byte, width, quality int) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// ResizeFile resizes src into dst: what the child process runs.
+// ResizeFile resizes src into dst, in the format dst's name says (the
+// pipeline's when it says none): what the child process runs.
 func (p *Pipeline) ResizeFile(src, dst string, width, quality int) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	out, err := p.Resize(data, width, quality)
+	q := p
+	if e, ok := encoderFor(dst); ok && e.Ext() != p.encoder().Ext() {
+		q = &Pipeline{Encoder: e, Decoders: p.Decoders, Widths: p.Widths, Quality: p.Quality}
+	}
+	out, err := q.Resize(data, width, quality)
 	if err != nil {
 		return err
 	}
@@ -319,7 +324,8 @@ func (p *Pipeline) make(ctx context.Context, src, path string, width, quality in
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	tmp := filepath.Join(filepath.Dir(path), fmt.Sprintf(".tmp-%dw-q%d-%d", width, quality, time.Now().UnixNano()))
+	// Its extension says the format, for a child that makes every format.
+	tmp := filepath.Join(filepath.Dir(path), fmt.Sprintf(".tmp-%dw-q%d-%d%s", width, quality, time.Now().UnixNano(), p.encoder().Ext()))
 	defer os.Remove(tmp)
 	maker := p.Maker
 	if maker == nil {

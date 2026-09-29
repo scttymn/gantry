@@ -5,6 +5,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -168,4 +170,105 @@ func TestImg(t *testing.T) {
 			t.Error("a blur with no placeholder")
 		}
 	})
+}
+
+// AVIF beside WebP (the standard way: docs/plans/mission-control.md, G3's
+// images): offered first once a photo's AVIF copies are made, and served as
+// its WebP ones are.
+func TestServerAVIF(t *testing.T) {
+	ctx := context.Background()
+	s, src := newServer(t, 80)
+	s.AVIF = AVIFFor(s.Pipeline)
+	render := func(p Photo, o Img) string {
+		var b strings.Builder
+		if err := s.Img(p, o).Render(ctx, &b); err != nil {
+			t.Fatal(err)
+		}
+		return b.String()
+	}
+	photo := Photo{Key: "k", ContentType: "image/jpeg", Width: 500, Height: 250, Quality: 80}
+
+	if got := render(photo, Img{Sizes: "100vw"}); strings.Contains(got, "avif") {
+		t.Errorf("AVIF offered before it's made: %s", got)
+	}
+	for _, w := range s.AVIF.WidthsFor(500) {
+		if _, err := s.AVIF.Copy(ctx, "k", src, w, 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got := render(photo, Img{Sizes: "100vw"})
+	want := `<picture><source type="image/avif" sizes="100vw" srcset="/photos/k/160w-q50.avif 160w, /photos/k/240w-q50.avif 240w, /photos/k/320w-q50.avif 320w, /photos/k/480w-q50.avif 480w"><img `
+	if !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "></picture>") || !strings.Contains(got, `srcset="/photos/k/160w-q80.webp 160w`) {
+		t.Errorf("\n%s\nwant it to start\n%s", got, want)
+	}
+	// With a placeholder for phones: that source first, then AVIF.
+	ph := render(Photo{Key: "k", ContentType: "image/jpeg", Width: 500, Placeholder: "data:image/webp;base64,AAAA"}, Img{PlaceholderWhen: "(max-width: 640px)"})
+	if !strings.HasPrefix(ph, `<picture><source media="(max-width: 640px)" srcset="data:image/webp;base64,AAAA"><source type="image/avif"`) || strings.Count(ph, "<picture>") != 1 {
+		t.Errorf("with a placeholder: %s", ph)
+	}
+
+	// Served: a made copy, and one asked for as the WebP ones are.
+	for _, path := range []string{"/photos/k/240w-q50.avif", "/photos/k/720w-q50.avif"} {
+		rec := get(s, path)
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/avif" {
+			t.Errorf("%s: %d %s", path, rec.Code, rec.Header().Get("Content-Type"))
+		}
+		if _, _, ct, err := s.Pipeline.Dimensions(rec.Body.Bytes()); err != nil || ct != "image/avif" {
+			t.Errorf("%s isn't AVIF: %s %v", path, ct, err)
+		}
+	}
+	for _, path := range []string{"/photos/k/240w-q80.avif", "/photos/k/240w-q50.webp", "/photos/k/250w-q50.avif"} {
+		if rec := get(s, path); rec.Code != 404 {
+			t.Errorf("%s: %d", path, rec.Code)
+		}
+	}
+	// An app can say when a photo's AVIF is ready (the assets': the build's).
+	s.HasAVIF = func(key string) bool { return false }
+	if got := render(photo, Img{}); strings.Contains(got, "avif") {
+		t.Errorf("HasAVIF false, AVIF offered: %s", got)
+	}
+	// Without AVIF, WebP alone, as ever.
+	s.AVIF, s.HasAVIF = nil, nil
+	if got := render(photo, Img{}); strings.Contains(got, "picture") {
+		t.Errorf("no AVIF pipeline: %s", got)
+	}
+}
+
+func TestAVIFFor(t *testing.T) {
+	webp := &Pipeline{Dir: "/data/variants", Widths: []int{100, 200}, Decoders: []Decoder{nil}, Maker: Child{Exe: "/app"}, Quality: 70}
+	a := AVIFFor(webp)
+	if a.Dir != webp.Dir || len(a.Widths) != 2 || len(a.Decoders) != 1 || a.Maker != webp.Maker || a.QualityOr(0) != AVIFQuality || a.ContentType() != "image/avif" {
+		t.Errorf("%+v", a)
+	}
+}
+
+// One resizing child makes both formats: the copy's name says which.
+func TestResizeFileByExtension(t *testing.T) {
+	src := source(t)
+	dir := t.TempDir()
+	var p Pipeline // WebP by default
+	for ext, want := range map[string]string{".avif": "image/avif", ".webp": "image/webp", ".tmp": "image/webp"} {
+		dst := filepath.Join(dir, "copy"+ext)
+		if err := p.ResizeFile(src, dst, 160, 50); err != nil {
+			t.Fatal(ext, err)
+		}
+		data, _ := os.ReadFile(dst)
+		if _, _, ct, err := p.Dimensions(data); err != nil || ct != want {
+			t.Errorf("%s: %s %v", ext, ct, err)
+		}
+	}
+	// And the file a copy is made into keeps its extension, for the child.
+	var seen string
+	a := AVIFFor(&Pipeline{Dir: dir, Maker: makerFunc(func(dst string) { seen = dst })})
+	a.Copy(context.Background(), "k", src, 160, 0)
+	if filepath.Ext(seen) != ".avif" {
+		t.Errorf("made into %s", seen)
+	}
+}
+
+type makerFunc func(dst string)
+
+func (m makerFunc) Make(ctx context.Context, src, dst string, width, quality int) error {
+	m(dst)
+	return InProcess{}.Make(ctx, src, dst, width, quality)
 }
