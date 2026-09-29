@@ -149,7 +149,7 @@ func TestSessions(t *testing.T) {
 		a := newApp(t)
 		for _, creds := range [][2]string{{"one@example.com", "wrong"}, {"nobody@example.com", password}} {
 			rec := a.signIn(creds[0], creds[1])
-			if rec.Code != 302 || rec.Header().Get("Location") != "/login" || a.cookie("session") != nil {
+			if rec.Code != 303 || rec.Header().Get("Location") != "/login" || a.cookie("session") != nil {
 				t.Fatalf("%v: %d %v", creds, rec.Code, rec.Header())
 			}
 			if body := a.do("GET", "/login", nil).Body.String(); !strings.Contains(body, "Try another email address or password.") {
@@ -258,7 +258,7 @@ func TestPasswords(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		a := newApp(t)
 		rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
-		if rec.Code != 302 || rec.Header().Get("Location") != "/login" || len(a.mail.sent) != 1 {
+		if rec.Code != 303 || rec.Header().Get("Location") != "/login" || len(a.mail.sent) != 1 {
 			t.Fatalf("%d %v sent %d", rec.Code, rec.Header(), len(a.mail.sent))
 		}
 		m := a.mail.sent[0]
@@ -293,7 +293,7 @@ func TestPasswords(t *testing.T) {
 		a := newApp(t)
 		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
 		rec := update(a, a.resetLink(), "a new password", "a new password")
-		if rec.Code != 302 || rec.Header().Get("Location") != "/login" {
+		if rec.Code != 303 || rec.Header().Get("Location") != "/login" {
 			t.Fatalf("%d %v", rec.Code, rec.Header())
 		}
 		if _, ok := a.auth.Authenticate(context.Background(), "one@example.com", "a new password"); !ok {

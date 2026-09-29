@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"github.com/scttymn/gantry/text"
 	"io"
 	"os"
 	"path/filepath"
@@ -62,7 +63,7 @@ func parseResource(root string, args []string) (Resource, error) {
 		return r, fmt.Errorf("%q isn't a table name", name)
 	}
 	r.Table = name
-	r.Param = singularize(name)
+	r.Param = text.Singularize(name)
 	r.Package = strings.ReplaceAll(name, "_", "")
 	renames := sqlcRenames(root)
 	r.Model = goName(r.Param, renames)
@@ -231,22 +232,6 @@ func goName(s string, renames map[string]string) string {
 		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
 	}
 	return b.String()
-}
-
-// singularize is enough of Rails' for table names: "categories" is
-// "category", "steps" is "step", "addresses" is "address".
-func singularize(s string) string {
-	switch {
-	case strings.HasSuffix(s, "ies"):
-		return strings.TrimSuffix(s, "ies") + "y"
-	case strings.HasSuffix(s, "sses"), strings.HasSuffix(s, "shes"), strings.HasSuffix(s, "ches"), strings.HasSuffix(s, "xes"):
-		return strings.TrimSuffix(s, "es")
-	case strings.HasSuffix(s, "ss"):
-		return s
-	case strings.HasSuffix(s, "s"):
-		return strings.TrimSuffix(s, "s")
-	}
-	return s
 }
 
 // Humanize is Rails' String#humanize: underscores to spaces, the first

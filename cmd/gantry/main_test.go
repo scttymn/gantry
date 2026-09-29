@@ -114,14 +114,6 @@ func TestResourceRules(t *testing.T) {
 	})
 }
 
-func TestSingularize(t *testing.T) {
-	for plural, want := range map[string]string{"pillars": "pillar", "categories": "category", "addresses": "address", "boxes": "box", "staff": "staff", "faqs": "faq"} {
-		if got := singularize(plural); got != want {
-			t.Errorf("%s: %s, want %s", plural, got, want)
-		}
-	}
-}
-
 // g resource writes its table's migration too, and it applies and rolls back.
 func TestResourceMigration(t *testing.T) {
 	root := app(t)

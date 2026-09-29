@@ -112,6 +112,9 @@ func (rt *Router) arrive(next http.Handler) http.Handler {
 			r = withoutForwarding(r, rt.Proxies.ClientIP)
 		}
 		Set(r, originKey, o)
+		if rt.TimeZone != nil {
+			Set(r, zoneKey, rt.TimeZone)
+		}
 		if len(rt.Hosts) > 0 && r.URL.Path != "/up" && !allowedHost(rt.Hosts, o.host) {
 			rt.Error(w, r, http.StatusForbidden)
 			return

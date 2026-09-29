@@ -2,12 +2,15 @@ package web
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
+	_ "time/tzdata" // the zones, wherever the tests run
 )
 
 // seen is what a handler behind the router learns of the request.
@@ -134,5 +137,41 @@ func TestHosts(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 200 {
 		t.Errorf("/up = %d", w.Code)
+	}
+}
+
+func TestZone(t *testing.T) {
+	chicago, _ := time.LoadLocation("America/Chicago")
+	tokyo, _ := time.LoadLocation("Asia/Tokyo")
+	noon := time.Date(2026, 1, 15, 18, 0, 0, 0, time.UTC)
+	shown := func(rt *Router, filters Pipeline) string {
+		t.Helper()
+		rt.Scope("/", filters, func(s *Scope) {
+			s.Handle("GET /when", func(w http.ResponseWriter, r *http.Request) error {
+				_, err := io.WriteString(w, Zone(r).String()+" "+Local(r, noon).Format("15:04"))
+				return err
+			})
+		})
+		w := httptest.NewRecorder()
+		rt.Handler().ServeHTTP(w, httptest.NewRequest("GET", "/when", nil))
+		return w.Body.String()
+	}
+	if got := shown(NewRouter(nil, nil), nil); got != "UTC 18:00" {
+		t.Errorf("no zone set: %q", got)
+	}
+	rt := NewRouter(nil, nil)
+	rt.TimeZone = chicago
+	if got := shown(rt, nil); got != "America/Chicago 12:00" {
+		t.Errorf("the app's zone: %q", got)
+	}
+	rt = NewRouter(nil, nil)
+	rt.TimeZone = chicago
+	user := func(w http.ResponseWriter, r *http.Request) error { SetZone(r, tokyo); return nil }
+	if got := shown(rt, Pipeline{user}); got != "Asia/Tokyo 03:00" {
+		t.Errorf("the user's zone: %q", got)
+	}
+	// Outside a router: UTC.
+	if z := Zone(httptest.NewRequest("GET", "/", nil)); z != time.UTC {
+		t.Errorf("outside a router: %v", z)
 	}
 }

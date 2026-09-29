@@ -23,6 +23,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Handler is a request handler that can fail. An error it returns before
@@ -96,7 +97,10 @@ type Router struct {
 	// Hosts are the hosts the app answers to (Rails' config.hosts): any
 	// when empty, else a request for another is refused, 403. "example.com"
 	// is that host, ".example.com" it and its subdomains. /up answers any.
-	Hosts       []string
+	Hosts []string
+	// TimeZone is the app's (Rails' config.time_zone), every request's until
+	// web.SetZone changes it: UTC when nil.
+	TimeZone    *time.Location
 	mux         *http.ServeMux
 	root        *Scope        // the router's own routes
 	constraints []constrained // tried in order, before them
