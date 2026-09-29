@@ -247,6 +247,11 @@ myapp/
 
 **Tests:** each item's, on SQLite, and by hand on Postgres 17 as in G1; the mutation check. Then `gantry new`'s app runs a queue, and MC's Go app gets it with the next release.
 
+**G2 progress:**
+- **The jobs package** (2026-09-29, `2a8239c`): as mapped, with three changes found in the building. `jobs.New(ctx, d, o)` takes a context (it migrates). Recurring jobs are methods on the job, with the arguments each tick gets: `backup.Every(time.Hour, a)` and `backup.Cron("0 3 * * *", loc, a)` (cron by gronx, a small library; a bad expression is an error). A limit's other choice is `Limit{Discard: true}`, not an `OnConflict`. Missed ticks aren't made up: after downtime a recurring job runs once, then on schedule (Solid Queue's). Tests use `q.Drain(ctx)` and `q.Pending(ctx)` with testkit's clock, so there's no separate testkit helper; `q.Failed` and `q.Retry(ctx, id)` are there for a jobs page (a recipe). The tests are 15, on SQLite, under `-race`, and on Postgres 17 (the test binary in the `postgres:17` image). The mutation check caught all 21, after three gaps closed: a finished job freeing its limit's slot, a live process's old claim left alone by maintenance, and one mutation redone because it didn't compile.
+- **`gantry new`'s app runs it** (2026-09-29, `046fe5e`): `App.Jobs`, defined in `app/jobs.go` (`DefineJobs`); `serve` runs the queue beside the server and stops it with the server (Rails 8's Solid Queue in Puma), unless `JOBS_IN_SERVER=false`; `myapp jobs` runs them alone. The app's tests build `App` with the queue. Checked end to end in a generated app: a recurring job ran each second under `serve`, not at all with `JOBS_IN_SERVER=false`, and under `shop jobs`. Also, every Go file a generator writes is now gofmt'd, and the golden tests check it (the recipes' tests had a misaligned map).
+- **Next:** MC's Go app and the gym site pick jobs up with the next release; then G3.
+
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
 These are real patterns, but they come from MC being an operations app, not from Rails:
