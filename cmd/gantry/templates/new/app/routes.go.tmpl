@@ -23,7 +23,10 @@ type App struct {
 
 // Handler is every route, in gantry's middleware.
 func (a *App) Handler() http.Handler {
-	rt := web.NewRouter(a.Log, errorPage)
+	rt := web.NewRouter(a.Log, nil)
+	// Errors are assets/public's pages (404.html, 500.html ...), plain
+	// files, so they show even when the app can't draw a page.
+	rt.Public = assets.All
 
 	homePage := home.Controller{DB: a.DB}
 	rt.Handle("GET /{$}", homePage.Show)

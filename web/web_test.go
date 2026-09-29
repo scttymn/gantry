@@ -85,11 +85,12 @@ func TestErrors(t *testing.T) {
 		})
 	}
 	t.Run("an error on something that isn't a page is only a status", func(t *testing.T) {
-		for _, headers := range [][]string{{"Accept", "application/json"}, {"Accept", "image/webp"}} {
-			rec := do(h, "GET", "/posts/2", nil, headers...)
-			if rec.Code != 404 || rec.Body.Len() != 0 {
-				t.Errorf("%v: %d %q", headers, rec.Code, rec.Body)
-			}
+		if rec := do(h, "GET", "/posts/2", nil, "Accept", "image/webp"); rec.Code != 404 || rec.Body.Len() != 0 {
+			t.Errorf("an image: %d %q", rec.Code, rec.Body)
+		}
+		// Data is answered as data (docs/plans/mission-control.md, G1 item 8).
+		if rec := do(h, "GET", "/posts/2", nil, "Accept", "application/json"); rec.Code != 404 || rec.Body.String() != "{\"error\":\"Not Found\"}\n" {
+			t.Errorf("JSON: %d %q", rec.Code, rec.Body)
 		}
 		if rec := do(h, "GET", "/missing.png", nil); rec.Code != 404 || rec.Body.Len() != 0 {
 			t.Errorf("a file: %d %q", rec.Code, rec.Body)

@@ -6,8 +6,6 @@ package assets
 
 import (
 	"embed"
-	"fmt"
-	"io/fs"
 	"net/http"
 
 	gantry "github.com/scttymn/gantry/assets"
@@ -28,9 +26,3 @@ func Path(name string) string { return All.Path(name) }
 
 // Routes mounts /assets/ and the root files.
 func Routes(mount func(pattern string, h http.Handler)) { All.Routes(mount) }
-
-// ErrorPage is public/<status>.html, if the app has one.
-func ErrorPage(status int) ([]byte, bool) {
-	b, err := fs.ReadFile(files, fmt.Sprintf("public/%d.html", status))
-	return b, err == nil
-}

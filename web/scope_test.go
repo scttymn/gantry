@@ -36,7 +36,9 @@ func answer(w http.ResponseWriter, r *http.Request) error {
 
 func serve(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
-	h.ServeHTTP(w, httptest.NewRequest(method, path, nil))
+	r := httptest.NewRequest(method, path, nil)
+	r.Header.Set("Accept", "text/plain") // the bare status, not a page
+	h.ServeHTTP(w, r)
 	return w
 }
 

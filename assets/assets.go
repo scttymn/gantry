@@ -172,6 +172,17 @@ func (a *Assets) PublicPath(name string) string {
 	return "/" + name + "?v=" + strings.TrimSuffix(strings.TrimPrefix(f.digested, strings.TrimSuffix(name, ext)+"-"), ext)
 }
 
+// Public is a root file's contents (public/404.html is "404.html"), and
+// whether there's one: what the router reads its error pages from
+// (web.Router.Public).
+func (a *Assets) Public(name string) ([]byte, bool) {
+	f, ok := a.public[name]
+	if !ok {
+		return nil, false
+	}
+	return f.body, true
+}
+
 // Handler serves /assets/<digested name>. Anything else is 404.
 func (a *Assets) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

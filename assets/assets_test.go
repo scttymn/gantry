@@ -220,3 +220,17 @@ func randomCSS(n int) string {
 	}
 	return b.String()
 }
+
+// The router reads the app's error pages from its public files.
+func TestPublic(t *testing.T) {
+	a := MustNew(files)
+	if b, ok := a.Public("robots.txt"); !ok || string(b) != "User-agent: *\n" {
+		t.Errorf("robots.txt = %q, %v", b, ok)
+	}
+	if _, ok := a.Public("404.html"); ok {
+		t.Error("a file that isn't there")
+	}
+	if _, ok := a.Public("site.css"); ok {
+		t.Error("an asset outside public/ read as a public file")
+	}
+}

@@ -30,7 +30,8 @@ import (
 type Handler func(w http.ResponseWriter, r *http.Request) error
 
 // ErrorPage writes the app's page for an error status. The router calls it
-// only for a browser (WantsHTML); anything else gets the bare status.
+// only for a browser (WantsHTML), and if it panics, serves the app's public
+// <status>.html instead (Router.Public).
 type ErrorPage func(w http.ResponseWriter, r *http.Request, status int)
 
 // Error carries the status a handler wants: web.Status(422, err).
@@ -58,6 +59,7 @@ var NotFound = Status(http.StatusNotFound, nil)
 //   - an *Error's own status
 //   - 404 for a row that doesn't exist (sql.ErrNoRows)
 //   - 413 for a body over its limit
+//   - 422 for Invalid
 //   - 500 for anything else
 func StatusOf(err error) int {
 	var e *Error
@@ -69,6 +71,8 @@ func StatusOf(err error) int {
 		return http.StatusNotFound
 	case errors.As(err, &tooLarge):
 		return http.StatusRequestEntityTooLarge
+	case errors.As(err, new(Invalid)):
+		return http.StatusUnprocessableEntity
 	}
 	return http.StatusInternalServerError
 }
@@ -78,6 +82,9 @@ type Router struct {
 	Log       *slog.Logger
 	ErrorPage ErrorPage
 	Cache     *PageCache // for Cached routes; nil: they aren't cached
+	// Public is the app's public folder (assets.All), where its error pages
+	// are: an error is its <status>.html when the app has one.
+	Public PublicFiles
 	// Proxies is which peers are trusted proxies, and the header they name
 	// the visitor's address in; the zero value trusts private networks.
 	Proxies Proxies
@@ -125,17 +132,13 @@ func (rt *Router) Fail(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		return
 	}
-	rt.Error(w, r, status)
+	rt.answer(w, r, status, err)
 }
 
-// Error answers with status: the app's page for a browser, else the bare
-// status.
+// Error answers with status, with no error to tell (see answer): a page
+// for a browser, JSON for a client asking for it, else the bare status.
 func (rt *Router) Error(w http.ResponseWriter, r *http.Request, status int) {
-	if rt.ErrorPage == nil || !WantsHTML(r) {
-		w.WriteHeader(status)
-		return
-	}
-	rt.ErrorPage(w, r, status)
+	rt.answer(w, r, status, nil)
 }
 
 // WantsHTML: a request for a page, not a file or data. An extension other
