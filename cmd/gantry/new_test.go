@@ -234,7 +234,7 @@ func TestAppCommandsOutsideAnApp(t *testing.T) {
 }
 
 // A new app builds, vets clean and passes its own tests, against this
-// checkout (--gantry, go.work). It needs the toolchain (templ, and Go's
+// checkout. It needs the toolchain (templ, and Go's
 // module cache or the network): bin/go go test ./cmd/gantry runs it.
 func TestNewAppBuilds(t *testing.T) {
 	if testing.Short() {
@@ -249,6 +249,10 @@ func TestNewAppBuilds(t *testing.T) {
 		t.Fatal(stderr)
 	}
 	dir := filepath.Join(root, "shop")
+	// This checkout, not the release go.mod requires: go.work alone still
+	// reads that release's go.mod, which isn't published until it's tagged.
+	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
 	for _, step := range [][]string{{"templ", "generate"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
 		cmd := exec.Command(step[0], step[1:]...)
 		cmd.Dir = dir
