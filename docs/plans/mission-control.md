@@ -16,6 +16,7 @@
 - On encrypted fields: keys set at startup, "same as rails"; the extras wait: "yes".
 - On G2 and G3: "do rails defaults that make sense in go. I only want to address questions that you are unsure about"
 - On the default for pages: "turbo and stimulus is fine. We can always rewrite the gym site with the updated version"
+- On an app's commands: "having this work in a local docker container by default. This would make using houston a lot easier and gantry and houston are parts of the same ecosystem." "under the hood, that could just run houston."
 
 ## Goal
 gantry can carry Mission Control (MC): today Rails 8.1, about 7,300 lines of Ruby, SQLite, Solid Queue, Solid Cache, Solid Cable, Turbo and Stimulus, under Puma and Thruster. Target: one Go process, memory that stays flat while it streams, and no regressions against the Rails version run beside it.
@@ -112,8 +113,9 @@ Each lands with its tests, and in the gym site where it applies, before the next
 - An app's own commands (Rails: `bin/rails`, rake tasks, `runner`):
   - The app's binary is its command line: `myapp` serves (the web and, by default, jobs), `myapp db ...` as above, `myapp jobs` runs only jobs, and `myapp tasks` lists the app's own.
   - The app's tasks are registered in one file, as routes are (`app/tasks.go`: a name, a line of help and a function given the app's context), and run as `myapp task NAME args...`. That covers rake tasks and `rails runner`. Go has no console (`rails console`); `db console` is the nearest.
-  - In development, `gantry db migrate`, `gantry task ...` and the rest run the app's own binary (`go run ./cmd/myapp ...`), as `bin/rails` does, so the same code runs in development and production.
-  - `gantry new` writes all of this.
+  - In development these run in the app's local container by default, and gantry just runs Houston to do it (gantry and Houston are one ecosystem): `gantry db migrate` is `houston exec myapp db migrate`, in the running dev container, or a one-off container from the same image, code, data and environment when it isn't running (as `docker compose exec web bin/rails ...`). Generators write files on the host and run their tools (sqlc, templ, `go`) the same way, so only Docker, Houston and gantry are installed. `--local` runs on the host instead, for someone without Docker.
+  - `gantry new` writes all of this, and runs `houston init` for Houston's files (Dockerfile stages, `compose.yml` with `x-houston`), with its commands set: `test` is `go test ./...`, `console` is `myapp db console`. A new app runs under `houston dev` from the start.
+  - Needs from Houston (Houston's plan): `houston exec CMD...`, any command in the app's container or a one-off one; `console` becomes a case of it.
 
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
