@@ -61,10 +61,10 @@ func TestRefused(t *testing.T) {
 	other := "x_" + strings.TrimPrefix(tok, apitokens.Prefix)
 	models.New(d.Write).CreateAPIToken(ctx, models.CreateAPITokenParams{Name: "other", TokenDigest: token.Digest(other), Now: clock.Now()})
 	for name, header := range map[string]string{
-		"no token":        "",
-		"a wrong one":     "Bearer " + apitokens.Prefix + "nope",
-		"another prefix":  "Bearer " + other,
-		"another scheme":  "Basic " + tok,
+		"no token":       "",
+		"a wrong one":    "Bearer " + apitokens.Prefix + "nope",
+		"another prefix": "Bearer " + other,
+		"another scheme": "Basic " + tok,
 	} {
 		b.Header.Set("Authorization", header)
 		if page := b.Get("/api/me"); page.Code != 401 || !strings.Contains(page.Body, `"error"`) {

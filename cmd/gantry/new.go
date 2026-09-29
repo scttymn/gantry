@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"go/format"
 	"io"
 	"io/fs"
 	"os"
@@ -267,9 +268,16 @@ func enclosingModule(dir string) (root, path string, err error) {
 	}
 }
 
+// write writes a generated file, a Go one as gofmt would (a template that
+// doesn't parse is written as it is, for the build to report).
 func write(path string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
+	}
+	if strings.HasSuffix(path, ".go") {
+		if f, err := format.Source(body); err == nil {
+			body = f
+		}
 	}
 	return os.WriteFile(path, body, 0o644)
 }

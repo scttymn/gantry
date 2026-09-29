@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/jobs"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/web"
 
@@ -19,6 +20,7 @@ type App struct {
 	DB     *db.DB
 	Log    *slog.Logger
 	Signer sign.Signer
+	Jobs   *jobs.Queue // the background jobs, defined in app/jobs.go
 }
 
 // Handler is every route, in gantry's middleware.

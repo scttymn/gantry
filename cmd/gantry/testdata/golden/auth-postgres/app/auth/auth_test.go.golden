@@ -283,10 +283,10 @@ func TestResetLinkExpires(t *testing.T) {
 
 func TestRules(t *testing.T) {
 	for pw, want := range map[string]string{
-		"":                          "Password can't be blank",
-		"short":                     "Password is too short (minimum is 8 characters)",
-		strings.Repeat("x", 73):     "Password is too long (maximum is 72 bytes)",
-		"long enough":               "",
+		"":                      "Password can't be blank",
+		"short":                 "Password is too short (minimum is 8 characters)",
+		strings.Repeat("x", 73): "Password is too long (maximum is 72 bytes)",
+		"long enough":           "",
 	} {
 		got := strings.Join(Rules(pw, pw), "; ")
 		if got != want {

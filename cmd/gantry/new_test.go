@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"go/format"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -126,6 +127,7 @@ func TestNewGolden(t *testing.T) {
 				}
 				seen[rel] = true
 				got, _ := os.ReadFile(path)
+				gofmted(t, rel, got)
 				want := filepath.Join(golden, rel+".golden")
 				if *update {
 					os.MkdirAll(filepath.Dir(want), 0o755)
@@ -356,5 +358,16 @@ func TestExitCodes(t *testing.T) {
 	}
 	if err := exitError(exec.Command("no-such-command-here").Run()); errors.As(err, &code) {
 		t.Errorf("a command that didn't start is %v, not an exit code", err)
+	}
+}
+
+// gofmted fails the test when a generated Go file isn't as gofmt writes it.
+func gofmted(t *testing.T, rel string, src []byte) {
+	t.Helper()
+	if !strings.HasSuffix(rel, ".go") {
+		return
+	}
+	if f, err := format.Source(src); err != nil || string(f) != string(src) {
+		t.Errorf("%s isn't gofmt'd (%v)", rel, err)
 	}
 }

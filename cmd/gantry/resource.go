@@ -140,10 +140,7 @@ func generateResource(root string, args []string, out io.Writer) error {
 		if err := t.ExecuteTemplate(&b, filepath.Base(name), r); err != nil {
 			return err
 		}
-		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(path)), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(root, path), b.Bytes(), 0o644); err != nil {
+		if err := write(filepath.Join(root, path), b.Bytes()); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "  wrote", path)

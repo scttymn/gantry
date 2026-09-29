@@ -13,6 +13,7 @@ gantry console             # psql on the dev database
 - `app/routes.go`: every route, and the controllers behind them
 - `app/<name>/`: a controller and its views (`.templ`), one folder per resource
 - `app/models/`: each table's queries (`<table>.sql`, turned into Go by sqlc) and rules (`<table>.go`)
+- `app/jobs.go`: background jobs, run by the server (or `shop jobs`, with `JOBS_IN_SERVER=false`)
 - `app/tasks.go`: the app's own commands, run with `gantry task NAME`
 - `db/migrations/`: schema changes, written by `gantry g migration`; `db/schema.sql` is what they leave
 - `db/seeds/`: what a fresh database starts with

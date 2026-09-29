@@ -11,6 +11,10 @@ type Config struct {
 	DataDir     string // DATA_DIR: {{if .Postgres}}uploads{{else}}the database and uploads{{end}}; default /data
 	DatabaseURL string // DATABASE_URL{{if not .Postgres}}; default sqlite://DATA_DIR/{{.Name}}.sqlite3{{end}}
 	SecretKey   string // SECRET_KEY: signs cookies and forms; blank: a key kept in the database
+	// JobsInServer runs the background jobs in the server's process (Rails 8's
+	// Solid Queue in Puma). JOBS_IN_SERVER=false leaves them to a process of
+	// their own, `{{.Name}} jobs`.
+	JobsInServer bool
 }
 
 // Development is true where the code is mounted and changes as you work:
@@ -26,10 +30,11 @@ func Load(getenv func(string) string) Config {
 		return fallback
 	}
 	c := Config{
-		Env:       or("GANTRY_ENV", "production"),
-		Addr:      or("ADDR", ":8080"),
-		DataDir:   or("DATA_DIR", "/data"),
-		SecretKey: getenv("SECRET_KEY"),
+		Env:          or("GANTRY_ENV", "production"),
+		Addr:         or("ADDR", ":8080"),
+		DataDir:      or("DATA_DIR", "/data"),
+		SecretKey:    getenv("SECRET_KEY"),
+		JobsInServer: getenv("JOBS_IN_SERVER") != "false",
 	}
 {{- if .Postgres}}
 	c.DatabaseURL = getenv("DATABASE_URL")

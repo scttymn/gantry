@@ -65,6 +65,7 @@ func recipeGolden(t *testing.T, recipe string, args []string, files int, engine 
 		written++
 		rel, _ := filepath.Rel(dir, p)
 		got, _ := os.ReadFile(p)
+		gofmted(t, rel, got)
 		want := filepath.Join(golden, rel+".golden")
 		if *update {
 			os.MkdirAll(filepath.Dir(want), 0o755)
