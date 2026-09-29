@@ -19,7 +19,7 @@ import (
 func main() { os.Exit(run(os.Args[1:], ".", os.Stdout, os.Stderr)) }
 
 const usage = `usage:
-  gantry new NAME [--db sqlite|postgres] [--module PATH] [--gantry PATH] [--skip-houston]
+  gantry new NAME [--db sqlite|postgres] [--module PATH] [--gantry PATH] [--in-module] [--skip-houston]
   gantry g resource [NAMESPACE/]TABLE FIELD:TYPE[:required]...
   gantry g migration NAME [FIELD:TYPE[:required]...]
   gantry g error-pages [--force]

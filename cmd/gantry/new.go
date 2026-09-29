@@ -30,6 +30,11 @@ type NewApp struct {
 	// With --gantry: the checkout, relative to the app (go.work and the dev
 	// container's mount), and where the container sees it.
 	GantryPath, GantryMount string
+	// With --in-module: the app is Dir in the module whose root is Up from
+	// it, mounted at /app, so its own folder is Work there.
+	InModule bool
+	Dir, Up  string
+	Work     string // "/app", or "/app/<Dir>"
 }
 
 // latestRelease is what a new app requires when this gantry isn't a release
@@ -57,7 +62,9 @@ var runQuietlyIn = func(dir, name string, args ...string) ([]byte, error) {
 }
 
 // newApp is `gantry new NAME [flags]`: the app's folder, in the main plan's
-// layout, then Houston's files and the generated code.
+// layout, then Houston's files and the generated code. With --in-module the
+// app is a folder of the module it's made in: it has no go.mod of its own,
+// and it's built from the module's root.
 func newApp(root string, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errors.New("usage: gantry new NAME [--db sqlite|postgres] [--module PATH] [--gantry PATH] [--skip-houston]")
@@ -69,6 +76,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	module := fs.String("module", name, "the Go module path (github.com/you/"+name+")")
 	gantryPath := fs.String("gantry", "", "a gantry checkout to build against, with go.work (for developing both)")
 	skipHouston := fs.Bool("skip-houston", false, "write the files only: no houston init, go mod tidy, templ generate or git init")
+	inModule := fs.Bool("in-module", false, "an app in a folder of the module you're in (a monorepo): no go.mod of its own")
 	if err := fs.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -83,7 +91,22 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("%s is there already, and isn't empty", name)
 	}
 
-	a := NewApp{Name: name, Title: title(name), Module: *module, Postgres: *engine == "postgres", Engine: "sqlite", Templ: templVersion}
+	a := NewApp{Name: name, Title: title(name), Module: *module, Postgres: *engine == "postgres", Engine: "sqlite", Templ: templVersion, Work: "/app"}
+	if *inModule {
+		if *gantryPath != "" {
+			return errors.New("--in-module and --gantry: point the module's go.mod at a gantry checkout with a replace instead")
+		}
+		root, path, err := enclosingModule(dir)
+		if err != nil {
+			return err
+		}
+		appAbs, _ := filepath.Abs(dir)
+		rel, _ := filepath.Rel(root, appAbs)
+		a.InModule, a.Dir = true, filepath.ToSlash(rel)
+		a.Up = strings.TrimSuffix(strings.Repeat("../", strings.Count(a.Dir, "/")+1), "/")
+		a.Work = "/app/" + a.Dir
+		a.Module = path + "/" + a.Dir
+	}
 	if a.Postgres {
 		a.Engine = "postgresql"
 	}
@@ -121,12 +144,15 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec go mod tidy, gantry exec templ generate, and gantry dev.\n", name, name)
 		return nil
 	}
-	for _, step := range [][]string{
+	steps := [][]string{
 		{"houston", "init", "--name", name},
 		{"houston", "exec", "go", "mod", "tidy"},
 		{"houston", "exec", "templ", "generate"},
-		{"git", "init", "-q"},
-	} {
+	}
+	if !a.InModule {
+		steps = append(steps, []string{"git", "init", "-q"})
+	}
+	for _, step := range steps {
 		fmt.Fprintln(out, "  run", strings.Join(step, " "))
 		var err error
 		if step[1] == "init" {
@@ -168,8 +194,19 @@ func writeApp(dir string, a NewApp) error {
 		}
 		out := strings.Replace(strings.TrimSuffix(path, ".tmpl"), "cmd/NAME/", "cmd/"+a.Name+"/", 1)
 		switch out {
-		case "gitignore", "dockerignore":
-			out = "." + out
+		case "gitignore":
+			out = ".gitignore"
+		case "dockerignore":
+			// In a module, the build's context is the module's root, and
+			// BuildKit reads Dockerfile.dockerignore instead.
+			if a.InModule {
+				return nil
+			}
+			out = ".dockerignore"
+		case "go.mod", "Dockerfile.dockerignore":
+			if a.InModule != (out == "Dockerfile.dockerignore") {
+				return nil
+			}
 		}
 		return write(filepath.Join(dir, out), b.Bytes())
 	})
@@ -206,6 +243,28 @@ const (
 	emptySQLiteSchema   = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations; don't edit it by hand.\n\n"
 	emptyPostgresSchema = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n"
 )
+
+// enclosingModule is the module dir is in: its root and its path, from the
+// nearest go.mod above dir.
+func enclosingModule(dir string) (root, path string, err error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", "", err
+	}
+	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
+		if data, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
+					return d, strings.TrimSpace(m), nil
+				}
+			}
+			return "", "", fmt.Errorf("%s names no module", filepath.Join(d, "go.mod"))
+		}
+		if filepath.Dir(d) == d {
+			return "", "", errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
+		}
+	}
+}
 
 func write(path string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

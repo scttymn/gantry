@@ -1,0 +1,13 @@
+# The build's context is the module's root ({{.Up}}), so this, beside the
+# Dockerfile, is what BuildKit reads to keep out what the app's image
+# doesn't need, anywhere in the module.
+.git
+**/.git
+.env
+**/.env
+.houston
+**/.houston
+**/.cache
+**/node_modules
+go.work
+go.work.sum

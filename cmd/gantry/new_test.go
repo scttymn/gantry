@@ -39,6 +39,67 @@ func gantry(t *testing.T, root string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+// big is a module to make an app in, with --in-module.
+func big(t *testing.T, repo string) string {
+	t.Helper()
+	root := t.TempDir()
+	mod := "module example.com/big\n\ngo 1.27.1\n"
+	if repo != "" {
+		mod += "\nreplace github.com/scttymn/gantry => " + repo + "\n"
+	}
+	os.WriteFile(filepath.Join(root, "go.mod"), []byte(mod), 0o644)
+	os.MkdirAll(filepath.Join(root, "apps"), 0o755)
+	return root
+}
+
+// An app in a folder of the module it's made in: no go.mod of its own, its
+// imports under the module's path, built from the module's root.
+func TestNewInModule(t *testing.T) {
+	root := big(t, "")
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	dir := filepath.Join(root, "apps", "control")
+	for _, gone := range []string{"go.mod", "go.work", ".dockerignore"} {
+		if _, err := os.Stat(filepath.Join(dir, gone)); err == nil {
+			t.Errorf("%s written in a module's app", gone)
+		}
+	}
+	read := func(name string) string { b, _ := os.ReadFile(filepath.Join(dir, name)); return string(b) }
+	for file, wants := range map[string][]string{
+		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
+		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
+		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "RUN templ generate -path /app/apps/control && go build"},
+		"Dockerfile.dockerignore": {"**/.git", "**/.cache"},
+	} {
+		for _, want := range wants {
+			if !strings.Contains(read(file), want) {
+				t.Errorf("%s: no %q in\n%s", file, want, read(file))
+			}
+		}
+	}
+	// Its steps: no git init, the module's repo is there.
+	got := steps(t, "")
+	gantry(t, filepath.Join(root, "apps"), "new", "desk", "--in-module")
+	for _, step := range *got {
+		if step[1] == "git" {
+			t.Errorf("ran %q in a module's repo", step)
+		}
+	}
+	if len(*got) != 3 {
+		t.Errorf("ran %q", *got)
+	}
+}
+
+func TestNewInModuleRules(t *testing.T) {
+	if code, _, stderr := gantry(t, t.TempDir(), "new", "control", "--in-module", "--skip-houston"); code != 1 || !strings.Contains(stderr, "no go.mod here or above") {
+		t.Errorf("no module: exit %d, %s", code, stderr)
+	}
+	if code, _, stderr := gantry(t, big(t, ""), "new", "control", "--in-module", "--gantry", "..", "--skip-houston"); code != 1 || !strings.Contains(stderr, "--in-module and --gantry") {
+		t.Errorf("with --gantry: exit %d, %s", code, stderr)
+	}
+}
+
 // What gantry new writes is pinned, on each engine: a change to it is a
 // change to every app made next, so it shows up here, and in review.
 func TestNewGolden(t *testing.T) {
@@ -230,6 +291,30 @@ func TestAppCommandsOutsideAnApp(t *testing.T) {
 	code, _, stderr := gantry(t, t.TempDir(), "db", "migrate")
 	if code != 1 || !strings.Contains(stderr, "run gantry at the app's root") {
 		t.Errorf("exit %d: %s", code, stderr)
+	}
+}
+
+// An app made in a module builds and passes its tests there, against this
+// checkout (the module's replace).
+func TestNewInModuleBuilds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short")
+	}
+	if _, err := exec.LookPath("templ"); err != nil {
+		t.Skip("templ isn't installed: run it in the toolchain (bin/go)")
+	}
+	repo, _ := filepath.Abs("../..")
+	root := big(t, repo)
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatal(stderr)
+	}
+	dir := filepath.Join(root, "apps", "control")
+	for _, step := range [][]string{{"go", "mod", "tidy"}, {"templ", "generate"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+		cmd := exec.Command(step[0], step[1:]...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
+		}
 	}
 }
 

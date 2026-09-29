@@ -25,22 +25,32 @@ WORKDIR /app
 # mounted folder's .cache/ (ignored, and skipped by the watcher), so
 # restarts reuse them.
 FROM toolchain AS dev
-ENV GANTRY_ENV=development ADDR=:8080 DATA_DIR=/data GOMODCACHE=/app/.cache/go/mod GOCACHE=/app/.cache/go/cache
-CMD ["templ", "generate", "--watch", "-path", "/app", "--watch-pattern=(.+\\.go$)|(.+\\.templ$)|(.+\\.js$)|(.+\\.css$)|(.+\\.sql$)", "--cmd=go run ./cmd/{{.Name}}"]
+{{- if .InModule}}
+# The app is {{.Dir}}/ in its module, which is mounted at /app.
+WORKDIR {{.Work}}
+{{- end}}
+ENV GANTRY_ENV=development ADDR=:8080 DATA_DIR=/data GOMODCACHE={{.Work}}/.cache/go/mod GOCACHE={{.Work}}/.cache/go/cache
+CMD ["templ", "generate", "--watch", "-path", "{{.Work}}", "--watch-pattern=(.+\\.go$)|(.+\\.templ$)|(.+\\.js$)|(.+\\.css$)|(.+\\.sql$)", "--cmd=go run ./cmd/{{.Name}}"]
 
 FROM toolchain AS test
 ENV GANTRY_ENV=test
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN templ generate -path /app
+{{- if .InModule}}
+WORKDIR {{.Work}}
+{{- end}}
+RUN templ generate -path {{.Work}}
 CMD ["sh", "-c", "go vet ./... && go test ./..."]
 
 FROM toolchain AS build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN templ generate -path /app && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/{{.Name}}
+{{- if .InModule}}
+WORKDIR {{.Work}}
+{{- end}}
+RUN templ generate -path {{.Work}} && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/{{.Name}}
 RUN mkdir -p /out/data
 
 FROM scratch AS production

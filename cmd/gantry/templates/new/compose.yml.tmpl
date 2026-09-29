@@ -5,7 +5,12 @@ name: {{.Name}}
 
 services:
   app:
+{{- if .InModule}}
+    # Built from the module's root ({{.Up}}), where go.mod is.
+    build: { context: {{.Up}}, dockerfile: {{.Dir}}/Dockerfile, target: dev }
+{{- else}}
     build: { context: ., target: dev }
+{{- end}}
     expose: ["8080"]
     environment:
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
@@ -16,7 +21,11 @@ services:
     depends_on: [db]
 {{- end}}
     volumes:
+{{- if .InModule}}
+      - {{.Up}}:/app                    # the module, this app at /app/{{.Dir}}; rebuilt on change
+{{- else}}
       - .:/app                     # the code, rebuilt on change
+{{- end}}
 {{- if .GantryMount}}
       # gantry beside it, for go.work (ignored by git): changes to both at once.
       # Dev only; tests and deploys build against the gantry go.mod pins.
