@@ -1,7 +1,6 @@
 package web
 
 import (
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -13,10 +12,7 @@ import (
 // but on a local development host, which browsers don't all treat as secure
 // over plain http (localhost, *.localhost, 127.0.0.1).
 func Secure(r *http.Request) bool {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
+	host := RequestHost(r)
 	return !(host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "127.0.0.1" || host == "::1")
 }
 

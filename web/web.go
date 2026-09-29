@@ -75,9 +75,16 @@ func StatusOf(err error) int {
 
 // Router is the app's routes.
 type Router struct {
-	Log         *slog.Logger
-	ErrorPage   ErrorPage
-	Cache       *PageCache // for Cached routes; nil: they aren't cached
+	Log       *slog.Logger
+	ErrorPage ErrorPage
+	Cache     *PageCache // for Cached routes; nil: they aren't cached
+	// Proxies is which peers are trusted proxies, and the header they name
+	// the visitor's address in; the zero value trusts private networks.
+	Proxies Proxies
+	// Hosts are the hosts the app answers to (Rails' config.hosts): any
+	// when empty, else a request for another is refused, 403. "example.com"
+	// is that host, ".example.com" it and its subdomains. /up answers any.
+	Hosts       []string
 	mux         *http.ServeMux
 	root        *Scope        // the router's own routes
 	constraints []constrained // tried in order, before them
@@ -145,16 +152,18 @@ func WantsHTML(r *http.Request) bool {
 // any path nothing else matches. Outermost first:
 //   - compress: gzip for text
 //   - Recover: a panic is the 500 page, logged
+//   - Current, where the request comes from (Proxies), and Hosts
 //   - Headers and cross-origin protection: a form posted from another site
 //     is refused with 422
 //   - MethodOverride: HTML forms can PUT, PATCH and DELETE, with bodies capped
 func (rt *Router) Handler() http.Handler {
 	rt.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusNotFound) })
 	var h http.Handler = http.HandlerFunc(rt.route)
-	h = withCurrent(h)
 	h = MethodOverride(h, DefaultBodyLimits)
 	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) })
 	h = Headers(h)
+	h = rt.arrive(h)
+	h = withCurrent(h)
 	h = rt.Recover(h)
 	return compressHandler(h)
 }

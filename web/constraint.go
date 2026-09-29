@@ -1,7 +1,6 @@
 package web
 
 import (
-	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,21 +54,11 @@ func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	rt.mux.ServeHTTP(w, r)
 }
 
-// RequestHost is the host a request is for, cleaned for comparing: without
-// its port, lowercase, and without a trailing dot.
-func RequestHost(r *http.Request) string {
-	host := r.Host
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	}
-	return strings.TrimSuffix(strings.ToLower(host), ".")
-}
-
 // Host is a check that passes for any of hosts ("hooks.example.com").
 func Host(hosts ...string) Check {
 	want := map[string]bool{}
 	for _, h := range hosts {
-		want[strings.TrimSuffix(strings.ToLower(h), ".")] = true
+		want[cleanHost(h)] = true
 	}
 	return func(r *http.Request) bool { return want[RequestHost(r)] }
 }
