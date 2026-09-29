@@ -36,14 +36,25 @@ func (e Invalid) Error() string {
 	return strings.Join(parts, "; ")
 }
 
-// WantsJSON: a request for data, not a page: it accepts JSON, or its path
-// ends in .json.
+// WantsJSON: a request for data, not a page: it went through AcceptJSON,
+// it accepts JSON, or its path ends in .json.
 func WantsJSON(r *http.Request) bool {
-	if path.Ext(r.URL.Path) == ".json" {
+	if api, _ := Get(r, apiKey); api || path.Ext(r.URL.Path) == ".json" {
 		return true
 	}
 	accept := r.Header.Get("Accept")
 	return strings.Contains(accept, "application/json") || strings.Contains(accept, "+json")
+}
+
+var apiKey = NewKey[bool]("api")
+
+// AcceptJSON is a filter for an API's routes: whatever the client's Accept
+// says (a CLI often sends none), they're answered as data, errors included.
+//
+//	rt.Scope("/api/v1", web.Pipeline{web.AcceptJSON, tokens.Require}, ...)
+func AcceptJSON(w http.ResponseWriter, r *http.Request) error {
+	Set(r, apiKey, true)
+	return nil
 }
 
 // answer answers status, for err (which may be nil):

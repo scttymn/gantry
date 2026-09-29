@@ -173,3 +173,22 @@ func TestStatusOfItsOwn(t *testing.T) {
 		t.Errorf("= %d", got)
 	}
 }
+
+// An API's pipeline starts with AcceptJSON: its errors are JSON whatever
+// the client's Accept says (a CLI often sends none).
+func TestAcceptJSON(t *testing.T) {
+	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Scope("/api", Pipeline{AcceptJSON}, func(s *Scope) {
+		s.Handle("GET /secret", func(w http.ResponseWriter, r *http.Request) error {
+			return Status(http.StatusUnauthorized, errors.New("the API token is missing or wrong"))
+		})
+	})
+	rt.Handle("GET /page", func(w http.ResponseWriter, r *http.Request) error { return Status(http.StatusUnauthorized, nil) })
+	h := rt.Handler()
+	if w := ask(h, "GET", "/api/secret", "", ""); w.Code != 401 || strings.TrimSpace(w.Body.String()) != `{"error":"the API token is missing or wrong"}` {
+		t.Errorf("no Accept: %d %q", w.Code, w.Body)
+	}
+	if w := ask(h, "GET", "/page", "", ""); strings.Contains(w.Body.String(), `"error"`) {
+		t.Errorf("outside the scope: %q", w.Body)
+	}
+}
