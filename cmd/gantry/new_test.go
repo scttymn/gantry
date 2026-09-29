@@ -125,8 +125,15 @@ func TestNewGolden(t *testing.T) {
 					// A random password, checked by TestNewPostgresEnv.
 					return nil
 				}
-				seen[rel] = true
 				got, _ := os.ReadFile(path)
+				if strings.HasPrefix(filepath.ToSlash(rel), "assets/js/vendor/") {
+					// Vendored JavaScript is copied as it is, not kept twice.
+					if want, err := fs.ReadFile(templates, "templates/new/"+filepath.ToSlash(rel)); err != nil || string(want) != string(got) {
+						t.Errorf("%s isn't gantry's copy", rel)
+					}
+					return nil
+				}
+				seen[rel] = true
 				gofmted(t, rel, got)
 				want := filepath.Join(golden, rel+".golden")
 				if *update {

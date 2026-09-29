@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/scttymn/gantry/jobs"
+	"github.com/scttymn/gantry/live"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/testkit"
 
@@ -24,7 +25,8 @@ func newApp(t *testing.T) *app.App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := &app.App{DB: d, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: sign.Signer{Key: []byte("test-key")}, Jobs: q}
+	signer := sign.Signer{Key: []byte("test-key")}
+	a := &app.App{DB: d, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: signer, Jobs: q, Live: live.New(signer, live.Options{})}
 	if err := a.DefineJobs(); err != nil {
 		t.Fatal(err)
 	}

@@ -49,3 +49,20 @@ func TestKey(t *testing.T) {
 		t.Error("SECRET_KEY wins")
 	}
 }
+
+// A value whose encoding has "--" in it, as the separator does, still
+// verifies: "\xfb\xef\xbe" is "----" in base64url.
+func TestSeparatorInValue(t *testing.T) {
+	s := Signer{Key: []byte("k")}
+	for _, v := range []string{"\xfb\xef\xbe", "a\xfb\xef\xbeb", `["é>?"]`, ""} {
+		if got, ok := s.Verify("p", s.Sign("p", v)); !ok || got != v {
+			t.Errorf("%q: %q %v", v, got, ok)
+		}
+	}
+	tok := s.Sign("p", "x")
+	for _, bad := range []string{tok[:len(tok)-1], "--" + tok, tok + "-", strings.Replace(tok, "--", "-_", 1), "--"} {
+		if _, ok := s.Verify("p", bad); ok {
+			t.Errorf("%q verified", bad)
+		}
+	}
+}

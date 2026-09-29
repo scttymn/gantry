@@ -175,7 +175,8 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	return nil
 }
 
-// writeApp writes the templates under templates/new into dir.
+// writeApp writes the templates under templates/new into dir: a .tmpl file
+// filled in with a, any other (vendored JavaScript) as it is.
 func writeApp(dir string, a NewApp) error {
 	sub, _ := fs.Sub(templates, "templates/new")
 	err := fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
@@ -185,6 +186,9 @@ func writeApp(dir string, a NewApp) error {
 		body, err := fs.ReadFile(sub, path)
 		if err != nil {
 			return err
+		}
+		if !strings.HasSuffix(path, ".tmpl") {
+			return write(filepath.Join(dir, path), body)
 		}
 		t, err := template.New(path).Parse(string(body))
 		if err != nil {

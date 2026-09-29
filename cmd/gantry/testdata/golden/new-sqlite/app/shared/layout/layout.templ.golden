@@ -16,6 +16,7 @@ templ Layout(p Page) {
 			<title>{ p.Title }</title>
 			<meta name="viewport" content="width=device-width,initial-scale=1"/>
 			@assets.Styles.Tag()
+			@assets.ImportMap.Tag()
 		</head>
 		<body>
 			{ children... }

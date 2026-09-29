@@ -17,6 +17,7 @@ import (
 type ModulePin struct {
 	name, file string // "@hotwired/turbo", "@hotwired--turbo.js"
 	dir        string // PinAll's folder, instead
+	vendor     bool   // PinVendor's: named by file, "--" for "/"
 }
 
 // Pin names file, an asset, name in the import map: Pin("application",
@@ -27,6 +28,14 @@ func Pin(name, file string) ModulePin { return ModulePin{name: name, file: file}
 // (importmap-rails' pin_all_from): js/controllers/hello_controller.js is
 // "controllers/hello_controller", and an index.js is its folder's name.
 func PinAll(dir string) ModulePin { return ModulePin{dir: strings.TrimSuffix(dir, "/")} }
+
+// PinVendor pins every .js asset under dir by its file's name, "--"
+// standing for "/": vendor/@hotwired--turbo.js is "@hotwired/turbo". It's
+// where `gantry importmap pin` puts packages, so pinning one is only
+// downloading it.
+func PinVendor(dir string) ModulePin {
+	return ModulePin{dir: strings.TrimSuffix(dir, "/"), vendor: true}
+}
 
 // ImportMap is the page's import map (Rails 8's importmap-rails): modules
 // by name, each an asset under its fingerprinted name, so a browser loads
@@ -68,7 +77,13 @@ func (a *Assets) ImportMap(pins ...ModulePin) *ImportMap {
 		}
 		sort.Strings(files)
 		for _, file := range files {
-			add(strings.TrimSuffix(strings.TrimSuffix(file, ".js"), "/index"), file)
+			name := strings.TrimSuffix(file, ".js")
+			if p.vendor {
+				name = strings.ReplaceAll(strings.TrimPrefix(name, p.dir+"/"), "--", "/")
+			} else {
+				name = strings.TrimSuffix(name, "/index")
+			}
+			add(name, file)
 		}
 	}
 	b, _ := json.Marshal(map[string]any{"imports": m.imports})

@@ -12,7 +12,6 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"strings"
 
 	"github.com/scttymn/gantry/db"
 )
@@ -31,12 +30,18 @@ func (s Signer) Sign(purpose, value string) string {
 	return base64.RawURLEncoding.EncodeToString([]byte(value)) + "--" + s.mac(purpose, value)
 }
 
+// macLen is a signature's length: SHA-256, base64url without padding.
+var macLen = base64.RawURLEncoding.EncodedLen(sha256.Size)
+
 // Verify is the value signed for purpose, if the token is genuine.
 func (s Signer) Verify(purpose, token string) (string, bool) {
-	encoded, sig, ok := strings.Cut(token, "--")
-	if !ok {
+	// The signature is the fixed-length end: the value's encoding may have
+	// "--" in it too, as base64url's "-" is a letter of it.
+	i := len(token) - macLen - len("--")
+	if i < 0 || token[i:i+2] != "--" {
 		return "", false
 	}
+	encoded, sig := token[:i], token[i+2:]
 	raw, err := base64.RawURLEncoding.DecodeString(encoded)
 	if err != nil {
 		return "", false

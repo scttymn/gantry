@@ -18,6 +18,7 @@ import (
 
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/jobs"
+	"github.com/scttymn/gantry/live"
 	"github.com/scttymn/gantry/sign"
 
 	"{{.Module}}/app"
@@ -99,7 +100,8 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	if err != nil {
 		return nil, nil, err
 	}
-	a = &app.App{DB: database, Log: logger, Signer: sign.Signer{Key: key}, Jobs: queue}
+	signer := sign.Signer{Key: key}
+	a = &app.App{DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger})}
 	if err := a.DefineJobs(); err != nil {
 		return nil, nil, err
 	}
@@ -117,6 +119,7 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 	}
 	defer closeDB()
 	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	server.RegisterOnShutdown(a.Live.Close) // live streams end, so shutting down doesn't wait on them
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {

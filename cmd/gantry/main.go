@@ -25,6 +25,7 @@ const usage = `usage:
   gantry g error-pages [--force]
   gantry g api-tokens [--prefix PREFIX_]                      a recipe: named API tokens
   gantry g auth                                               a recipe: sign-in, sessions, password reset
+  gantry importmap pin|unpin PACKAGE[@VERSION]...              JavaScript packages, into assets/js/vendor
   gantry db migrate|rollback [N]|status|seed|reset|console   in the app's container
   gantry task NAME [ARGS...], gantry tasks                    (--local: on this machine)
   gantry dev|test|console|deploy|...                          Houston's commands
@@ -62,6 +63,8 @@ func run(args []string, root string, out, errOut io.Writer) int {
 				err = generateErrorPages(root, force, out)
 			}
 		}
+	case "importmap":
+		err = importmapCommand(root, args[1:], out)
 	case "db", "task", "tasks":
 		err = appCommand(root, args, errOut)
 	default:
@@ -73,7 +76,7 @@ func run(args []string, root string, out, errOut io.Writer) int {
 	case err == nil:
 		return 0
 	case errors.As(err, &exit):
-		if exit == 2 && (args[0] == "g" || args[0] == "generate") {
+		if exit == 2 && (args[0] == "g" || args[0] == "generate" || args[0] == "importmap") {
 			fmt.Fprint(errOut, usage)
 		}
 		return int(exit)
