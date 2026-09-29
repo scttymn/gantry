@@ -27,4 +27,5 @@ gantry console             # psql on the dev database
 gantry g resource admin/posts title:string:required body:text
 gantry g migration add_email_to_users email:string
 gantry g error-pages
+gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app
 ```

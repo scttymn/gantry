@@ -25,6 +25,8 @@ const usage = `usage:
   gantry g error-pages [--force]
   gantry g api-tokens [--prefix PREFIX_]                      a recipe: named API tokens
   gantry g auth                                               a recipe: sign-in, sessions, password reset
+  gantry g fonts FAMILY[:400,600,400i]... [--subsets latin,latin-ext] [--force]
+                                                              Google Fonts, served from the app
   gantry importmap pin|unpin PACKAGE[@VERSION]...              JavaScript packages, into assets/js/vendor
   gantry db migrate|rollback [N]|status|seed|reset|console   in the app's container
   gantry task NAME [ARGS...], gantry tasks                    (--local: on this machine)
@@ -58,6 +60,8 @@ func run(args []string, root string, out, errOut io.Writer) int {
 			err = generateAPITokens(root, args[2:], out)
 		case "auth":
 			err = generateAuth(root, args[2:], out)
+		case "fonts":
+			err = generateFonts(root, args[2:], out)
 		case "error-pages":
 			if force := len(args) == 3 && args[2] == "--force"; len(args) == 2 || force {
 				err = generateErrorPages(root, force, out)
