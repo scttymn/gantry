@@ -200,6 +200,9 @@ myapp/
 
 **Order:** filters, pipelines, scopes and Current (the rest build on them); constraints; trusted proxies and hosts; error pages and JSON answers; tokens; the database's items; encrypted fields; streaming; testkit. A tag at the end (`v0.7.0`), and the gym site and MC's app moved to it.
 
+**G1 progress:**
+- **1. Filters, pipelines, scopes, Current** (2026-09-29): `web.Filter`, `web.Pipeline`, `Scope` (the router's routes are its root scope's, so `Handle`, `Mount`, `Resources` and `Cached` are unchanged for apps), `rt.Scope`/`s.Scope`, and Current (`NewKey`, `Set`, `Get`, `WithCurrent`; the router gives each request one, inside its middleware). Tests first (`TestPipelines`, `TestCurrent`, `TestCurrentPerRequest`); gantry's suite passes, and so does `TestNewAppBuilds`; the gym site's suite passes against this checkout but for `TestSchemaIsCurrent`, which is G0's header change only (two comment lines; its `db/schema.sql` is regenerated when it moves). The mutation check caught all 10 (one, a filter's redirect not ending the request, was first caught only in part, the test comparing the start of the body; it compares the whole body now).
+
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
 These are real patterns, but they come from MC being an operations app, not from Rails:

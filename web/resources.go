@@ -39,14 +39,15 @@ type (
 //	PATCH  base/{id}         Update (PUT too)
 //	DELETE base/{id}         Delete
 //
-// wrap, when set, goes around each (auth.Require, say).
-func (rt *Router) Resources(base string, controller any, wrap func(http.Handler) http.Handler) {
+// wrap, when set, goes around each (auth.Require, say). In a scope, base is
+// under its prefix and the actions run its filters.
+func (s *Scope) Resources(base string, controller any, wrap func(http.Handler) http.Handler) {
 	route := func(pattern string, h Handler) {
-		var handler http.Handler = rt.Wrap(h)
+		var handler http.Handler = s.rt.Wrap(s.filters.then(h))
 		if wrap != nil {
 			handler = wrap(handler)
 		}
-		rt.mux.Handle(pattern, handler)
+		s.mux.Handle(s.pattern(pattern), handler)
 	}
 	if c, ok := controller.(Indexer); ok {
 		route("GET "+base, c.Index)

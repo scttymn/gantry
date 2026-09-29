@@ -79,23 +79,17 @@ type Router struct {
 	ErrorPage ErrorPage
 	Cache     *PageCache // for Cached routes; nil: they aren't cached
 	mux       *http.ServeMux
+	root      *Scope // the router's own routes
 }
 
 // NewRouter is an empty router. page may be nil: errors are then answered
 // with their status text.
 func NewRouter(log *slog.Logger, page ErrorPage) *Router {
 	rt := &Router{Log: log, ErrorPage: page, mux: http.NewServeMux()}
+	rt.root = &Scope{rt: rt, mux: rt.mux}
 	rt.mux.HandleFunc("GET /up", Up)
 	return rt
 }
-
-// Handle routes pattern ("GET /posts/{id}", ServeMux's syntax) to h.
-func (rt *Router) Handle(pattern string, h Handler) {
-	rt.mux.Handle(pattern, rt.Wrap(h))
-}
-
-// Mount routes pattern to a plain http.Handler (files, a mounted package).
-func (rt *Router) Mount(pattern string, h http.Handler) { rt.mux.Handle(pattern, h) }
 
 // Wrap makes h an http.Handler, answering its error.
 func (rt *Router) Wrap(h Handler) http.Handler {
@@ -156,6 +150,7 @@ func WantsHTML(r *http.Request) bool {
 func (rt *Router) Handler() http.Handler {
 	rt.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusNotFound) })
 	var h http.Handler = rt.mux
+	h = withCurrent(h)
 	h = MethodOverride(h, DefaultBodyLimits)
 	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) })
 	h = Headers(h)

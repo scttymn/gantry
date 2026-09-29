@@ -234,13 +234,3 @@ func (r *recorder) Write(b []byte) (int, error) {
 	r.wrote = true
 	return r.body.Write(b)
 }
-
-// Cached routes pattern to h through the router's page cache (rt.Cache),
-// or straight to h when the router has none.
-func (rt *Router) Cached(pattern string, h Handler) {
-	if rt.Cache == nil {
-		rt.Handle(pattern, h)
-		return
-	}
-	rt.mux.Handle(pattern, rt.Cache.Handler(rt.Wrap(h)))
-}
