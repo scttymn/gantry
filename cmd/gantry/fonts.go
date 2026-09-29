@@ -88,6 +88,7 @@ func (f fontFamily) query() string {
 var (
 	fontBlock  = regexp.MustCompile(`(?s)/\* ([a-z0-9-]+) \*/\s*(@font-face \{.*?\})`)
 	fontURL    = regexp.MustCompile(`url\((https://[^)]+\.woff2)\)`)
+	ttfURL     = regexp.MustCompile(`url\((https://[^)]+\.ttf)\)`)
 	localFont  = regexp.MustCompile(`url\("([^"]+\.woff2)"\)`)
 	fontFamRe  = regexp.MustCompile(`font-family: '([^']+)'`)
 	fontStyRe  = regexp.MustCompile(`font-style: (\w+)`)
@@ -97,9 +98,12 @@ var (
 // generateFonts is `gantry g fonts FAMILY[:WEIGHTS]... [--subsets latin,latin-ext]
 // [--force]`: Google Fonts served from the app itself, so no stylesheet on
 // another host holds up the first paint. It downloads each face's WOFF2
-// files into assets/fonts and writes assets/css/fonts.css, with
-// font-display: block (the text waits for its font, preloaded, and paints
-// once, where swap paints a fallback and jumps), and prints the preloads.
+// files into assets/fonts and writes assets/css/fonts.css, and prints the
+// preloads and the font stacks. The text paints at once (font-display:
+// swap) in a fallback face for each family, a system font sized to the
+// family's measure (next/font's adjustFontFallback), so it keeps its place
+// when the family swaps in: measured from the family's TTF, which Google
+// serves a plain client, and which isn't kept.
 func generateFonts(root string, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("fonts", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -143,7 +147,7 @@ func generateFonts(root string, args []string, out io.Writer) error {
 	for _, f := range families {
 		q.Add("family", f.query())
 	}
-	q.Set("display", "block")
+	q.Set("display", "swap")
 	req, _ := http.NewRequest(http.MethodGet, googleFonts+"?"+q.Encode(), nil)
 	req.Header.Set("User-Agent", fontsUserAgent)
 	resp, err := httpClient.Do(req)
@@ -196,16 +200,23 @@ func generateFonts(root string, args []string, out io.Writer) error {
 	if len(rules) == 0 {
 		return fmt.Errorf("Google Fonts had no %s faces for those", *subsets)
 	}
+	fallbacks, err := fallbackFaces(families)
+	if err != nil {
+		return err
+	}
 	css := fmt.Sprintf(`/* The app's fonts, served from the app itself rather than Google Fonts, so
    no stylesheet on another host holds up the first paint. Written by:
      gantry g fonts %s --force
-   font-display: block: the text waits for its font (preloaded, so briefly;
-   see assets.go) and paints once, where swap paints a fallback and then
-   jumps. Each face carries its unicode-range, so a browser downloads only
-   the files a page uses. Google's fonts are under the SIL Open Font License
-   (or Apache 2.0): see fonts.google.com. */
+   font-display: swap: the text paints at once, in each family's fallback
+   (the faces at the end: a system font sized to the family's measure), and
+   keeps its place when the family arrives (preloaded; see assets.go). Name
+   the fallback after the family: font-family: 'Oswald', 'Oswald Fallback'.
+   Each face carries its unicode-range, so a browser downloads only the
+   files a page uses. Google's fonts are under the SIL Open Font License (or
+   Apache 2.0): see fonts.google.com. */
 
-%s`, quoteSpecs(specs, *subsets), strings.Join(rules, "\n"))
+%s
+%s`, quoteSpecs(specs, *subsets), strings.Join(rules, "\n"), strings.Join(fallbacks, "\n"))
 
 	fontsDir := filepath.Join(root, "assets", "fonts")
 	for name, data := range files {
@@ -244,9 +255,56 @@ Next:
 	}
 	fmt.Fprintf(out, `       )
      (keep only the ones above the fold: each preload competes with the page)
-  2. Use them in the stylesheets: font-family: %q, ...;
-`, families[0].name)
+  2. Use them in the stylesheets, each with its fallback:
+`)
+	for _, f := range families {
+		fmt.Fprintf(out, "       font-family: '%s', '%s Fallback', %s;\n", f.name, f.name, fallbackFor(f.name).generic)
+	}
 	return nil
+}
+
+// fallbackFaces are each family's fallback @font-face, measured from its
+// TTF (a plain client's answer from Google), at its first style.
+func fallbackFaces(families []fontFamily) ([]string, error) {
+	q := url.Values{}
+	for _, f := range families {
+		first := fontFamily{name: f.name, styles: f.styles[:1]}
+		q.Add("family", first.query())
+	}
+	req, _ := http.NewRequest(http.MethodGet, googleFonts+"?"+q.Encode(), nil)
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("Google Fonts: %w", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("Google Fonts, for the fallbacks' measure: %s %v", resp.Status, err)
+	}
+	ttf := map[string]string{} // family → its TTF
+	for _, block := range regexp.MustCompile(`(?s)@font-face \{.*?\}`).FindAllString(string(body), -1) {
+		fam, u := fontFamRe.FindStringSubmatch(block), ttfURL.FindStringSubmatch(block)
+		if fam != nil && u != nil && ttf[fam[1]] == "" {
+			ttf[fam[1]] = u[1]
+		}
+	}
+	var faces []string
+	for _, f := range families {
+		u, ok := ttf[f.name]
+		if !ok {
+			return nil, fmt.Errorf("Google Fonts had no TTF of %s to measure its fallback by", f.name)
+		}
+		data, err := fetch(u)
+		if err != nil {
+			return nil, err
+		}
+		m, err := measure(data)
+		if err != nil {
+			return nil, fmt.Errorf("measuring %s: %w", f.name, err)
+		}
+		faces = append(faces, fallbackFace(f.name, m, fallbackFor(f.name)))
+	}
+	return faces, nil
 }
 
 // quoteSpecs is the command's arguments again, for the stylesheet's header.

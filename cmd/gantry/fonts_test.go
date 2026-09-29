@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/image/font/gofont/goregular"
 
 	"github.com/scttymn/gantry/testkit"
 )
@@ -66,12 +69,28 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 	fonts = f
 	var asked []*http.Request
 	f.Handle("GET", "https://fonts.googleapis.com/css2", func(r *http.Request) (*http.Response, error) {
-		asked = append(asked, r)
 		if strings.Contains(r.URL.RawQuery, "Nope") {
 			return f.Response(400, "Font family not found\nmore"), nil
 		}
-		return f.Response(200, googleCSS), nil
+		if !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
+			// A plain client gets TTF, one a family: what the fallbacks are
+			// measured by.
+			var css strings.Builder
+			for _, fam := range r.URL.Query()["family"] {
+				name, _, _ := strings.Cut(fam, ":")
+				css.WriteString("@font-face {\n  font-family: '" + name + "';\n  font-style: normal;\n  font-weight: 400;\n  src: url(https://fonts.gstatic.com/s/" + strings.ReplaceAll(name, " ", "") + ".ttf) format('truetype');\n}\n")
+			}
+			return f.Response(200, css.String()), nil
+		}
+		asked = append(asked, r)
+		// As Google does: font-display is what was asked for.
+		return f.Response(200, strings.ReplaceAll(googleCSS, "font-display: block", "font-display: "+r.URL.Query().Get("display"))), nil
 	})
+	for _, name := range []string{"WorkSans", "InstrumentSerif"} {
+		f.Handle("GET", "https://fonts.gstatic.com/s/"+name+".ttf", func(r *http.Request) (*http.Response, error) {
+			return f.Response(200, string(goregular.TTF)), nil
+		})
+	}
 	for _, name := range []string{"cyr", "ext", "latin"} {
 		f.On("GET", "https://fonts.gstatic.com/s/worksans/"+name+".woff2", 200, "wOF2 work sans "+name)
 	}
@@ -95,7 +114,7 @@ func TestGenerateFonts(t *testing.T) {
 	if got := r.URL.Query()["family"]; strings.Join(got, "|") != "Work Sans:ital,wght@0,400;0,600|Instrument Serif:ital,wght@0,400;1,400" {
 		t.Errorf("asked for %v", got)
 	}
-	if r.URL.Query().Get("display") != "block" || !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
+	if r.URL.Query().Get("display") != "swap" || !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
 		t.Errorf("display %q, agent %q", r.URL.Query().Get("display"), r.Header.Get("User-Agent"))
 	}
 	// A file two faces share is fetched once.
@@ -120,13 +139,15 @@ func TestGenerateFonts(t *testing.T) {
 		t.Errorf("fonts: %v", names)
 	}
 	s := string(css)
-	if strings.Contains(s, "gstatic") || strings.Contains(s, "cyr") || strings.Count(s, "@font-face") != 4 || strings.Count(s, `url("`+names[1]+`")`) != 2 {
+	if strings.Contains(s, "gstatic") || strings.Contains(s, "cyr") || strings.Count(s, "@font-face") != 4+2 || strings.Count(s, `url("`+names[1]+`")`) != 2 {
 		t.Errorf("fonts.css:\n%s", s)
 	}
-	if !strings.Contains(s, "font-display: block") || !strings.Contains(s, `gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`) || !strings.Contains(s, "/* Work Sans 600, latin */") {
+	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || !strings.Contains(s, `gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`) || !strings.Contains(s, "/* Work Sans 600, latin */") ||
+		!strings.Contains(s, "font-family: 'Work Sans Fallback';\n  src: local('Arial');") || !strings.Contains(s, "font-family: 'Instrument Serif Fallback';\n  src: local('Times New Roman');") {
 		t.Errorf("fonts.css:\n%s", s)
 	}
-	for _, want := range []string{`gantry.Face{Family: "Work Sans"},`, `gantry.Face{Family: "Work Sans", Weight: 600},`, `gantry.Face{Family: "Instrument Serif", Italic: true},`} {
+	for _, want := range []string{`gantry.Face{Family: "Work Sans"},`, `gantry.Face{Family: "Work Sans", Weight: 600},`, `gantry.Face{Family: "Instrument Serif", Italic: true},`,
+		`font-family: 'Work Sans', 'Work Sans Fallback', sans-serif;`, `font-family: 'Instrument Serif', 'Instrument Serif Fallback', serif;`} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no %s in\n%s", want, out.String())
 		}
@@ -190,6 +211,44 @@ func TestGenerateFontsRules(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(root, "assets", "css", "fonts.css")); err == nil {
 			t.Fatalf("%v wrote fonts.css", c.args)
+		}
+	}
+}
+
+// A fallback is sized to its family's measure: Go Regular's, against Arial,
+// as next/font's adjustFontFallback computes it (checked against next/font
+// by hand: Inter 107.28% here, 107.12% there, a newer Inter).
+func TestFallbackFace(t *testing.T) {
+	m, err := measure(goregular.TTF)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.unitsPerEm != 2048 || m.ascent != 1935 || m.descent != 432 || m.lineGap != 0 || m.xWidth < 905 || m.xWidth > 915 {
+		t.Errorf("Go Regular: %+v", m)
+	}
+	face := fallbackFace("Go", m, arial)
+	for _, want := range []string{"font-family: 'Go Fallback';", "src: local('Arial');", "size-adjust: ", "ascent-override: ", "descent-override: ", "line-gap-override: "} {
+		if !strings.Contains(face, want) {
+			t.Errorf("no %q in\n%s", want, face)
+		}
+	}
+	// The overrides are the family's, in the fallback's resized units.
+	size := (m.xWidth / 2048) / (904.0 / 2048)
+	if want := fmt.Sprintf("size-adjust: %.2f%%;\n  ascent-override: %.2f%%;", size*100, 1935/2048.0/size*100); !strings.Contains(face, want) {
+		t.Errorf("want %q in\n%s", want, face)
+	}
+	if _, err := measure([]byte("not a font")); err == nil {
+		t.Error("measured a non-font")
+	}
+}
+
+func TestFallbackFor(t *testing.T) {
+	for family, want := range map[string]string{
+		"Work Sans": "Arial", "Oswald": "Arial", "PT Sans Serif": "Arial", "Instrument Serif": "Times New Roman",
+		"IBM Plex Mono": "Courier New", "Source Code Pro": "Courier New", "Yellowtail": "Arial",
+	} {
+		if got := fallbackFor(family).name; got != want {
+			t.Errorf("%s: %s, want %s", family, got, want)
 		}
 	}
 }
