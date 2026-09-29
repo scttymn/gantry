@@ -72,6 +72,19 @@ func parseFontFamily(spec string) (fontFamily, error) {
 	return f, nil
 }
 
+// regular is the face a family's fallback is measured by: the upright one
+// nearest 400 (text's weight, and next/font's), else its first.
+func (f fontFamily) regular() fontStyle {
+	best := f.styles[0]
+	for _, s := range f.styles {
+		d := func(s fontStyle) int { return max(s.weight-400, 400-s.weight) }
+		if !s.italic && (best.italic || d(s) < d(best)) {
+			best = s
+		}
+	}
+	return best
+}
+
 // query is the family as Google's API asks: "Work Sans:ital,wght@0,400;0,600".
 func (f fontFamily) query() string {
 	var tuples []string
@@ -264,12 +277,11 @@ Next:
 }
 
 // fallbackFaces are each family's fallback @font-face, measured from its
-// TTF (a plain client's answer from Google), at its first style.
+// TTF (a plain client's answer from Google), at its regular face.
 func fallbackFaces(families []fontFamily) ([]string, error) {
 	q := url.Values{}
 	for _, f := range families {
-		first := fontFamily{name: f.name, styles: f.styles[:1]}
-		q.Add("family", first.query())
+		q.Add("family", fontFamily{name: f.name, styles: []fontStyle{f.regular()}}.query())
 	}
 	req, _ := http.NewRequest(http.MethodGet, googleFonts+"?"+q.Encode(), nil)
 	resp, err := httpClient.Do(req)

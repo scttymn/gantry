@@ -252,3 +252,18 @@ func TestFallbackFor(t *testing.T) {
 		}
 	}
 }
+
+func TestRegular(t *testing.T) {
+	for spec, want := range map[string]fontStyle{
+		"Barlow:300,400,500,400i": {false, 400}, "Oswald:300,600,700": {false, 300}, "Oswald:200,500": {false, 500},
+		"Instrument Serif:400i": {true, 400}, "Instrument Serif:400i,700": {false, 700},
+	} {
+		f, err := parseFontFamily(spec)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := f.regular(); got != want {
+			t.Errorf("%s: %+v, want %+v", spec, got, want)
+		}
+	}
+}
