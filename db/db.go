@@ -31,6 +31,7 @@ type DB struct {
 	Write  *sql.DB
 
 	versioner *versioner
+	url       string // for pg_dump (Schema, on Postgres)
 }
 
 // Querier is a pool or a transaction: what a query needs to run.
@@ -67,6 +68,7 @@ func Open(ctx context.Context, url string) (*DB, error) {
 		d.Close()
 		return nil, fmt.Errorf("database %s: %w", redact(url), err)
 	}
+	d.url = url
 	return d, nil
 }
 

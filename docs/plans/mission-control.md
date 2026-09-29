@@ -164,6 +164,11 @@ myapp/
 - MC created with `--in-module` in Houston's module, building and serving its home page.
 - The new app's footprint, the baseline for G1 to G3: its binary's size, and its memory idle and under load, measured as the gym site's.
 
+**Progress, 2026-09-29:**
+- Houston's two changes are done (Houston `67b5217`, `docs/plans/exec-and-init-name.md` there): `houston exec`, and `houston init --name`.
+- `db`: `Rollback` (n steps, newest applied first; an empty down section stops it with `IrreversibleError`, before running it), `Status`, pending migrations in any order, and `Schema` on Postgres through `pg_dump` (its comments, `SET` lines and `\restrict` keys left out, so it's the same run to run). `testkit.Migrations`: each migration up alone, each down checked against the schema before its up, then all up again. Tests pass on SQLite and on Postgres 17 (the test binary run in `postgres:17`, for its `pg_dump`); the mutation check caught all 11 (one, a down that leaves a table behind, first slipped past, caught only later by a vaguer error, so the test was made to name the migration).
+- Found: this machine's Docker is rootless now (`DOCKER_HOST`), and gantry's Postgres tests still need a Postgres and `pg_dump` by hand; the test stage's Postgres service is batch 6's.
+
 **Order:** Houston's two changes; `db` and `testkit.Migrations`; the generators and the skeleton; the CLI's commands and Houston pass-through; the generated app's tests on both engines; MC created. gantry `v0.5.0` at the end.
 
 ## MC's own, or Houston's (not gantry)
