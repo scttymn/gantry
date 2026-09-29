@@ -121,8 +121,9 @@ func (rt *Router) Wrap(h Handler) http.Handler {
 	})
 }
 
-// Fail answers err: its error page, unless the response has started (then
-// it's only logged) or the client has gone.
+// Fail answers err: its error page, unless the client has gone (then
+// nothing) or the response has started (then it's logged and the
+// connection is cut, so the client sees an error, not a whole-looking one).
 func (rt *Router) Fail(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) && r.Context().Err() != nil {
 		return
@@ -135,7 +136,9 @@ func (rt *Router) Fail(w http.ResponseWriter, r *http.Request, err error) {
 		if status < 500 {
 			rt.Log.Warn("error after the response started", "path", r.URL.Path, "err", err)
 		}
-		return
+		// Too late for an error page: cut the connection, so the client
+		// sees an error rather than a page or a file that looks whole.
+		panic(http.ErrAbortHandler)
 	}
 	rt.answer(w, r, status, err)
 }

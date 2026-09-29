@@ -53,6 +53,10 @@ func Compressible(contentType string) bool {
 	t, _, _ := strings.Cut(contentType, ";")
 	t = strings.ToLower(strings.TrimSpace(t))
 	switch {
+	case t == "text/event-stream":
+		// A stream of events arrives as it's sent: gzip would hold each
+		// event back in its buffer, and proxies buffer compressed streams.
+		return false
 	case strings.HasPrefix(t, "text/"):
 		return true
 	case t == "application/javascript", t == "application/json", t == "application/xml",

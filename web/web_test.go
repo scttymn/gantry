@@ -96,11 +96,16 @@ func TestErrors(t *testing.T) {
 			t.Errorf("a file: %d %q", rec.Code, rec.Body)
 		}
 	})
-	t.Run("an error after the page started is logged, not written into it", func(t *testing.T) {
-		rec := do(h, "GET", "/posts/5", nil)
-		if rec.Code != 200 || rec.Body.String() != "half a page" || !strings.Contains(logs.String(), "broke mid-page") {
-			t.Fatalf("%d %q, logs %s", rec.Code, rec.Body, logs)
-		}
+	t.Run("an error after the page started is logged, and the connection cut", func(t *testing.T) {
+		// net/http cuts the connection on this panic (TestFailureMidStream
+		// sees it from a client); called directly, it's the panic itself.
+		defer func() {
+			if v := recover(); v != http.ErrAbortHandler || !strings.Contains(logs.String(), "broke mid-page") {
+				t.Fatalf("recovered %v, logs %s", v, logs)
+			}
+		}()
+		do(h, "GET", "/posts/5", nil)
+		t.Fatal("the page was left looking whole")
 	})
 	t.Run("500s and panics are logged with their path", func(t *testing.T) {
 		if !strings.Contains(logs.String(), "database down") || !strings.Contains(logs.String(), "boom") {
