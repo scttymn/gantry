@@ -253,7 +253,7 @@ myapp/
 - **Next:** MC's Go app and the gym site pick jobs up with the next release; then G3.
 
 ## G3: pages and live updates (full map)
-**The slice:** G3's items as listed above, each with its tests, and `gantry new`'s app on Turbo and Stimulus through an import map, with a live update it can copy.
+**The slice:** G3's items as listed above, each with its tests, and `gantry new`'s app on Turbo and Stimulus through an import map, with the live hub mounted and its use shown where `App` declares it.
 
 **The pieces, in the order they're built:**
 1. `text`: Rails' inflections as a package (`Pluralize(word)`, `Singularize`, and `Count(n, word)` for `pluralize(2, "person")`: Rails' rules, irregulars and uncountables, so "person" is "people"), which the generators use in place of their own; `TimeAgo(t, now)` and `Distance(from, to)` (`distance_of_time_in_words`, Rails' English, leap years included); `ByteSize(n)` (`number_to_human_size`: 1024-based, three significant digits, "1 Byte", "1.21 KB"). Time zones: `rt.TimeZone` (UTC when nil) is each request's zone in Current; `web.SetZone(r, loc)` changes it for the request (a filter, from the signed-in user's setting: `Time.use_zone`); `web.Zone(r)` and `web.Local(r, t)` read it.
@@ -266,6 +266,12 @@ myapp/
 8. `gantry importmap pin NAME[@VERSION]`: resolves through the jspm.org generator (importmap-rails' source), downloads each file into `assets/js/vendor/`, and prints the `Pin` lines to add. `unpin` removes the files.
 
 **Tests:** each package's; SSE end to end over a real server (a subscriber gets a broadcast, an unsigned name is 403, a slow subscriber is dropped, the keep-alive comment); a generated app builds with all of it and its tests pass; the mutation check per piece; Turbo and Stimulus checked in a browser once, through `gantry dev`.
+
+**G3 progress:**
+- **Text, time zones, flash, redirects, cache** (2026-09-29, `8f0914d`): as mapped. `text` holds Rails' inflection rules whole (g resource singularizes with it now); `Distance` follows Rails' leap-day arithmetic. `web.Redirect` is new, and `Flash.Redirect` answers 303 after a form: the `auth` package's tests changed to expect it, and **the gym site's tests will too** when it moves (a POST's redirect). Found and fixed on the way: `Scope("/", ...)` made `//path` patterns. The mutation check caught all 39, after four gaps closed (a rule's match replaced with the rest kept, the leap-year March rule, the 4 KB limit checked against itself, the cache's byte count after a delete).
+- **Turbo, live, import maps** (2026-09-29, `b357d65`): as mapped, plus `Action.RequestID` and `turbo.RequestID(r)` (Turbo 8's refresh skips the page that made the change; refreshes are debounced per stream and request id, as turbo-rails'), `hub.URL`, `RefreshTx`, and `Close` for `server.RegisterOnShutdown` (Shutdown otherwise waits out every stream). The SSE tests run over a real server behind the router. The mutation check caught 40 of 42; the two left are equivalent (a signed token is URL-safe already; an unverified token's value is empty, so the JSON check refuses it too).
+- **`gantry new` and `gantry importmap`** (2026-09-29, `7f3082e`): `assets.PinVendor` names `js/vendor/@hotwired--turbo.js` "@hotwired/turbo", so `gantry importmap pin` only downloads (jspm's generator, as importmap-rails; minified builds: Turbo 8.0.23 115 KB, Stimulus 3.2.2 50 KB, vendored in gantry for `gantry new`). No demo broadcast in the skeleton (Rails' has none); `App.Live`'s comment shows the calls. Found and fixed: `sign.Verify` split a token at its first `--`, which a value's base64url can hold (bytes FB EF BE are `----`), so such a token never verified; it splits at the fixed-length signature now. Checked in Chrome through `gantry dev` (a scratch app on this checkout): Turbo and Stimulus loaded, the hello controller ran, two broadcasts arrived over SSE through Houston's proxy and were applied, no console errors. The mutation check caught all 13.
+- **G3 is done.** Next: `v0.8.0` (your go-ahead), then MC's app and the gym site moved to it.
 
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
