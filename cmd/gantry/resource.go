@@ -148,12 +148,22 @@ func generateResource(root string, args []string, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "  wrote", path)
 	}
+	// Its table, as a migration: every field but photos, which aren't
+	// columns. Required is the form's rule (the model's Errors), not NOT
+	// NULL: an unset number or date stays NULL, as the forms read them.
+	cols := []string{"create_" + r.Table}
+	for _, f := range r.Columns {
+		cols = append(cols, f.Column+":"+f.Type)
+	}
+	if err := generateMigration(root, cols, out); err != nil {
+		return err
+	}
 	base, pkg := r.Base, r.Package
 	fmt.Fprintf(out, `
 Next:
   1. In app/routes.go, import %s/%s and add:
        rt.Resources(%q, %s.Controller{Controller: adm}, requireAdmin)
-  2. Regenerate: sqlc generate, and templ generate.
+  2. Migrate, then regenerate: gantry db migrate, sqlc generate, and templ generate.
   3. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
 `, r.Module, filepath.ToSlash(folder), base, pkg, r.Table)
 	return nil

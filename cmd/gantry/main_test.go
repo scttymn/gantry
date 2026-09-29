@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/testkit"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata/golden from the generator")
@@ -118,4 +120,24 @@ func TestSingularize(t *testing.T) {
 			t.Errorf("%s: %s, want %s", plural, got, want)
 		}
 	}
+}
+
+// g resource writes its table's migration too, and it applies and rolls back.
+func TestResourceMigration(t *testing.T) {
+	root := app(t)
+	at(t, "2026-09-29T12:00:00Z")
+	out := generate(t, root, "admin/programs", "name:string:required", "blurb:text", "photo:photo", "position:position", "starts_on:date")
+	if !strings.Contains(out, "wrote db/migrations/20260929120000_create_programs.sql") {
+		t.Fatalf("output:\n%s", out)
+	}
+	got, _ := os.ReadFile(filepath.Join(root, "db", "migrations", "20260929120000_create_programs.sql"))
+	for _, want := range []string{`"name" text NOT NULL DEFAULT '',`, `"blurb" text NOT NULL DEFAULT '',`, `"position" integer,`, `"starts_on" date,`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("no %s in\n%s", want, got)
+		}
+	}
+	if strings.Contains(string(got), "photo") {
+		t.Errorf("a photo isn't a column:\n%s", got)
+	}
+	testkit.Migrations(t, os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 }
