@@ -143,7 +143,7 @@ func TestGenerateFonts(t *testing.T) {
 		t.Errorf("fonts.css:\n%s", s)
 	}
 	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || !strings.Contains(s, `gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`) || !strings.Contains(s, "/* Work Sans 600, latin */") ||
-		!strings.Contains(s, "font-family: 'Work Sans Fallback';\n  src: local('Arial');") || !strings.Contains(s, "font-family: 'Instrument Serif Fallback';\n  src: local('Times New Roman');") {
+		!strings.Contains(s, "font-family: 'Work Sans Fallback';\n  src: local('Arial'), local('Liberation Sans'), local('Roboto');") || !strings.Contains(s, "font-family: 'Instrument Serif Fallback';\n  src: local('Times New Roman'), local('Liberation Serif');") {
 		t.Errorf("fonts.css:\n%s", s)
 	}
 	for _, want := range []string{`gantry.Face{Family: "Work Sans"},`, `gantry.Face{Family: "Work Sans", Weight: 600},`, `gantry.Face{Family: "Instrument Serif", Italic: true},`,
@@ -227,7 +227,7 @@ func TestFallbackFace(t *testing.T) {
 		t.Errorf("Go Regular: %+v", m)
 	}
 	face := fallbackFace("Go", m, arial)
-	for _, want := range []string{"font-family: 'Go Fallback';", "src: local('Arial');", "size-adjust: ", "ascent-override: ", "descent-override: ", "line-gap-override: "} {
+	for _, want := range []string{"font-family: 'Go Fallback';", "src: local('Arial'), local('Liberation Sans'), local('Roboto');", "size-adjust: ", "ascent-override: ", "descent-override: ", "line-gap-override: "} {
 		if !strings.Contains(face, want) {
 			t.Errorf("no %q in\n%s", want, face)
 		}

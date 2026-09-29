@@ -13,15 +13,21 @@ import (
 // arrives, with its metrics (capsize's, from the font's hhea and letters):
 // the web font's own fallback face resizes it to the web font's measure, so
 // text painted in it keeps its place when the web font swaps in.
+//
+// A system without the font (Linux, and Android, have no Arial) takes the
+// next of its stand-ins, fonts drawn to its widths: Liberation's are
+// Arial's, Times New Roman's and Courier New's exactly; Roboto's average is
+// within 0.3% of Arial's. PageSpeed measures on Linux.
 type fallback struct {
 	name, generic                                string
+	standIns                                     []string
 	unitsPerEm, ascent, descent, lineGap, xWidth float64
 }
 
 var (
-	arial         = fallback{"Arial", "sans-serif", 2048, 1854, -434, 67, 904}
-	timesNewRoman = fallback{"Times New Roman", "serif", 2048, 1825, -443, 87, 819}
-	courierNew    = fallback{"Courier New", "monospace", 2048, 1705, -615, 0, 1229}
+	arial         = fallback{"Arial", "sans-serif", []string{"Liberation Sans", "Roboto"}, 2048, 1854, -434, 67, 904}
+	timesNewRoman = fallback{"Times New Roman", "serif", []string{"Liberation Serif"}, 2048, 1825, -443, 87, 819}
+	courierNew    = fallback{"Courier New", "monospace", []string{"Liberation Mono"}, 2048, 1705, -615, 0, 1229}
 )
 
 // fallbackFor is the system font a family stands in with: Courier New for a
@@ -89,16 +95,20 @@ func measure(data []byte) (fontMeasure, error) {
 func fallbackFace(family string, m fontMeasure, fb fallback) string {
 	size := (m.xWidth / m.unitsPerEm) / (fb.xWidth / fb.unitsPerEm)
 	pct := func(v float64) string { return fmt.Sprintf("%.2f%%", v*100) }
-	return fmt.Sprintf(`/* %s Fallback: %s, sized to %s's measure, so text painted in it
-   keeps its place when %s swaps in. */
+	src := []string{"local('" + fb.name + "')"}
+	for _, s := range fb.standIns {
+		src = append(src, "local('"+s+"')")
+	}
+	return fmt.Sprintf(`/* %s Fallback: %s (or a font drawn to its widths), sized to %s's
+   measure, so text painted in it keeps its place when %s swaps in. */
 @font-face {
   font-family: '%s Fallback';
-  src: local('%s');
+  src: %s;
   size-adjust: %s;
   ascent-override: %s;
   descent-override: %s;
   line-gap-override: %s;
 }
-`, family, fb.name, family, family, family, fb.name, pct(size),
+`, family, fb.name, family, family, family, strings.Join(src, ", "), pct(size),
 		pct(m.ascent/m.unitsPerEm/size), pct(m.descent/m.unitsPerEm/size), pct(m.lineGap/m.unitsPerEm/size))
 }
