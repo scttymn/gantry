@@ -16,10 +16,8 @@ package auth
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -36,6 +34,7 @@ import (
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/token"
 	"github.com/scttymn/gantry/web"
 )
 
@@ -269,25 +268,18 @@ func (a *Auth) SetPassword(ctx context.Context, userID int64, password string) e
 	})
 }
 
-func digestOf(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
-
 // StartSession records a new session for the user and sets its cookie,
 // lasting until sign-out (Rails 8's permanent cookie).
 func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Session, error) {
-	raw := make([]byte, 32)
-	rand.Read(raw)
-	token := base64.RawURLEncoding.EncodeToString(raw)
+	key, digest := token.New("")
 	now := a.now()
 	s := Session{UserID: u.ID, LastSeenAt: now}
 	err := a.DB.Write.QueryRowContext(r.Context(), `INSERT INTO sessions (user_id, token_digest, ip_address, user_agent, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
-		u.ID, digestOf(token), web.ClientIP(r), r.UserAgent(), now).Scan(&s.ID)
+		u.ID, digest, web.ClientIP(r), r.UserAgent(), now).Scan(&s.ID)
 	if err != nil {
 		return Session{}, err
 	}
-	web.SetCookie(w, r, a.cookie(), token, 20*365*24*time.Hour)
+	web.SetCookie(w, r, a.cookie(), key, 20*365*24*time.Hour)
 	return s, nil
 }
 
@@ -305,7 +297,7 @@ func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 	var u User
 	var s Session
 	err = a.DB.Read.QueryRowContext(r.Context(), `SELECT s.id, s.user_id, s.last_seen_at, u.email_address, u.password_digest
-		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_digest = $1`, digestOf(c.Value)).
+		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_digest = $1`, token.Digest(c.Value)).
 		Scan(&s.ID, &s.UserID, &s.LastSeenAt, &u.EmailAddress, &u.PasswordDigest)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) && a.Log != nil {
@@ -421,7 +413,7 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) error {
 
 func (a *Auth) logout(w http.ResponseWriter, r *http.Request) error {
 	if c, err := r.Cookie(a.cookie()); err == nil && c.Value != "" {
-		if _, err := a.DB.Write.ExecContext(r.Context(), `DELETE FROM sessions WHERE token_digest = $1`, digestOf(c.Value)); err != nil {
+		if _, err := a.DB.Write.ExecContext(r.Context(), `DELETE FROM sessions WHERE token_digest = $1`, token.Digest(c.Value)); err != nil {
 			return err
 		}
 	}

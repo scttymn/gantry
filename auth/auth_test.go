@@ -19,6 +19,7 @@ import (
 	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/testkit"
+	"github.com/scttymn/gantry/token"
 	"github.com/scttymn/gantry/web"
 )
 
@@ -179,7 +180,7 @@ func TestSessions(t *testing.T) {
 		}
 		var stored string
 		a.auth.DB.Read.QueryRow(`SELECT token_digest FROM sessions`).Scan(&stored)
-		if stored == c.Value || stored != digestOf(c.Value) {
+		if stored == c.Value || stored != token.Digest(c.Value) {
 			t.Error("the table holds the token itself, not its digest")
 		}
 	})
