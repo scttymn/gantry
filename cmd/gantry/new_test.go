@@ -171,8 +171,8 @@ func TestNewSteps(t *testing.T) {
 	code, out, stderr := gantry(t, root, "new", "shop")
 	want := [][]string{
 		{"shop", "houston", "init", "--name", "shop"},
-		{"shop", "houston", "exec", "go", "mod", "tidy"},
 		{"shop", "houston", "exec", "templ", "generate"},
+		{"shop", "houston", "exec", "go", "mod", "tidy"},
 		{"shop", "git", "init", "-q"},
 	}
 	if code != 0 || !reflect.DeepEqual(*got, want) {
@@ -191,7 +191,7 @@ func TestNewSteps(t *testing.T) {
 
 	// A step that fails stops it, and says what's left.
 	root = t.TempDir()
-	got = steps(t, "houston exec go mod tidy")
+	got = steps(t, "houston exec templ generate")
 	code, _, stderr = gantry(t, root, "new", "shop")
 	if code != 1 || len(*got) != 2 || !strings.Contains(stderr, "run it, and the steps after it, in shop/") {
 		t.Errorf("exit %d, ran %q, %s", code, *got, stderr)

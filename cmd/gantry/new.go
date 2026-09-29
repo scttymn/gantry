@@ -141,13 +141,14 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	if *skipHouston {
-		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec go mod tidy, gantry exec templ generate, and gantry dev.\n", name, name)
+		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec templ generate, gantry exec go mod tidy, and gantry dev.\n", name, name)
 		return nil
 	}
 	steps := [][]string{
 		{"houston", "init", "--name", name},
-		{"houston", "exec", "go", "mod", "tidy"},
+		// templ's code first, so tidy sees the imports it adds.
 		{"houston", "exec", "templ", "generate"},
+		{"houston", "exec", "go", "mod", "tidy"},
 	}
 	if !a.InModule {
 		steps = append(steps, []string{"git", "init", "-q"})
