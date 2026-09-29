@@ -39,6 +39,7 @@ func main() {
 const usage = `usage:
   {{.Name}}                        serve (the default), and run the jobs unless JOBS_IN_SERVER=false
   {{.Name}} jobs                   run the background jobs alone
+  {{.Name}} assets                 the pictures' copies, into assets/resized (the build runs it)
   {{.Name}} db migrate|rollback [N]|status|seed|reset|console
   {{.Name}} tasks                  the app's own tasks (app/tasks.go)
   {{.Name}} task NAME [ARGS...]    run one
@@ -56,6 +57,14 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 		err = serve(ctx, cfg, logger, nil)
 	case "jobs":
 		err = runJobs(ctx, cfg, logger)
+	case "assets":
+		// Rails' assets:precompile: the Dockerfile runs it before go build,
+		// which embeds the copies.
+		var made int
+		made, err = assets.Images.Precompile(ctx, filepath.Join("assets", "resized"))
+		if err == nil {
+			fmt.Fprintf(out, "assets: %d copies made in assets/resized\n", made)
+		}
 	case "db":
 		return dbCommand(ctx, cfg, args, in, out, errOut)
 	case "tasks":
@@ -97,15 +106,6 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	key, err := sign.Key(ctx, database, cfg.SecretKey)
 	if err != nil {
 		return nil, nil, err
-	}
-	// The pictures' copies, made now for any that are new or changed, so no
-	// page waits on one.
-	made, err := assets.Images.Prepare(ctx, filepath.Join(cfg.DataDir, "asset-images"))
-	if err != nil {
-		return nil, nil, err
-	}
-	if made > 0 {
-		logger.Info("resized the pictures in assets", "copies", made)
 	}
 	queue, err := jobs.New(ctx, database, jobs.Options{Log: logger})
 	if err != nil {

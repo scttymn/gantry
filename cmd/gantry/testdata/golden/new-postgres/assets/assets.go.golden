@@ -12,7 +12,7 @@ import (
 	gantry "github.com/scttymn/gantry/assets"
 )
 
-//go:embed css js public
+//go:embed css js public all:resized
 var files embed.FS
 
 // All is every asset, digested once at start.
@@ -34,8 +34,8 @@ var ImportMap = All.ImportMap(
 // Images is the pictures in assets (JPEG, PNG, GIF, WebP) at every width, as
 // WebP: a page draws one with @assets.Images.Img("hero.jpg", images.Img{Alt:
 // "…", Sizes: "100vw"}), and the browser fetches the copy that fits. The
-// copies are made at start, once: kept on the data volume, a picture's are
-// made again only when it changes.
+// build makes the copies (`shop assets`, into resized/, embedded), only
+// those missing; in development a copy is made when it's first asked for.
 var Images = All.Images(nil)
 
 // Path is an asset's URL: "/assets/application-1a2b3c4d.css".

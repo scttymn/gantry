@@ -40,7 +40,7 @@ type NewApp struct {
 
 // latestRelease is what a new app requires when this gantry isn't a release
 // itself (built from a checkout): the newest tag when it was built.
-const latestRelease = "v0.8.1"
+const latestRelease = "v0.8.2"
 
 const templVersion = "v0.3.1020"
 
@@ -202,6 +202,9 @@ func writeApp(dir string, a NewApp) error {
 		switch out {
 		case "gitignore":
 			out = ".gitignore"
+		case "assets/resized/gitkeep":
+			// Kept so the folder is there for go:embed before a build.
+			out = "assets/resized/.gitkeep"
 		case "dockerignore":
 			// In a module, the build's context is the module's root, and
 			// BuildKit reads Dockerfile.dockerignore instead.

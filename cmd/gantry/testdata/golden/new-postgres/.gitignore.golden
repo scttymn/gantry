@@ -1,4 +1,7 @@
 .cache/
+# The pictures' copies: the build makes them (`shop assets`).
+assets/resized/*
+!assets/resized/.gitkeep
 .env
 .houston/
 compose.local.yml

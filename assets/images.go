@@ -3,9 +3,11 @@ package assets
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -22,11 +24,15 @@ import (
 //	var Images = All.Images(nil)
 //	@assets.Images.Img("hero.jpg", images.Img{Alt: "…", Sizes: "100vw", Priority: true})
 //
-// Copies are kept on disk by the image's content, so they're made once:
-// Prepare, at start, makes the ones not made yet (a deploy that changed no
-// image makes none) and removes those of images that are gone. A copy asked
-// for before Prepare made it is made then.
+// The build makes the copies, as Rails' assets:precompile does: the app's
+// `assets` command runs Precompile into assets/resized/ before go build,
+// which embeds them with the rest, so the server serves them from memory
+// and never runs the encoder. Precompile makes only what's missing, and a
+// changed picture is a new one (its key is its fingerprint). Without the
+// build's copies (in development, in tests), a copy is made when it's first
+// asked for.
 type Images struct {
+	a        *Assets
 	pipeline *images.Pipeline
 	server   *images.Server
 	byName   map[string]*picture
@@ -43,18 +49,17 @@ type picture struct {
 const ImagesPrefix = "/assets/resized/"
 
 // Images is a's pictures at every width, made by p (WebP at quality 80, at
-// images.Widths, when nil). Routes serves them once it's called. A picture
-// that doesn't decode is a broken asset, so it panics at start.
+// images.Widths, when nil). Routes serves them once it's called.
 func (a *Assets) Images(p *images.Pipeline) *Images {
 	if p == nil {
 		p = &images.Pipeline{}
 	}
 	if p.Dir == "" {
-		// Until Prepare names the app's own: shared by the processes on this
-		// machine (tests), each copy written whole and renamed in.
+		// Copies made on request, without the build's: shared by the
+		// processes on this machine (tests), each written whole and renamed in.
 		p.Dir = filepath.Join(os.TempDir(), "gantry-asset-images")
 	}
-	im := &Images{pipeline: p, byName: map[string]*picture{}, byKey: map[string]*picture{}}
+	im := &Images{a: a, pipeline: p, byName: map[string]*picture{}, byKey: map[string]*picture{}}
 	for name, f := range a.byName {
 		width, height, contentType, err := p.Dimensions(f.body)
 		if err != nil || !p.Resizable(contentType) {
@@ -71,9 +76,9 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 }
 
 // original is where the picture's own bytes are written for the pipeline,
-// which reads files.
+// which reads files: beside the on-request copies, never among the build's.
 func (im *Images) original(pic *picture) (string, error) {
-	path := filepath.Join(im.pipeline.Dir, pic.key, "original"+pic.ext)
+	path := filepath.Join(os.TempDir(), "gantry-asset-originals", pic.key+pic.ext)
 	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
@@ -96,17 +101,16 @@ func (im *Images) find(_ context.Context, key string) (images.Original, bool, er
 	return images.Original{Path: path, ContentType: pic.contentType, Width: pic.width}, err == nil, err
 }
 
-// Prepare keeps the copies in dir (the app's data volume, so they outlast a
-// deploy) and has the pipeline make those not made yet (Pipeline.Prepare):
-// a picture unchanged since the last start has its copies, and a changed
-// one is a new key. Copies of pictures no longer in the assets are removed.
-// Call it before serving; dir is the copies' alone. made is how many it
-// made.
-func (im *Images) Prepare(ctx context.Context, dir string) (made int, err error) {
-	im.pipeline.Dir = dir
+// Precompile writes every picture's copies into dir (assets/resized, for
+// the build to embed), making only those missing, and removes the copies
+// of pictures no longer in the assets: Pipeline.Prepare. made is how many
+// it made.
+func (im *Images) Precompile(ctx context.Context, dir string) (made int, err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
+	q := im.pipeline
+	p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker}
 	originals := map[string]images.Original{}
 	for key, pic := range im.byKey {
 		path, err := im.original(pic)
@@ -115,7 +119,36 @@ func (im *Images) Prepare(ctx context.Context, dir string) (made int, err error)
 		}
 		originals[key] = images.Original{Path: path, ContentType: pic.contentType, Width: pic.width}
 	}
-	return im.pipeline.Prepare(ctx, originals, 0)
+	return p.Prepare(ctx, originals, 0)
+}
+
+// Precompiled reports whether the build made every picture's copies, so no
+// request makes one.
+func (im *Images) Precompiled() bool {
+	for key, pic := range im.byKey {
+		for _, w := range im.pipeline.WidthsFor(pic.width) {
+			if _, ok := im.a.copies[key][im.pipeline.Name(w, im.pipeline.QualityOr(0))]; !ok {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ServeHTTP serves a copy: the build's, from memory, else one made on
+// request.
+func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	key, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, ImagesPrefix), "/")
+	if body, ok := im.a.copies[key][name]; ok && im.byKey[key] != nil {
+		w.Header().Set("Content-Type", im.pipeline.ContentType())
+		w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(Year)+", immutable")
+		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		if r.Method != http.MethodHead {
+			w.Write(body)
+		}
+		return
+	}
+	im.server.ServeHTTP(w, r)
 }
 
 // Img is the picture's <img>: a srcset of its copies, the browser picking by

@@ -87,13 +87,13 @@ func TestImagesImg(t *testing.T) {
 	}
 }
 
-// Copies are made once: a second start (a deploy that changed no picture)
-// makes none, and a picture that's gone takes its copies with it.
-func TestImagesPrepare(t *testing.T) {
+// The build's copies: made once (a second build that changed no picture
+// makes none), a picture that's gone takes its copies with it.
+func TestImagesPrecompile(t *testing.T) {
 	_, im := pictures(t)
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "old-1a2b3c4d"), 0o755) // a picture since changed
-	made, err := im.Prepare(context.Background(), dir)
+	made, err := im.Precompile(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,10 +111,70 @@ func TestImagesPrepare(t *testing.T) {
 	if w, h, ct, err := im.pipeline.Dimensions(copy480); err != nil || w != 480 || h != 288 || ct != "image/webp" {
 		t.Errorf("the 480 copy: %dx%d %s %v", w, h, ct, err)
 	}
-	// The next start finds them made, and makes none.
+	if entries, _ := os.ReadDir(filepath.Join(dir, hero.key)); len(entries) != 4 {
+		t.Errorf("%d files beside the copies", len(entries))
+	}
 	_, again := pictures(t)
-	if made, err := again.Prepare(context.Background(), dir); err != nil || made != 0 {
-		t.Errorf("second start made %d (%v)", made, err)
+	if made, err := again.Precompile(context.Background(), dir); err != nil || made != 0 {
+		t.Errorf("second build made %d (%v)", made, err)
+	}
+}
+
+// The build's copies, embedded, are served as they are, and nothing's made.
+func TestImagesPrecompiled(t *testing.T) {
+	_, im := pictures(t)
+	dir := t.TempDir()
+	if _, err := im.Precompile(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	if im.Precompiled() {
+		t.Error("precompiled before the copies were embedded")
+	}
+	fsys := fstest.MapFS{
+		"images/hero.png":     {Data: pngOf(t, 500, 300)},
+		"images/maps/pin.png": {Data: pngOf(t, 100, 100)},
+	}
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			rel, _ := filepath.Rel(dir, path)
+			b, _ := os.ReadFile(path)
+			fsys["resized/"+filepath.ToSlash(rel)] = &fstest.MapFile{Data: b}
+		}
+		return err
+	})
+	key := im.byName["hero.png"].key
+	fsys["resized/"+key+"/160w-q80.webp"] = &fstest.MapFile{Data: []byte("the build's")}
+	a, err := New(fsys)
+	if err != nil {
+		t.Fatal(err)
+	}
+	built := a.Images(&images.Pipeline{Dir: t.TempDir()})
+	if !built.Precompiled() {
+		t.Error("not precompiled")
+	}
+	if _, ok := a.byName[key+"/160w-q80.webp"]; ok || len(a.byName) != 2 {
+		t.Errorf("a copy became an asset: %d assets", len(a.byName))
+	}
+	mux := http.NewServeMux()
+	a.Routes(mux.Handle)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/assets/resized/"+key+"/160w-q80.webp", nil))
+	if w.Code != 200 || w.Body.String() != "the build's" || w.Header().Get("Content-Type") != "image/webp" || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
+		t.Errorf("%d %q %v", w.Code, w.Body, w.Header())
+	}
+	if entries, _ := os.ReadDir(built.pipeline.Dir); len(entries) != 0 {
+		t.Error("a copy was made on request")
+	}
+	// A copy of a picture that isn't in the assets isn't served.
+	fsys["resized/stale-12345678/160w-q80.webp"] = &fstest.MapFile{Data: []byte("x")}
+	a2, _ := New(fsys)
+	a2.Images(nil)
+	mux2 := http.NewServeMux()
+	a2.Routes(mux2.Handle)
+	w = httptest.NewRecorder()
+	mux2.ServeHTTP(w, httptest.NewRequest("GET", "/assets/resized/stale-12345678/160w-q80.webp", nil))
+	if w.Code != 404 {
+		t.Errorf("a stale copy: %d", w.Code)
 	}
 }
 
@@ -153,11 +213,11 @@ func TestImagesServed(t *testing.T) {
 }
 
 // A changed picture is a new one: its key is its content's, so the next
-// start makes its copies, and removes the old version's.
+// build makes its copies, and removes the old version's.
 func TestImagesChanged(t *testing.T) {
 	dir := t.TempDir()
 	_, before := pictures(t)
-	if _, err := before.Prepare(context.Background(), dir); err != nil {
+	if _, err := before.Precompile(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
 	oldKey := before.byName["hero.png"].key
@@ -170,11 +230,11 @@ func TestImagesChanged(t *testing.T) {
 	if newKey == oldKey {
 		t.Fatal("a changed picture kept its key")
 	}
-	made, err := after.Prepare(context.Background(), dir)
+	made, err := after.Precompile(context.Background(), dir)
 	if err != nil || made != 3 { // 160, 240 and 320: the widths up to its 400
 		t.Errorf("made %d (%v)", made, err)
 	}
-	if !after.pipeline.Has(newKey, 160, 0) {
+	if _, err := os.Stat(filepath.Join(dir, newKey, "160w-q80.webp")); err != nil {
 		t.Error("the new version has no copies")
 	}
 	for _, gone := range []string{oldKey, before.byName["maps/pin.png"].key} {
@@ -182,7 +242,6 @@ func TestImagesChanged(t *testing.T) {
 			t.Errorf("%s's copies kept", gone)
 		}
 	}
-	// Its tag names the new copies.
 	if tag := draw(t, after, "hero.png", images.Img{}); !strings.Contains(tag, newKey) || strings.Contains(tag, oldKey) {
 		t.Errorf("%s", tag)
 	}

@@ -70,7 +70,7 @@ func TestNewInModule(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
 		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
-		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "RUN templ generate -path /app/apps/control && go build"},
+		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "RUN templ generate -path /app/apps/control && go run ./cmd/control assets && go build"},
 		"Dockerfile.dockerignore": {"**/.git", "**/.cache"},
 	} {
 		for _, want := range wants {
@@ -347,7 +347,7 @@ func TestNewAppBuilds(t *testing.T) {
 	// reads that release's go.mod, which isn't published until it's tagged.
 	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-	for _, step := range [][]string{{"templ", "generate"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+	for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
 		cmd := exec.Command(step[0], step[1:]...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {

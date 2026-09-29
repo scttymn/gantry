@@ -35,7 +35,8 @@ FROM toolchain AS build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN templ generate -path /app && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/shop
+# The pictures' copies first (Rails' assets:precompile), for go build to embed.
+RUN templ generate -path /app && go run ./cmd/shop assets && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/shop
 RUN mkdir -p /out/data
 
 FROM scratch AS production

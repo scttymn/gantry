@@ -11,6 +11,7 @@
 //	  fonts/oswald.woff2   → Path("oswald.woff2")
 //	  images/maps/a.png    → Path("maps/a.png")
 //	  public/robots.txt    → served at /robots.txt
+//	  resized/…            → the pictures' copies the build made (Images)
 //
 // A file is named by its path under its top folder, as Rails' Propshaft
 // names them, so a stylesheet refers to a font as url("oswald.woff2").
@@ -53,6 +54,9 @@ type Assets struct {
 	byDigest map[string]*asset // digested name → asset
 	public   map[string]*asset // root name → asset ("robots.txt")
 	images   *Images           // the pictures' copies, once Images is called
+	// copies are resized/<key>/<name>: the pictures' copies the build made
+	// (Images.Precompile), embedded with the rest.
+	copies map[string]map[string][]byte
 }
 
 var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
@@ -60,7 +64,7 @@ var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
 // New reads every file in fsys (see the package doc). Two files with the
 // same name under different top folders are an error.
 func New(fsys fs.FS) (*Assets, error) {
-	a := &Assets{byName: map[string]*asset{}, byDigest: map[string]*asset{}, public: map[string]*asset{}}
+	a := &Assets{byName: map[string]*asset{}, byDigest: map[string]*asset{}, public: map[string]*asset{}, copies: map[string]map[string][]byte{}}
 	var css []string
 	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || strings.HasPrefix(path.Base(p), ".") {
@@ -76,6 +80,15 @@ func New(fsys fs.FS) (*Assets, error) {
 		}
 		if top == "public" {
 			a.public[name] = a.digest(name, body)
+			return nil
+		}
+		if top == "resized" {
+			if key, copyName, ok := strings.Cut(name, "/"); ok && !strings.Contains(copyName, "/") {
+				if a.copies[key] == nil {
+					a.copies[key] = map[string][]byte{}
+				}
+				a.copies[key][copyName] = body
+			}
 			return nil
 		}
 		if _, dup := a.byName[name]; dup {
@@ -224,7 +237,7 @@ func (a *Assets) PublicNames() []string {
 func (a *Assets) Routes(mount func(pattern string, h http.Handler)) {
 	mount("GET /assets/", a.Handler())
 	if a.images != nil {
-		mount("GET "+ImagesPrefix, a.images.server)
+		mount("GET "+ImagesPrefix, a.images)
 	}
 	for _, name := range a.PublicNames() {
 		mount("GET /"+name, a.PublicHandler())
