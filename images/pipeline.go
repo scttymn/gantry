@@ -497,6 +497,9 @@ var (
 
 // memoryRoom is the memory free for a child: the container's limit less its
 // use (cgroup v2), or the machine's available memory, whichever is less.
+// Its use is its working set, as the kernel reclaims it: less the file cache
+// not in use (inactive_file), which fills as copies are written and is
+// dropped when a child needs the room.
 func memoryRoom() (free int64, known bool) {
 	free = math.MaxInt64
 	if max, err := os.ReadFile(filepath.Join(cgroupDir, "memory.max")); err == nil {
@@ -504,6 +507,17 @@ func memoryRoom() (free int64, known bool) {
 		limit, err1 := strconv.ParseInt(strings.TrimSpace(string(max)), 10, 64)
 		used, err2 := strconv.ParseInt(strings.TrimSpace(string(cur)), 10, 64)
 		if err == nil && err1 == nil && err2 == nil { // "max": no limit
+			if stat, err := os.ReadFile(filepath.Join(cgroupDir, "memory.stat")); err == nil {
+				for line := range strings.Lines(string(stat)) {
+					if v, ok := strings.CutPrefix(line, "inactive_file "); ok {
+						if cache, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64); err == nil {
+							if used -= cache; used < 0 {
+								used = 0
+							}
+						}
+					}
+				}
+			}
 			free, known = limit-used, true
 		}
 	}

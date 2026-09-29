@@ -521,6 +521,12 @@ func TestMemoryRoom(t *testing.T) {
 	if free, _ := memoryRoom(); free != 402653184-104857600 {
 		t.Errorf("the container's: %d", free)
 	}
+	// Its file cache not in use is its to drop: not counted.
+	write("memory.stat", "anon 52428800\nfile 62914560\ninactive_file 41943040\n")
+	if free, _ := memoryRoom(); free != 402653184-(104857600-41943040) {
+		t.Errorf("less the inactive cache: %d", free)
+	}
+	os.Remove(filepath.Join(dir, "memory.stat"))
 	write("memory.max", "max\n")
 	if free, _ := memoryRoom(); free != 1<<30 {
 		t.Errorf("no container limit: %d", free)
