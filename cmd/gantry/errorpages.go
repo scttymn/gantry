@@ -15,7 +15,7 @@ type ErrorPage struct {
 	Title, Hint string
 }
 
-// errorPages are Rails' set: public/400.html, 404, 422 and 500.
+// errorPages are Rails' set: 400, 404, 422 and 500.
 var errorPages = []ErrorPage{
 	{400, "The request couldn't be understood.", "Something in it was malformed. Try again from the page you came from."},
 	{404, "The page you were looking for doesn't exist.", "You may have mistyped the address, or the page may have moved."},
@@ -23,11 +23,12 @@ var errorPages = []ErrorPage{
 	{500, "Something went wrong.", "We've been told about it. Try again in a little while."},
 }
 
-// generateErrorPages writes public/<status>.html for each of Rails' error
+// generateErrorPages writes assets/public/<status>.html (gantry's public
+// folder, served at the root, as Rails' public/) for each of Rails' error
 // pages, the app's to restyle. A page that's there is kept, unless force.
 func generateErrorPages(root string, force bool, out io.Writer) error {
 	t := template.Must(template.ParseFS(templates, "templates/errorpages/page.html.tmpl"))
-	dir := filepath.Join(root, "public")
+	dir := filepath.Join(root, "assets", "public")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
@@ -35,7 +36,7 @@ func generateErrorPages(root string, force bool, out io.Writer) error {
 		name := fmt.Sprintf("%d.html", p.Status)
 		path := filepath.Join(dir, name)
 		if _, err := os.Stat(path); err == nil && !force {
-			fmt.Fprintln(out, "  kept", filepath.Join("public", name), "(--force replaces it)")
+			fmt.Fprintln(out, "  kept", filepath.Join("assets", "public", name), "(--force replaces it)")
 			continue
 		}
 		var b bytes.Buffer
@@ -45,7 +46,7 @@ func generateErrorPages(root string, force bool, out io.Writer) error {
 		if err := os.WriteFile(path, b.Bytes(), 0o644); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "  wrote", filepath.Join("public", name))
+		fmt.Fprintln(out, "  wrote", filepath.Join("assets", "public", name))
 	}
 	return nil
 }

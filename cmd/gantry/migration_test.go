@@ -117,16 +117,16 @@ func TestErrorPages(t *testing.T) {
 	}
 	gen()
 	for _, p := range errorPages {
-		b, err := os.ReadFile(filepath.Join(root, "public", fmt.Sprintf("%d.html", p.Status)))
+		b, err := os.ReadFile(filepath.Join(root, "assets", "public", fmt.Sprintf("%d.html", p.Status)))
 		if err != nil || !strings.Contains(string(b), p.Title) || !strings.Contains(string(b), fmt.Sprintf("<title>%s (%d)</title>", p.Title, p.Status)) {
 			t.Errorf("%d: %v\n%s", p.Status, err, b)
 		}
 	}
 	// A page the app changed is kept, unless --force.
-	mine := filepath.Join(root, "public", "404.html")
+	mine := filepath.Join(root, "assets", "public", "404.html")
 	os.WriteFile(mine, []byte("mine"), 0o644)
-	os.Remove(filepath.Join(root, "public", "500.html"))
-	if out := gen(); !strings.Contains(out, "kept public/404.html") || !strings.Contains(out, "wrote public/500.html") {
+	os.Remove(filepath.Join(root, "assets", "public", "500.html"))
+	if out := gen(); !strings.Contains(out, "kept assets/public/404.html") || !strings.Contains(out, "wrote assets/public/500.html") {
 		t.Errorf("second run: %s", out)
 	}
 	if b, _ := os.ReadFile(mine); string(b) != "mine" {
