@@ -48,13 +48,14 @@ type Scope struct {
 	mux     *http.ServeMux
 	prefix  string
 	filters Pipeline
+	check   Check // a constraint's, nil outside one
 }
 
 // Scope adds routes under prefix ("/api/v1", or "" for none) that run
 // pipeline's filters before their handlers.
 func (s *Scope) Scope(prefix string, pipeline Pipeline, routes func(s *Scope)) {
 	routes(&Scope{rt: s.rt, mux: s.mux, prefix: s.prefix + prefix,
-		filters: append(slices.Clip(s.filters), pipeline...)})
+		filters: append(slices.Clip(s.filters), pipeline...), check: s.check})
 }
 
 // Handle routes pattern ("GET /posts/{id}", ServeMux's syntax, under the

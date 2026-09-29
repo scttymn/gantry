@@ -75,11 +75,12 @@ func StatusOf(err error) int {
 
 // Router is the app's routes.
 type Router struct {
-	Log       *slog.Logger
-	ErrorPage ErrorPage
-	Cache     *PageCache // for Cached routes; nil: they aren't cached
-	mux       *http.ServeMux
-	root      *Scope // the router's own routes
+	Log         *slog.Logger
+	ErrorPage   ErrorPage
+	Cache       *PageCache // for Cached routes; nil: they aren't cached
+	mux         *http.ServeMux
+	root        *Scope        // the router's own routes
+	constraints []constrained // tried in order, before them
 }
 
 // NewRouter is an empty router. page may be nil: errors are then answered
@@ -149,7 +150,7 @@ func WantsHTML(r *http.Request) bool {
 //   - MethodOverride: HTML forms can PUT, PATCH and DELETE, with bodies capped
 func (rt *Router) Handler() http.Handler {
 	rt.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusNotFound) })
-	var h http.Handler = rt.mux
+	var h http.Handler = http.HandlerFunc(rt.route)
 	h = withCurrent(h)
 	h = MethodOverride(h, DefaultBodyLimits)
 	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) })
