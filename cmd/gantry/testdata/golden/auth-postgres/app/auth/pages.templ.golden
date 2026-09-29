@@ -1,0 +1,70 @@
+package auth
+
+import (
+	"net/url"
+
+	"example.com/shop/app/shared/layout"
+)
+
+// flashes is a page's message: a notice, or an alert.
+type flashes struct{ Notice, Alert string }
+
+templ messages(f flashes) {
+	if f.Notice != "" {
+		<p role="status">{ f.Notice }</p>
+	}
+	if f.Alert != "" {
+		<p role="alert">{ f.Alert }</p>
+	}
+}
+
+templ signIn(f flashes) {
+	@layout.Layout(layout.Page{Title: "Sign in"}) {
+		<main class="auth">
+			<h1>Sign in</h1>
+			@messages(f)
+			<form method="post" action={ templ.URL(SessionPath) }>
+				<label>Email <input type="email" name="email_address" required autofocus autocomplete="username"/></label>
+				<label>Password <input type="password" name="password" required autocomplete="current-password" maxlength="72"/></label>
+				<button type="submit">Sign in</button>
+			</form>
+			<p><a href={ templ.URL(PasswordsPath + "/new") }>Forgot password?</a></p>
+		</main>
+	}
+}
+
+templ forgotPassword(f flashes) {
+	@layout.Layout(layout.Page{Title: "Forgot your password?"}) {
+		<main class="auth">
+			<h1>Forgot your password?</h1>
+			@messages(f)
+			<form method="post" action={ templ.URL(PasswordsPath) }>
+				<label>Email <input type="email" name="email_address" required autofocus autocomplete="username"/></label>
+				<button type="submit">Email reset instructions</button>
+			</form>
+		</main>
+	}
+}
+
+templ editPassword(f flashes, token string) {
+	@layout.Layout(layout.Page{Title: "Update your password"}) {
+		<main class="auth">
+			<h1>Update your password</h1>
+			@messages(f)
+			<form method="post" action={ templ.URL(PasswordsPath + "/" + url.PathEscape(token)) }>
+				<input type="hidden" name="_method" value="patch"/>
+				<label>New password <input type="password" name="password" required autocomplete="new-password" maxlength="72"/></label>
+				<label>Confirm it <input type="password" name="password_confirmation" required autocomplete="new-password" maxlength="72"/></label>
+				<button type="submit">Save</button>
+			</form>
+		</main>
+	}
+}
+
+// SignOut is a sign-out button, for a signed-in page's layout.
+templ SignOut() {
+	<form method="post" action={ templ.URL(SessionPath) }>
+		<input type="hidden" name="_method" value="delete"/>
+		<button type="submit">Sign out</button>
+	</form>
+}

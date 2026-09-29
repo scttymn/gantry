@@ -1,0 +1,16 @@
+-- Users (gantry g auth; app/auth). Emails are stored lowercased.
+
+-- name: FindUserByEmail :one
+SELECT * FROM users WHERE email_address = sqlc.arg(email_address);
+
+-- name: FindUser :one
+SELECT * FROM users WHERE id = sqlc.arg(id);
+
+-- name: CreateUser :one
+INSERT INTO users (email_address, password_digest, created_at, updated_at)
+VALUES (sqlc.arg(email_address), sqlc.arg(password_digest), sqlc.arg(now), sqlc.arg(now))
+RETURNING *;
+
+-- name: UpdateUserPassword :exec
+UPDATE users SET password_digest = sqlc.arg(password_digest), updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id);

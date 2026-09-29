@@ -1,0 +1,296 @@
+package auth
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/testkit"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/models"
+	"{{.Module}}/test"
+)
+
+func init() { bcryptCost = 4 } // a cost-12 hash takes a quarter of a second
+
+const password = "correct horse"
+
+// outbox is the mail the app sent.
+type outbox []mail.Message
+
+func (o *outbox) Send(_ context.Context, m mail.Message) error { *o = append(*o, m); return nil }
+
+type site struct {
+	b     *testkit.Visitor
+	a     *Auth
+	clock *testkit.FakeClock
+	sent  *outbox
+	user  models.User
+}
+
+// newSite is an app with sign-in, a page behind it, and an API behind it.
+func newSite(t *testing.T, idle, lifetime time.Duration) *site {
+	t.Helper()
+	s := &site{clock: testkit.Clock(time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)), sent: &outbox{}}
+	s.a = &Auth{DB: test.DB(t), Signer: sign.Signer{Key: []byte("test-key")}, Mail: s.sent, From: "app@example.com",
+		URL: func(p string) string { return "https://example.com" + p }, Limits: &web.Limits{},
+		Now: s.clock.Now, Idle: idle, Lifetime: lifetime}
+	var err error
+	if s.user, err = s.a.CreateUser(context.Background(), " Sam@Example.com ", password); err != nil {
+		t.Fatal(err)
+	}
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	s.a.Routes(rt)
+	rt.Scope("/admin", web.Pipeline{s.a.Require}, func(sc *web.Scope) {
+		sc.Handle("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+			u, _ := Current(r)
+			io.WriteString(w, "<p>hello "+u.EmailAddress+"</p>")
+			return SignOut().Render(r.Context(), w)
+		})
+		sc.Handle("GET /reports", func(w http.ResponseWriter, r *http.Request) error {
+			io.WriteString(w, "reports")
+			return nil
+		})
+	})
+	rt.Scope("/api", web.Pipeline{web.AcceptJSON, s.a.Require}, func(sc *web.Scope) {
+		sc.Handle("GET /me", func(w http.ResponseWriter, r *http.Request) error { return nil })
+	})
+	s.b = testkit.Browser(t, rt.Handler())
+	return s
+}
+
+func (s *site) signIn(t *testing.T, email, pw string) *testkit.Response {
+	t.Helper()
+	return s.b.Get(SignInPath).Submit("form", map[string]string{"email_address": email, "password": pw})
+}
+
+func (s *site) signedIn() bool { return s.b.Get("/admin/").Code == 200 }
+
+func TestSignIn(t *testing.T) {
+	s := newSite(t, 0, 0)
+	if page := s.b.Get(SignInPath); page.Code != 200 || page.Find(`input[name="email_address"]`).Length() != 1 {
+		t.Fatalf("the sign-in page: %d", page.Code)
+	}
+	page := s.signIn(t, "sam@example.com", "wrong")
+	if page.Code != 303 || page.Follow().Text(`[role="alert"]`) != msgBadSignIn || s.signedIn() {
+		t.Errorf("a wrong password: %d", page.Code)
+	}
+	// Matched however it's typed, and back to /admin/, where signedIn went.
+	page = s.signIn(t, "  SAM@example.COM", password)
+	if page.Code != 303 || page.Header.Get("Location") != "/admin/" || !s.signedIn() {
+		t.Fatalf("signing in: %d %q", page.Code, page.Header.Get("Location"))
+	}
+	if got := s.b.Get("/admin/").Text("p"); got != "hello sam@example.com" {
+		t.Errorf("Current: %q", got)
+	}
+}
+
+func TestSessionCookie(t *testing.T) {
+	s := newSite(t, 0, 0)
+	page := s.signIn(t, "sam@example.com", password)
+	var c *http.Cookie
+	for _, k := range (&http.Response{Header: page.Header}).Cookies() {
+		if k.Name == cookieName {
+			c = k
+		}
+	}
+	if c == nil || !c.HttpOnly || c.SameSite != http.SameSiteLaxMode || !regexp.MustCompile(`\A[A-Za-z0-9_-]{43}\z`).MatchString(c.Value) {
+		t.Fatalf("the cookie: %+v", c)
+	}
+	var stored string
+	s.a.DB.Read.QueryRow(`SELECT token_digest FROM sessions`).Scan(&stored)
+	if stored == c.Value || stored == "" {
+		t.Error("the token itself is in the database")
+	}
+}
+
+func TestSignOut(t *testing.T) {
+	s := newSite(t, 0, 0)
+	s.signIn(t, "sam@example.com", password)
+	if page := s.b.Get("/admin/").Submit("form", nil); page.Code != 303 || s.signedIn() {
+		t.Errorf("signing out: %d", page.Code)
+	}
+	var n int
+	s.a.DB.Read.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n)
+	if n != 0 {
+		t.Errorf("%d sessions left", n)
+	}
+}
+
+func TestRequire(t *testing.T) {
+	s := newSite(t, 0, 0)
+	page := s.b.Get("/admin/reports?week=2")
+	if page.Code != 302 || page.Header.Get("Location") != SignInPath {
+		t.Fatalf("signed out: %d %q", page.Code, page.Header.Get("Location"))
+	}
+	// Back where they were going, after.
+	if page = s.signIn(t, "sam@example.com", password); page.Header.Get("Location") != "/admin/reports?week=2" {
+		t.Errorf("after signing in: %q", page.Header.Get("Location"))
+	}
+	// Data gets 401, not a sign-in page.
+	s = newSite(t, 0, 0)
+	if page := s.b.Get("/api/me"); page.Code != 401 || !strings.Contains(page.Body, `"error"`) {
+		t.Errorf("an API: %d %q", page.Code, page.Body)
+	}
+}
+
+// A return address is a path on this site, whatever the cookie says.
+func TestReturnToStaysOnSite(t *testing.T) {
+	for _, to := range []string{"//evil.example.com", "https://evil.example.com/", `/\evil.example.com`} {
+		s := newSite(t, 0, 0)
+		s.b.Header.Set("Cookie", returnToName+"="+s.a.Signer.Sign(returnToName, to))
+		if page := s.signIn(t, "sam@example.com", password); page.Header.Get("Location") != "/" {
+			t.Errorf("%q: sent to %q", to, page.Header.Get("Location"))
+		}
+	}
+}
+
+// A session ends after Idle without use, and Lifetime after signing in,
+// however busy; an ended one is deleted.
+func TestExpiry(t *testing.T) {
+	day := 24 * time.Hour
+	s := newSite(t, 14*day, 30*day)
+	s.signIn(t, "sam@example.com", password)
+	for range 3 { // used every nine days: never idle for two weeks
+		s.clock.Advance(9 * day)
+		if !s.signedIn() {
+			t.Fatalf("signed out after %v in use", s.clock.Now().Sub(time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)))
+		}
+	}
+	s.clock.Advance(4 * day) // 31 days after signing in
+	if s.signedIn() {
+		t.Error("still signed in after its Lifetime")
+	}
+
+	s = newSite(t, 14*day, 30*day)
+	s.signIn(t, "sam@example.com", password)
+	s.clock.Advance(14*day + time.Minute) // unused for two weeks
+	if s.signedIn() {
+		t.Error("still signed in after its Idle")
+	}
+	var n int
+	s.a.DB.Read.QueryRow(`SELECT COUNT(*) FROM sessions`).Scan(&n)
+	if n != 0 {
+		t.Errorf("an ended session kept: %d", n)
+	}
+}
+
+// last_seen_at is written at most hourly.
+func TestSeenHourly(t *testing.T) {
+	s := newSite(t, 0, 0)
+	s.signIn(t, "sam@example.com", password)
+	seen := func() time.Time {
+		var at time.Time
+		s.a.DB.Read.QueryRow(`SELECT last_seen_at FROM sessions`).Scan(&at)
+		return at
+	}
+	start := s.clock.Now()
+	s.clock.Advance(30 * time.Minute)
+	s.signedIn()
+	if !seen().Equal(start) {
+		t.Errorf("written within the hour: %v", seen())
+	}
+	s.clock.Advance(31 * time.Minute)
+	s.signedIn()
+	if !seen().Equal(s.clock.Now()) {
+		t.Errorf("after the hour: %v, want %v", seen(), s.clock.Now())
+	}
+}
+
+func TestRateLimit(t *testing.T) {
+	s := newSite(t, 0, 0)
+	for range 10 {
+		s.signIn(t, "sam@example.com", "wrong")
+	}
+	if page := s.signIn(t, "sam@example.com", password); page.Follow().Text(`[role="alert"]`) != msgTooMany || s.signedIn() {
+		t.Error("an eleventh try in three minutes wasn't turned away")
+	}
+	s.clock.Advance(3*time.Minute + time.Second)
+	if s.signIn(t, "sam@example.com", password); !s.signedIn() {
+		t.Error("still turned away after three minutes")
+	}
+}
+
+// resetLink asks for a reset for email, and is the link mailed, if any.
+func (s *site) resetLink(t *testing.T, email string) string {
+	t.Helper()
+	before := len(*s.sent)
+	page := s.b.Get(PasswordsPath+"/new").Submit("form", map[string]string{"email_address": email})
+	if page.Follow().Text(`[role="status"]`) != msgResetSent {
+		t.Fatalf("asking for a reset: %d", page.Code)
+	}
+	if len(*s.sent) == before {
+		return ""
+	}
+	m := (*s.sent)[len(*s.sent)-1]
+	link := regexp.MustCompile(`https://example\.com(\S+)`).FindStringSubmatch(m.Text)
+	if m.To != s.user.EmailAddress || link == nil {
+		t.Fatalf("the email: %+v", m)
+	}
+	return link[1]
+}
+
+func TestPasswordReset(t *testing.T) {
+	s := newSite(t, 0, 0)
+	// Anyone else gets the same answer, and nothing is sent.
+	if link := s.resetLink(t, "nobody@example.com"); link != "" {
+		t.Error("mail for an address with no account")
+	}
+	s.signIn(t, "sam@example.com", password)
+
+	link := s.resetLink(t, "SAM@example.com")
+	form := s.b.Get(link)
+	if form.Code != 200 {
+		t.Fatalf("the reset page: %d", form.Code)
+	}
+	if page := form.Submit("form", map[string]string{"password": "new password!", "password_confirmation": "other"}); page.Follow().Text(`[role="alert"]`) != "Password confirmation doesn't match Password" {
+		t.Error("a mismatch")
+	}
+	if page := s.b.Get(link).Submit("form", map[string]string{"password": "short", "password_confirmation": "short"}); page.Follow().Text(`[role="alert"]`) != "Password is too short (minimum is 8 characters)" {
+		t.Error("a rule")
+	}
+	if page := s.b.Get(link).Submit("form", map[string]string{"password": "new password!", "password_confirmation": "new password!"}); page.Follow().Text(`[role="status"]`) != msgResetDone {
+		t.Fatalf("saving: %d", page.Code)
+	}
+	if s.signedIn() {
+		t.Error("a reset didn't sign out the sessions there were")
+	}
+	if s.signIn(t, "sam@example.com", "new password!"); !s.signedIn() {
+		t.Error("the new password doesn't sign in")
+	}
+	// Used, the link is dead.
+	if page := s.b.Get(link); page.Code != 303 || page.Follow().Text(`[role="alert"]`) != msgResetInvalid {
+		t.Errorf("a used link: %d", page.Code)
+	}
+}
+
+func TestResetLinkExpires(t *testing.T) {
+	s := newSite(t, 0, 0)
+	link := s.resetLink(t, "sam@example.com")
+	s.clock.Advance(ResetValidity + time.Second)
+	if page := s.b.Get(link); page.Code != 303 || page.Follow().Text(`[role="alert"]`) != msgResetInvalid {
+		t.Errorf("an old link: %d", page.Code)
+	}
+}
+
+func TestRules(t *testing.T) {
+	for pw, want := range map[string]string{
+		"":                          "Password can't be blank",
+		"short":                     "Password is too short (minimum is 8 characters)",
+		strings.Repeat("x", 73):     "Password is too long (maximum is 72 bytes)",
+		"long enough":               "",
+	} {
+		got := strings.Join(Rules(pw, pw), "; ")
+		if got != want {
+			t.Errorf("%.10q: %q, want %q", pw, got, want)
+		}
+	}
+}

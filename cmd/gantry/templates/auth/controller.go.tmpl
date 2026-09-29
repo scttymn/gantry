@@ -1,0 +1,147 @@
+package auth
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/token"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/models"
+)
+
+// Routes mounts sign-in, sign-out and password reset, at Rails 8's paths.
+func (a *Auth) Routes(rt *web.Router) {
+	rt.Handle("GET "+SignInPath, a.signInPage)
+	rt.Handle("POST "+SessionPath, a.signIn)
+	rt.Handle("DELETE "+SessionPath, a.signOut)
+	rt.Handle("GET "+PasswordsPath+"/new", a.forgotPassword)
+	rt.Handle("POST "+PasswordsPath, a.sendReset)
+	rt.Handle("GET "+PasswordsPath+"/{token}/edit", a.editPassword)
+	rt.Handle("PATCH "+PasswordsPath+"/{token}", a.updatePassword)
+	rt.Handle("PUT "+PasswordsPath+"/{token}", a.updatePassword)
+}
+
+// flashes is the page's message, taken.
+func (a *Auth) flashes(w http.ResponseWriter, r *http.Request) flashes {
+	var f flashes
+	if kind, msg, ok := a.flash().Take(w, r); ok {
+		if kind == "alert" {
+			f.Alert = msg
+		} else {
+			f.Notice = msg
+		}
+	}
+	return f
+}
+
+// redirect answers a form: to to, with a message for the page there. 303,
+// so the browser (and Turbo) follows with a GET.
+func (a *Auth) redirect(w http.ResponseWriter, r *http.Request, to, kind, msg string) {
+	if msg != "" {
+		a.flash().Set(w, r, kind, msg)
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+func (a *Auth) signInPage(w http.ResponseWriter, r *http.Request) error {
+	return web.Render(w, r, http.StatusOK, signIn(a.flashes(w, r)))
+}
+
+func (a *Auth) signIn(w http.ResponseWriter, r *http.Request) error {
+	if !a.allow(r, "sign-in") {
+		a.redirect(w, r, SignInPath, "alert", msgTooMany)
+		return nil
+	}
+	u, ok := a.Authenticate(r.Context(), r.PostFormValue("email_address"), r.PostFormValue("password"))
+	if !ok {
+		a.redirect(w, r, SignInPath, "alert", msgBadSignIn)
+		return nil
+	}
+	if _, err := a.StartSession(w, r, u); err != nil {
+		return err
+	}
+	to := a.AfterSignIn
+	if to == "" {
+		to = "/"
+	}
+	// Back where Require sent them from: a path on this site only.
+	if back, ok := web.SignedCookie(r, a.Signer, returnToName); ok && strings.HasPrefix(back, "/") && !strings.HasPrefix(back, "//") && !strings.HasPrefix(back, "/\\") {
+		to = back
+	}
+	web.ClearCookie(w, returnToName)
+	a.redirect(w, r, to, "", "")
+	return nil
+}
+
+func (a *Auth) signOut(w http.ResponseWriter, r *http.Request) error {
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		row, err := models.New(a.DB.Read).FindSessionByDigest(r.Context(), token.Digest(c.Value))
+		if err == nil {
+			if err := models.New(a.DB.Write).DeleteSession(r.Context(), row.Session.ID); err != nil {
+				return err
+			}
+		}
+	}
+	web.ClearCookie(w, cookieName)
+	a.redirect(w, r, SignInPath, "", "")
+	return nil
+}
+
+func (a *Auth) forgotPassword(w http.ResponseWriter, r *http.Request) error {
+	return web.Render(w, r, http.StatusOK, forgotPassword(a.flashes(w, r)))
+}
+
+// sendReset emails a reset link to the user with that address. Anyone else
+// gets the same answer, so the form can't tell who has an account.
+func (a *Auth) sendReset(w http.ResponseWriter, r *http.Request) error {
+	if !a.allow(r, "passwords") {
+		a.redirect(w, r, PasswordsPath+"/new", "alert", msgTooMany)
+		return nil
+	}
+	if u, err := models.New(a.DB.Read).FindUserByEmail(r.Context(), Normalize(r.PostFormValue("email_address"))); err == nil {
+		link := a.URL(PasswordsPath + "/" + url.PathEscape(a.ResetToken(u)) + "/edit")
+		msg := mail.Message{From: a.From, To: u.EmailAddress, Subject: "Reset your password",
+			Text: "You can reset your password on\n" + link + "\n\nThis link will expire in 15 minutes.\n"}
+		if err := a.Mail.Send(r.Context(), msg); err != nil && a.Log != nil {
+			a.Log.Error("auth: a password reset email", "err", err)
+		}
+	}
+	a.redirect(w, r, SignInPath, "notice", msgResetSent)
+	return nil
+}
+
+func (a *Auth) editPassword(w http.ResponseWriter, r *http.Request) error {
+	tok := r.PathValue("token")
+	if _, err := a.UserByResetToken(r.Context(), tok); err != nil {
+		a.redirect(w, r, PasswordsPath+"/new", "alert", msgResetInvalid)
+		return nil
+	}
+	return web.Render(w, r, http.StatusOK, editPassword(a.flashes(w, r), tok))
+}
+
+func (a *Auth) updatePassword(w http.ResponseWriter, r *http.Request) error {
+	tok := r.PathValue("token")
+	u, err := a.UserByResetToken(r.Context(), tok)
+	if errors.Is(err, ErrBadToken) {
+		a.redirect(w, r, PasswordsPath+"/new", "alert", msgResetInvalid)
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	password, confirmation := r.PostFormValue("password"), r.PostFormValue("password_confirmation")
+	if errs := Rules(password, confirmation); len(errs) > 0 {
+		// Say what was wrong: a password that breaks a rule isn't a mismatch.
+		a.redirect(w, r, PasswordsPath+"/"+url.PathEscape(tok)+"/edit", "alert", sentence(errs))
+		return nil
+	}
+	if err := a.SetPassword(r.Context(), u.ID, password); err != nil {
+		return err
+	}
+	a.redirect(w, r, SignInPath, "notice", msgResetDone)
+	return nil
+}

@@ -24,6 +24,7 @@ const usage = `usage:
   gantry g migration NAME [FIELD:TYPE[:required]...]
   gantry g error-pages [--force]
   gantry g api-tokens [--prefix PREFIX_]                      a recipe: named API tokens
+  gantry g auth                                               a recipe: sign-in, sessions, password reset
   gantry db migrate|rollback [N]|status|seed|reset|console   in the app's container
   gantry task NAME [ARGS...], gantry tasks                    (--local: on this machine)
   gantry dev|test|console|deploy|...                          Houston's commands
@@ -54,6 +55,8 @@ func run(args []string, root string, out, errOut io.Writer) int {
 			err = generateMigration(root, args[2:], out)
 		case "api-tokens":
 			err = generateAPITokens(root, args[2:], out)
+		case "auth":
+			err = generateAuth(root, args[2:], out)
 		case "error-pages":
 			if force := len(args) == 3 && args[2] == "--force"; len(args) == 2 || force {
 				err = generateErrorPages(root, force, out)

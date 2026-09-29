@@ -110,3 +110,47 @@ func relTo(root, path string) string {
 	}
 	return path
 }
+
+// generateAuth is `gantry g auth`: sign-in with email and password, written
+// into the app (Rails 8's authentication generator): the users and sessions
+// tables, their queries, the auth package (sessions with Idle and Lifetime,
+// the Fetch and Require filters, sign in and out, password reset by email),
+// its pages in the app's layout, and its tests.
+func generateAuth(root string, args []string, out io.Writer) error {
+	if len(args) > 0 {
+		return fmt.Errorf("g auth takes no arguments (%q)", args[0])
+	}
+	mod, err := appModule(root)
+	if err != nil {
+		return err
+	}
+	if existing, _ := filepath.Glob(filepath.Join(root, "db", "migrations", "*_create_users_and_sessions.sql")); len(existing) > 0 {
+		return fmt.Errorf("%s is there already: the recipe was applied", relTo(root, existing[0]))
+	}
+	rc := Recipe{Module: mod, Postgres: sqlcEngine(root) == "postgresql"}
+	files := map[string]string{
+		filepath.Join("db", "migrations", now().UTC().Format("20060102150405")+"_create_users_and_sessions.sql"): "migration.sql.tmpl",
+		filepath.Join("app", "models", "users.sql"):                                                              "users.sql.tmpl",
+		filepath.Join("app", "models", "sessions.sql"):                                                           "sessions.sql.tmpl",
+		filepath.Join("app", "auth", "auth.go"):                                                                  "auth.go.tmpl",
+		filepath.Join("app", "auth", "controller.go"):                                                            "controller.go.tmpl",
+		filepath.Join("app", "auth", "pages.templ"):                                                              "pages.templ.tmpl",
+		filepath.Join("app", "auth", "auth_test.go"):                                                             "auth_test.go.tmpl",
+	}
+	if err := writeRecipe(root, "auth", files, rc, out); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, `
+Next:
+  1. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
+     and gantry exec go mod tidy (it uses bcrypt).
+  2. In app/routes.go, give App an Auth and mount it:
+       a.Auth = &auth.Auth{DB: a.DB, Signer: a.Signer, Mail: mail.Log{Logger: a.Log},
+           From: "app@example.com", URL: func(p string) string { return "https://example.com" + p },
+           Limits: &web.Limits{}, Log: a.Log}  // Idle, Lifetime: when sessions end
+       a.Auth.Routes(rt)
+       rt.Scope("/admin", web.Pipeline{a.Auth.Require}, func(s *web.Scope) { ... })
+  3. The first user, from a task in app/tasks.go: a.Auth.CreateUser(ctx, email, password).
+`)
+	return nil
+}

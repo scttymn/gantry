@@ -19,50 +19,64 @@ func shopApp(t *testing.T, engine string) string {
 	return filepath.Join(root, "shop")
 }
 
-// What the recipe writes is pinned, on each engine.
-func TestAPITokensGolden(t *testing.T) {
-	for _, engine := range []string{"sqlite", "postgres"} {
-		t.Run(engine, func(t *testing.T) {
-			dir := shopApp(t, engine)
-			at(t, "2026-09-29T12:00:00Z")
-			before := map[string]bool{}
-			filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-				before[p] = true
-				return err
+// What each recipe writes is pinned, on each engine.
+func TestRecipesGolden(t *testing.T) {
+	for _, tc := range []struct {
+		recipe string
+		args   []string
+		files  int
+	}{
+		{"api-tokens", []string{"--prefix", "shop_"}, 4},
+		{"auth", nil, 7},
+	} {
+		for _, engine := range []string{"sqlite", "postgres"} {
+			t.Run(tc.recipe+"/"+engine, func(t *testing.T) {
+				recipeGolden(t, tc.recipe, tc.args, tc.files, engine)
 			})
-			code, out, stderr := gantry(t, dir, "g", "api-tokens", "--prefix", "shop_")
-			if code != 0 {
-				t.Fatalf("exit %d: %s", code, stderr)
-			}
-			if !strings.Contains(out, "apitokens.Require(a.DB, time.Now)") {
-				t.Errorf("no route to add:\n%s", out)
-			}
-			golden := filepath.Join("testdata", "golden", "api-tokens-"+engine)
-			if *update {
-				os.RemoveAll(golden)
-			}
-			written := 0
-			filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() || before[p] {
-					return err
-				}
-				written++
-				rel, _ := filepath.Rel(dir, p)
-				got, _ := os.ReadFile(p)
-				want := filepath.Join(golden, rel+".golden")
-				if *update {
-					os.MkdirAll(filepath.Dir(want), 0o755)
-					return os.WriteFile(want, got, 0o644)
-				}
-				if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-					t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
-				}
-				return nil
-			})
-			if written != 4 {
-				t.Errorf("wrote %d files, want 4", written)
-			}
-		})
+		}
+	}
+}
+
+func recipeGolden(t *testing.T, recipe string, args []string, files int, engine string) {
+	t.Helper()
+	dir := shopApp(t, engine)
+	at(t, "2026-09-29T12:00:00Z")
+	before := map[string]bool{}
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		before[p] = true
+		return err
+	})
+	code, out, stderr := gantry(t, dir, append([]string{"g", recipe}, args...)...)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if !strings.Contains(out, "rt.Scope(") {
+		t.Errorf("no route to add:\n%s", out)
+	}
+	golden := filepath.Join("testdata", "golden", recipe+"-"+engine)
+	if *update {
+		os.RemoveAll(golden)
+	}
+	written := 0
+	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || before[p] {
+			return err
+		}
+		written++
+		rel, _ := filepath.Rel(dir, p)
+		got, _ := os.ReadFile(p)
+		want := filepath.Join(golden, rel+".golden")
+		if *update {
+			os.MkdirAll(filepath.Dir(want), 0o755)
+			return os.WriteFile(want, got, 0o644)
+		}
+		if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
+			t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
+		}
+		return nil
+	})
+	if written != files {
+		t.Errorf("wrote %d files, want %d", written, files)
 	}
 }
 
@@ -128,5 +142,51 @@ func TestAPITokensBuilds(t *testing.T) {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
 		}
+	}
+}
+
+// A new app with the auth recipe applied builds, and the recipe's own tests
+// pass there, against this checkout.
+func TestAuthBuilds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short")
+	}
+	for _, tool := range []string{"templ", "sqlc"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " isn't installed: run it in the toolchain (bin/go)")
+		}
+	}
+	repo, _ := filepath.Abs("../..")
+	dir := shopApp(t, "sqlite")
+	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+	if code, _, stderr := gantry(t, dir, "g", "auth"); code != 0 {
+		t.Fatal(stderr)
+	}
+	env := append(os.Environ(), "GANTRY_ENV=development", "DATABASE_URL=sqlite://"+filepath.Join(t.TempDir(), "dev.sqlite3"))
+	for _, step := range [][]string{
+		{"templ", "generate"},
+		{"go", "mod", "tidy"},
+		{"go", "run", "./cmd/shop", "db", "migrate"},
+		{"sqlc", "generate"},
+		{"go", "vet", "./..."},
+		{"go", "test", "./..."},
+	} {
+		cmd := exec.Command(step[0], step[1:]...)
+		cmd.Dir, cmd.Env = dir, env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
+		}
+	}
+}
+
+func TestAuthRules(t *testing.T) {
+	dir := shopApp(t, "sqlite")
+	if code, _, stderr := gantry(t, dir, "g", "auth", "extra"); code != 1 || !strings.Contains(stderr, "no arguments") {
+		t.Errorf("an argument: %d %s", code, stderr)
+	}
+	gantry(t, dir, "g", "auth")
+	if code, _, stderr := gantry(t, dir, "g", "auth"); code != 1 || !strings.Contains(stderr, "the recipe was applied") {
+		t.Errorf("twice: %d %s", code, stderr)
 	}
 }

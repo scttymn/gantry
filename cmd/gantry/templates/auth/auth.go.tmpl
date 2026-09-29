@@ -1,0 +1,310 @@
+// Package auth is the app's sign-in, written by gantry g auth (Rails 8's
+// authentication generator): email and password, sessions kept in the
+// database, and password reset by an emailed link. It's the app's code now,
+// to change as the app needs.
+//
+// A session's cookie holds a random token and the sessions table its
+// SHA-256, so a copy of the database signs nobody in, and ending a session
+// is deleting its row. A session ends after Idle without use, or Lifetime
+// after signing in (zero: never, Rails' default); an ended one is deleted
+// when it's next seen.
+//
+// Routes behind Require need someone signed in:
+//
+//	a.Auth.Routes(rt)
+//	rt.Scope("/admin", web.Pipeline{a.Auth.Require}, func(s *web.Scope) { ... })
+package auth
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/token"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/models"
+)
+
+// Auth is the app's sign-in: what it works with, and its settings.
+type Auth struct {
+	DB     *db.DB
+	Signer sign.Signer // for reset links, return-to and the flash
+	Mail   mail.Sender
+	From   string // who reset emails are from
+	// URL is an absolute address on the site for path, for emailed links:
+	// the app's configured host, never the request's, which whoever asks
+	// could set to their own.
+	URL    func(path string) string
+	Limits *web.Limits // sign-in and reset attempts, per address; nil: none
+	Log    *slog.Logger
+	Now    func() time.Time // time.Now when nil; tests set it
+	// Idle ends a session unused this long; Lifetime, this long after
+	// signing in. Zero is never.
+	Idle, Lifetime time.Duration
+	// AfterSignIn is where signing in lands when nothing asked to come
+	// back: "/" when empty.
+	AfterSignIn string
+}
+
+// The paths, Rails 8's.
+const (
+	SignInPath    = "/session/new"
+	SessionPath   = "/session"
+	PasswordsPath = "/passwords"
+)
+
+// The messages, Rails 8's generator's.
+const (
+	msgBadSignIn    = "Try another email address or password."
+	msgTooMany      = "Try again later."
+	msgResetSent    = "Password reset instructions sent (if user with that email address exists)."
+	msgResetInvalid = "Password reset link is invalid or has expired."
+	msgResetDone    = "Password has been reset."
+)
+
+// ResetValidity is how long a reset link works, as Rails'.
+const ResetValidity = 15 * time.Minute
+
+// seenEvery is how often a session's last_seen_at is written: often enough
+// for Idle, rarely enough not to write on every request.
+const seenEvery = time.Hour
+
+const (
+	cookieName   = "session"
+	returnToName = "return_to"
+)
+
+// bcryptCost is Rails' (has_secure_password's default); tests lower it.
+var bcryptCost = 12
+
+// UserKey and SessionKey are the signed-in user and their session, in
+// Current, behind Fetch and Require.
+var (
+	UserKey    = web.NewKey[models.User]("user")
+	SessionKey = web.NewKey[models.Session]("session")
+)
+
+// Current is the signed-in user, behind Fetch or Require.
+func Current(r *http.Request) (models.User, bool) { return web.Get(r, UserKey) }
+
+func (a *Auth) now() time.Time {
+	if a.Now != nil {
+		return a.Now()
+	}
+	return time.Now()
+}
+
+func (a *Auth) flash() web.Flash { return web.Flash{Signer: a.Signer} }
+
+// Normalize is how an email is stored and looked up: trimmed, lowercased.
+func Normalize(email string) string { return strings.ToLower(strings.TrimSpace(email)) }
+
+// Rules are a new password's: 8 to 72 bytes (bcrypt reads no further),
+// confirmed. None is acceptable.
+func Rules(password, confirmation string) []string {
+	var errs []string
+	switch {
+	case password == "":
+		return []string{"Password can't be blank"}
+	case len(password) > 72:
+		errs = append(errs, "Password is too long (maximum is 72 bytes)")
+	case len(password) < 8:
+		errs = append(errs, "Password is too short (minimum is 8 characters)")
+	}
+	if confirmation != password {
+		errs = append(errs, "Password confirmation doesn't match Password")
+	}
+	return errs
+}
+
+// A hash to compare against when there's no such user, so a wrong email
+// takes as long as a wrong password.
+var dummy = sync.OnceValue(func() []byte {
+	h, _ := bcrypt.GenerateFromPassword([]byte("no such user"), bcryptCost)
+	return h
+})
+
+// Authenticate is the user with this email and password.
+func (a *Auth) Authenticate(ctx context.Context, email, password string) (models.User, bool) {
+	u, err := models.New(a.DB.Read).FindUserByEmail(ctx, Normalize(email))
+	if err != nil {
+		bcrypt.CompareHashAndPassword(dummy(), []byte(password))
+		return models.User{}, false
+	}
+	if bcrypt.CompareHashAndPassword([]byte(u.PasswordDigest), []byte(password)) != nil {
+		return models.User{}, false
+	}
+	return u, true
+}
+
+// CreateUser adds a user with this email and password. The rules aren't
+// checked here: that's the form's, or the task's.
+func (a *Auth) CreateUser(ctx context.Context, email, password string) (models.User, error) {
+	digest, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return models.User{}, err
+	}
+	return models.New(a.DB.Write).CreateUser(ctx, models.CreateUserParams{EmailAddress: Normalize(email), PasswordDigest: string(digest), Now: a.now()})
+}
+
+// SetPassword saves a new password and ends every session the user had, so
+// a reset signs out whoever else was signed in.
+func (a *Auth) SetPassword(ctx context.Context, userID int64, password string) error {
+	digest, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return err
+	}
+	return a.DB.Tx(ctx, func(tx *db.Tx) error {
+		q := models.New(tx)
+		if err := q.UpdateUserPassword(ctx, models.UpdateUserPasswordParams{PasswordDigest: string(digest), Now: a.now(), ID: userID}); err != nil {
+			return err
+		}
+		return q.DeleteUserSessions(ctx, userID)
+	})
+}
+
+// StartSession signs u in: a new session, and its cookie, which lasts
+// Lifetime (or until signing out, when there's none).
+func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u models.User) (models.Session, error) {
+	key, digest := token.New("")
+	s, err := models.New(a.DB.Write).CreateSession(r.Context(), models.CreateSessionParams{
+		UserID: u.ID, TokenDigest: digest, IpAddress: web.ClientIP(r), UserAgent: r.UserAgent(), Now: a.now()})
+	if err != nil {
+		return models.Session{}, err
+	}
+	lasts := a.Lifetime
+	if lasts == 0 {
+		lasts = 20 * 365 * 24 * time.Hour // Rails 8's permanent cookie
+	}
+	web.SetCookie(w, r, cookieName, key, lasts)
+	return s, nil
+}
+
+// session is the live session the request's cookie names, and its user. An
+// ended one is deleted.
+func (a *Auth) session(r *http.Request) (models.Session, models.User, bool) {
+	c, err := r.Cookie(cookieName)
+	if err != nil || c.Value == "" {
+		return models.Session{}, models.User{}, false
+	}
+	ctx := r.Context()
+	row, err := models.New(a.DB.Read).FindSessionByDigest(ctx, token.Digest(c.Value))
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) && a.Log != nil {
+			a.Log.Error("auth: a session's lookup", "err", err)
+		}
+		return models.Session{}, models.User{}, false
+	}
+	s, now := row.Session, a.now()
+	if (a.Lifetime > 0 && now.Sub(s.CreatedAt) >= a.Lifetime) || (a.Idle > 0 && now.Sub(s.LastSeenAt) >= a.Idle) {
+		if err := models.New(a.DB.Write).DeleteSession(ctx, s.ID); err != nil && a.Log != nil {
+			a.Log.Error("auth: ending a session", "err", err)
+		}
+		return models.Session{}, models.User{}, false
+	}
+	if now.Sub(s.LastSeenAt) >= seenEvery {
+		if err := models.New(a.DB.Write).TouchSession(ctx, models.TouchSessionParams{Now: now, ID: s.ID}); err == nil {
+			s.LastSeenAt = now
+		}
+	}
+	return s, row.User, true
+}
+
+// Fetch is a filter that puts the signed-in user and session in Current,
+// when the request has a live one, for pages that look different to
+// someone signed in but don't need them.
+func (a *Auth) Fetch(w http.ResponseWriter, r *http.Request) error {
+	if s, u, ok := a.session(r); ok {
+		web.Set(r, UserKey, u)
+		web.Set(r, SessionKey, s)
+	}
+	return nil
+}
+
+// Require is a filter that lets signed-in users through, with them in
+// Current. Anyone else goes to sign in and comes back here after; a
+// request for data (web.AcceptJSON, or asking for JSON) gets 401.
+func (a *Auth) Require(w http.ResponseWriter, r *http.Request) error {
+	a.Fetch(w, r)
+	if _, ok := Current(r); ok {
+		return nil
+	}
+	if web.WantsJSON(r) {
+		return web.Status(http.StatusUnauthorized, errors.New("sign in first"))
+	}
+	web.SetCookie(w, r, returnToName, a.Signer.Sign(returnToName, r.URL.RequestURI()), time.Hour)
+	http.Redirect(w, r, SignInPath, http.StatusFound)
+	return nil
+}
+
+// fingerprint changes whenever the password does, so a used link dies.
+func fingerprint(u models.User) string {
+	sum := sha256.Sum256([]byte(u.PasswordDigest))
+	return hex.EncodeToString(sum[:])[:10]
+}
+
+// ResetToken is a password reset token for u, good for ResetValidity and
+// until the password changes.
+func (a *Auth) ResetToken(u models.User) string {
+	return a.Signer.Sign("password_reset", fmt.Sprintf("%d|%d|%s", u.ID, a.now().Add(ResetValidity).Unix(), fingerprint(u)))
+}
+
+// ErrBadToken is a reset token that's forged, expired, or used.
+var ErrBadToken = errors.New("auth: password reset link is invalid or has expired")
+
+// UserByResetToken is the user the token was made for, if it's still good.
+func (a *Auth) UserByResetToken(ctx context.Context, tok string) (models.User, error) {
+	value, ok := a.Signer.Verify("password_reset", tok)
+	if !ok {
+		return models.User{}, ErrBadToken
+	}
+	parts := strings.Split(value, "|")
+	if len(parts) != 3 {
+		return models.User{}, ErrBadToken
+	}
+	id, err1 := strconv.ParseInt(parts[0], 10, 64)
+	expires, err2 := strconv.ParseInt(parts[1], 10, 64)
+	if err1 != nil || err2 != nil || a.now().Unix() > expires {
+		return models.User{}, ErrBadToken
+	}
+	u, err := models.New(a.DB.Read).FindUser(ctx, id)
+	if err != nil || fingerprint(u) != parts[2] {
+		return models.User{}, ErrBadToken
+	}
+	return u, nil
+}
+
+func (a *Auth) allow(r *http.Request, action string) bool {
+	if a.Limits == nil {
+		return true
+	}
+	return a.Limits.Allow(action+":"+web.ClientIP(r), 10, 3*time.Minute, a.now())
+}
+
+// sentence joins messages as Rails' to_sentence.
+func sentence(items []string) string {
+	switch len(items) {
+	case 0:
+		return ""
+	case 1:
+		return items[0]
+	case 2:
+		return items[0] + " and " + items[1]
+	}
+	return strings.Join(items[:len(items)-1], ", ") + ", and " + items[len(items)-1]
+}
