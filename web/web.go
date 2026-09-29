@@ -165,6 +165,7 @@ func WantsHTML(r *http.Request) bool {
 
 // Handler is the routes inside gantry's middleware, with the error page for
 // any path nothing else matches. Outermost first:
+//   - NoStoreOnErrors: an error answer is never cached
 //   - compress: gzip for text
 //   - Recover: a panic is the 500 page, logged
 //   - Current, where the request comes from (Proxies), and Hosts
@@ -180,8 +181,41 @@ func (rt *Router) Handler() http.Handler {
 	h = rt.arrive(h)
 	h = withCurrent(h)
 	h = rt.Recover(h)
-	return compressHandler(h)
+	return NoStoreOnErrors(compressHandler(h))
 }
+
+// NoStoreOnErrors marks every answer of 400 or more Cache-Control: no-store.
+// During a deploy two versions serve at once, each with its own
+// fingerprinted assets, so a request for the new stylesheet can land on the
+// old version and 404; with no Cache-Control a CDN (Cloudflare) keeps that
+// 404 at its edge long after the deploy.
+func NoStoreOnErrors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(&noStoreWriter{ResponseWriter: w}, r)
+	})
+}
+
+type noStoreWriter struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (w *noStoreWriter) WriteHeader(status int) {
+	if !w.wrote && status >= 400 {
+		w.Header().Set("Cache-Control", "no-store")
+	}
+	w.wrote = true
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *noStoreWriter) Write(b []byte) (int, error) {
+	w.wrote = true
+	return w.ResponseWriter.Write(b)
+}
+
+// Unwrap lets http.ResponseController reach the connection (flushes, and
+// write deadlines for a stream).
+func (w *noStoreWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // ID is the path value name as an int64: 0 when it isn't one, which no row
 // has, so a lookup finds nothing and the page is a 404.

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/scttymn/gantry/sign"
 
 	"{{.Module}}/app"
+	"{{.Module}}/assets"
 	"{{.Module}}/config"
 	"{{.Module}}/db/migrations"
 	"{{.Module}}/db/seeds"
@@ -95,6 +97,15 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	key, err := sign.Key(ctx, database, cfg.SecretKey)
 	if err != nil {
 		return nil, nil, err
+	}
+	// The pictures' copies, made now for any that are new or changed, so no
+	// page waits on one.
+	made, err := assets.Images.Prepare(ctx, filepath.Join(cfg.DataDir, "asset-images"))
+	if err != nil {
+		return nil, nil, err
+	}
+	if made > 0 {
+		logger.Info("resized the pictures in assets", "copies", made)
 	}
 	queue, err := jobs.New(ctx, database, jobs.Options{Log: logger})
 	if err != nil {

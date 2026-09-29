@@ -265,6 +265,41 @@ func (p *Pipeline) Copy(ctx context.Context, key, src string, width, quality int
 	return path, p.make(ctx, src, path, width, quality)
 }
 
+// Prepare makes the copies of originals not made yet, each at every width it
+// comes in and quality (the pipeline's when 0), and removes the copies of any
+// key not among them: Dir is the copies' alone. A key names its original's
+// content (its digest, or an upload's own key), so a changed original is a
+// new key: its copies are made, and the old one's removed. made is how many
+// it made; an app calls it at start, so pages never wait on a copy.
+func (p *Pipeline) Prepare(ctx context.Context, originals map[string]Original, quality int) (made int, err error) {
+	for key, o := range originals {
+		if !p.Resizable(o.ContentType) {
+			continue
+		}
+		for _, w := range p.WidthsFor(o.Width) {
+			if p.Has(key, w, quality) {
+				continue
+			}
+			if _, err := p.Copy(ctx, key, o.Path, w, quality); err != nil {
+				return made, fmt.Errorf("images: %s at %dw: %w", key, w, err)
+			}
+			made++
+		}
+	}
+	entries, err := os.ReadDir(p.Dir)
+	if err != nil {
+		return made, err
+	}
+	for _, e := range entries {
+		if _, ok := originals[e.Name()]; !ok && e.IsDir() {
+			if err := os.RemoveAll(filepath.Join(p.Dir, e.Name())); err != nil {
+				return made, err
+			}
+		}
+	}
+	return made, nil
+}
+
 // Has reports whether key's copy at width and quality is made.
 func (p *Pipeline) Has(key string, width, quality int) bool {
 	_, err := os.Stat(p.Path(key, width, p.QualityOr(quality)))

@@ -52,6 +52,7 @@ type Assets struct {
 	byName   map[string]*asset // logical name → asset
 	byDigest map[string]*asset // digested name → asset
 	public   map[string]*asset // root name → asset ("robots.txt")
+	images   *Images           // the pictures' copies, once Images is called
 }
 
 var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
@@ -218,9 +219,13 @@ func (a *Assets) PublicNames() []string {
 	return out
 }
 
-// Routes is what an app mounts: /assets/, and each root file.
+// Routes is what an app mounts: /assets/, the pictures' copies when Images
+// was called, and each root file.
 func (a *Assets) Routes(mount func(pattern string, h http.Handler)) {
 	mount("GET /assets/", a.Handler())
+	if a.images != nil {
+		mount("GET "+ImagesPrefix, a.images.server)
+	}
 	for _, name := range a.PublicNames() {
 		mount("GET /"+name, a.PublicHandler())
 	}

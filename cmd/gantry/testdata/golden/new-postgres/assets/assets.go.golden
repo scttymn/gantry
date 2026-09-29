@@ -31,6 +31,13 @@ var ImportMap = All.ImportMap(
 	gantry.PinVendor("vendor"),
 )
 
+// Images is the pictures in assets (JPEG, PNG, GIF, WebP) at every width, as
+// WebP: a page draws one with @assets.Images.Img("hero.jpg", images.Img{Alt:
+// "…", Sizes: "100vw"}), and the browser fetches the copy that fits. The
+// copies are made at start, once: kept on the data volume, a picture's are
+// made again only when it changes.
+var Images = All.Images(nil)
+
 // Path is an asset's URL: "/assets/application-1a2b3c4d.css".
 func Path(name string) string { return All.Path(name) }
 

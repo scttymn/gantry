@@ -380,3 +380,45 @@ func TestChild(t *testing.T) {
 		}
 	})
 }
+
+// Prepare makes what's missing, once, for the originals given, and clears
+// away every other key's copies.
+func TestPrepare(t *testing.T) {
+	ctx := context.Background()
+	maker := &counting{gate: make(chan struct{})}
+	close(maker.gate)
+	dir := t.TempDir()
+	p := &Pipeline{Dir: dir, Maker: maker}
+	src := source(t) // 1600 wide: 160 to 1600, seven widths
+	os.MkdirAll(filepath.Join(dir, "gone"), 0o755)
+	os.WriteFile(filepath.Join(dir, "gone", "160w-q80.webp"), []byte("x"), 0o644)
+	originals := map[string]Original{
+		"photo": {Path: src, ContentType: "image/jpeg", Width: 1600},
+		"doc":   {Path: src, ContentType: "application/pdf"}, // not resizable: skipped
+	}
+	made, err := p.Prepare(ctx, originals, 0)
+	if err != nil || made != 7 || maker.n.Load() != 7 {
+		t.Fatalf("made %d, maker %d (%v)", made, maker.n.Load(), err)
+	}
+	for _, w := range p.WidthsFor(1600) {
+		if !p.Has("photo", w, 80) {
+			t.Errorf("no %dw", w)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gone")); err == nil {
+		t.Error("another key's copies kept")
+	}
+	// Again: all there, nothing made.
+	if made, err := p.Prepare(ctx, originals, 0); err != nil || made != 0 || maker.n.Load() != 7 {
+		t.Errorf("again: made %d, maker %d (%v)", made, maker.n.Load(), err)
+	}
+	// Another quality is other copies.
+	if made, _ := p.Prepare(ctx, originals, 60); made != 7 || !p.Has("photo", 160, 60) || !p.Has("photo", 1600, 60) {
+		t.Errorf("at 60: made %d", made)
+	}
+	// A failure says which.
+	p2 := &Pipeline{Dir: t.TempDir(), Maker: &counting{fail: true, gate: maker.gate}}
+	if _, err := p2.Prepare(ctx, map[string]Original{"photo": originals["photo"]}, 0); err == nil || !strings.Contains(err.Error(), "photo at 160w") {
+		t.Errorf("a failure: %v", err)
+	}
+}

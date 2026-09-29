@@ -220,3 +220,30 @@ func TestLimits(t *testing.T) {
 		t.Fatal("a new window didn't start")
 	}
 }
+
+// An error answer is never cached, whoever writes it: the router's pages,
+// a handler's own status, a mounted handler's 404; and a success keeps its
+// own caching.
+func TestNoStoreOnErrors(t *testing.T) {
+	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Handle("GET /boom", func(w http.ResponseWriter, r *http.Request) error { return Status(http.StatusConflict, nil) })
+	rt.Handle("GET /own", func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		w.WriteHeader(http.StatusTeapot)
+		return nil
+	})
+	rt.Handle("GET /fine", func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Cache-Control", "public, max-age=60")
+		_, err := w.Write([]byte("ok"))
+		return err
+	})
+	rt.Mount("GET /files/", http.NotFoundHandler())
+	h := rt.Handler()
+	for path, want := range map[string]string{"/nope": "no-store", "/boom": "no-store", "/own": "no-store", "/files/x.css": "no-store", "/fine": "public, max-age=60", "/up": ""} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if got := w.Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s (%d): %q, want %q", path, w.Code, got, want)
+		}
+	}
+}
