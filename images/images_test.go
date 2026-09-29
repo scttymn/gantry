@@ -143,6 +143,17 @@ func TestEncoders(t *testing.T) {
 			t.Errorf("%s %s", typ, p.Name(100, 60))
 		}
 	})
+	t.Run("AVIF, at its own quality", func(t *testing.T) {
+		p := &Pipeline{Encoder: AVIF{}, Quality: AVIFQuality}
+		out, err := p.Resize(src, 100, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w, h, typ, err := p.Dimensions(out)
+		if err != nil || typ != "image/avif" || w != 100 || h != 50 || p.ContentType() != "image/avif" || p.Name(100, p.QualityOr(0)) != "100w-q50.avif" {
+			t.Errorf("%dx%d %s %v %s", w, h, typ, err, p.Name(100, p.QualityOr(0)))
+		}
+	})
 	t.Run("a lower quality is a smaller file", func(t *testing.T) {
 		p := &Pipeline{}
 		hi, _ := p.Resize(src, 400, 95)

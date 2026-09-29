@@ -3,6 +3,7 @@ package assets
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -16,9 +17,10 @@ import (
 )
 
 // Images is the assets' pictures (JPEG, PNG, GIF, WebP) at every width a
-// page may want, as WebP: the images package's copies, which uploaded photos
-// get too, for the files shipped with the app. A page draws one with Img,
-// an <img> whose srcset offers each width, so a phone fetches a phone's
+// page may want, as AVIF and WebP: the images package's copies, which
+// uploaded photos get too, for the files shipped with the app. A page draws
+// one with Img, a <picture> offering each width in AVIF (about half WebP's
+// size) and, for a browser without it, WebP, so a phone fetches a phone's
 // copy:
 //
 //	var Images = All.Images(nil)
@@ -32,11 +34,13 @@ import (
 // build's copies (in development, in tests), a copy is made when it's first
 // asked for.
 type Images struct {
-	a        *Assets
-	pipeline *images.Pipeline
-	server   *images.Server
-	byName   map[string]*picture
-	byKey    map[string]*picture
+	a          *Assets
+	pipeline   *images.Pipeline // WebP, what every browser takes
+	avif       *images.Pipeline // AVIF, offered first
+	server     *images.Server
+	avifServer *images.Server
+	byName     map[string]*picture
+	byKey      map[string]*picture
 }
 
 type picture struct {
@@ -48,8 +52,9 @@ type picture struct {
 // ImagesPrefix is where the copies are served: /assets/resized/<key>/720w-q80.webp.
 const ImagesPrefix = "/assets/resized/"
 
-// Images is a's pictures at every width, made by p (WebP at quality 80, at
-// images.Widths, when nil). Routes serves them once it's called.
+// Images is a's pictures at every width, the WebP copies made by p (quality
+// 80, at images.Widths, when nil) and the AVIF ones at p's widths and
+// images.AVIFQuality. Routes serves them once it's called.
 func (a *Assets) Images(p *images.Pipeline) *Images {
 	if p == nil {
 		p = &images.Pipeline{}
@@ -70,7 +75,9 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 		pic := &picture{name: name, key: key, ext: ext, contentType: contentType, body: f.body, width: width, height: height}
 		im.byName[name], im.byKey[key] = pic, pic
 	}
+	im.avif = &images.Pipeline{Dir: p.Dir, Encoder: images.AVIF{}, Quality: images.AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker}
 	im.server = &images.Server{Pipeline: p, Prefix: ImagesPrefix, Find: im.find}
+	im.avifServer = &images.Server{Pipeline: im.avif, Prefix: ImagesPrefix, Find: im.find}
 	a.images = im
 	return im
 }
@@ -109,8 +116,6 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return 0, err
 	}
-	q := im.pipeline
-	p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker}
 	originals := map[string]images.Original{}
 	for key, pic := range im.byKey {
 		path, err := im.original(pic)
@@ -119,16 +124,26 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 		}
 		originals[key] = images.Original{Path: path, ContentType: pic.contentType, Width: pic.width}
 	}
-	return p.Prepare(ctx, originals, 0)
+	for _, q := range []*images.Pipeline{im.pipeline, im.avif} {
+		p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker}
+		n, err := p.Prepare(ctx, originals, 0)
+		made += n
+		if err != nil {
+			return made, err
+		}
+	}
+	return made, nil
 }
 
 // Precompiled reports whether the build made every picture's copies, so no
 // request makes one.
 func (im *Images) Precompiled() bool {
 	for key, pic := range im.byKey {
-		for _, w := range im.pipeline.WidthsFor(pic.width) {
-			if _, ok := im.a.copies[key][im.pipeline.Name(w, im.pipeline.QualityOr(0))]; !ok {
-				return false
+		for _, p := range []*images.Pipeline{im.pipeline, im.avif} {
+			for _, w := range p.WidthsFor(pic.width) {
+				if _, ok := im.a.copies[key][p.Name(w, p.QualityOr(0))]; !ok {
+					return false
+				}
 			}
 		}
 	}
@@ -139,8 +154,12 @@ func (im *Images) Precompiled() bool {
 // request.
 func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	key, name, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, ImagesPrefix), "/")
+	p, server := im.pipeline, im.server
+	if strings.HasSuffix(name, im.avif.Encoder.Ext()) {
+		p, server = im.avif, im.avifServer
+	}
 	if body, ok := im.a.copies[key][name]; ok && im.byKey[key] != nil {
-		w.Header().Set("Content-Type", im.pipeline.ContentType())
+		w.Header().Set("Content-Type", p.ContentType())
 		w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(Year)+", immutable")
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
 		if r.Method != http.MethodHead {
@@ -148,11 +167,13 @@ func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	im.server.ServeHTTP(w, r)
+	server.ServeHTTP(w, r)
 }
 
-// Img is the picture's <img>: a srcset of its copies, the browser picking by
-// o.Sizes, with its width and height so the page doesn't shift as it loads.
+// Img is the picture's <picture>: its AVIF copies, then an <img> of its
+// WebP ones for a browser without AVIF, the browser picking by o.Sizes, and
+// the <img> sized so the page doesn't shift as it loads. (A picture with
+// o.PlaceholderWhen is its WebP <img> alone, which is a <picture> already.)
 // An unknown name is a programming error, so it panics: the page that uses
 // it fails in its tests.
 func (im *Images) Img(name string, o images.Img) templ.Component {
@@ -160,5 +181,21 @@ func (im *Images) Img(name string, o images.Img) templ.Component {
 	if !ok {
 		panic("no picture " + name + " in the assets")
 	}
-	return im.server.Img(images.Photo{Key: pic.key, ContentType: pic.contentType, Width: pic.width, Height: pic.height}, o)
+	photo := images.Photo{Key: pic.key, ContentType: pic.contentType, Width: pic.width, Height: pic.height}
+	img := im.server.Img(photo, o)
+	if o.PlaceholderWhen != "" {
+		return img
+	}
+	_, srcset := im.avifServer.Sources(photo)
+	return templ.ComponentFunc(func(ctx context.Context, w io.Writer) error {
+		esc := templ.EscapeString[string]
+		if _, err := io.WriteString(w, `<picture><source type="image/avif" sizes="`+esc(o.Sizes)+`" srcset="`+esc(srcset)+`">`); err != nil {
+			return err
+		}
+		if err := img.Render(ctx, w); err != nil {
+			return err
+		}
+		_, err := io.WriteString(w, "</picture>")
+		return err
+	})
 }

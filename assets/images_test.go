@@ -61,10 +61,15 @@ func TestImagesImg(t *testing.T) {
 	tag := draw(t, im, "hero.png", images.Img{Alt: "A hero", Sizes: "100vw", Priority: true})
 	// Each of the widths up to the picture's own (as uploaded photos'),
 	// under its fingerprinted name.
-	srcset := regexp.MustCompile(`srcset="([^"]+)"`).FindStringSubmatch(tag)
+	srcset := regexp.MustCompile(`<img[^>]* srcset="([^"]+)"`).FindStringSubmatch(tag)
 	want := regexp.MustCompile(`^/assets/resized/hero-[0-9a-f]{8}/160w-q80\.webp 160w, .*/240w-q80\.webp 240w, .*/320w-q80\.webp 320w, .*/480w-q80\.webp 480w$`)
 	if srcset == nil || !want.MatchString(srcset[1]) {
 		t.Errorf("srcset: %s", tag)
+	}
+	// AVIF first, in a <picture>, at the same widths.
+	avif := regexp.MustCompile(`^<picture><source type="image/avif" sizes="100vw" srcset="/assets/resized/hero-[0-9a-f]{8}/160w-q50\.avif 160w, .*/480w-q50\.avif 480w"><img .*></picture>$`)
+	if !avif.MatchString(tag) {
+		t.Errorf("no AVIF first: %s", tag)
 	}
 	for _, part := range []string{`alt="A hero"`, `sizes="100vw"`, `width="500" height="300"`, `fetchpriority="high"`} {
 		if !strings.Contains(tag, part) {
@@ -97,7 +102,7 @@ func TestImagesPrecompile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if made != 4+1 { // hero: 160 to 480; pin: 160 (at its own 100)
+	if made != 2*(4+1) { // each format: hero 160 to 480, pin 160 (at its own 100)
 		t.Errorf("made %d", made)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "old-1a2b3c4d")); err == nil {
@@ -111,7 +116,14 @@ func TestImagesPrecompile(t *testing.T) {
 	if w, h, ct, err := im.pipeline.Dimensions(copy480); err != nil || w != 480 || h != 288 || ct != "image/webp" {
 		t.Errorf("the 480 copy: %dx%d %s %v", w, h, ct, err)
 	}
-	if entries, _ := os.ReadDir(filepath.Join(dir, hero.key)); len(entries) != 4 {
+	copy480a, err := os.ReadFile(filepath.Join(dir, hero.key, "480w-q50.avif"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w, h, ct, err := im.pipeline.Dimensions(copy480a); err != nil || w != 480 || h != 288 || ct != "image/avif" {
+		t.Errorf("the 480 AVIF copy: %dx%d %s %v", w, h, ct, err)
+	}
+	if entries, _ := os.ReadDir(filepath.Join(dir, hero.key)); len(entries) != 8 {
 		t.Errorf("%d files beside the copies", len(entries))
 	}
 	_, again := pictures(t)
@@ -144,6 +156,7 @@ func TestImagesPrecompiled(t *testing.T) {
 	})
 	key := im.byName["hero.png"].key
 	fsys["built/images/"+key+"/160w-q80.webp"] = &fstest.MapFile{Data: []byte("the build's")}
+	fsys["built/images/"+key+"/160w-q50.avif"] = &fstest.MapFile{Data: []byte("the build's AVIF")}
 	a, err := New(fsys)
 	if err != nil {
 		t.Fatal(err)
@@ -151,6 +164,16 @@ func TestImagesPrecompiled(t *testing.T) {
 	built := a.Images(&images.Pipeline{Dir: t.TempDir()})
 	if !built.Precompiled() {
 		t.Error("not precompiled")
+	}
+	// Without the AVIF copies, the build didn't make them all.
+	webpOnly := fstest.MapFS{}
+	for name, f := range fsys {
+		if !strings.HasSuffix(name, ".avif") {
+			webpOnly[name] = f
+		}
+	}
+	if a, _ := New(webpOnly); a.Images(nil).Precompiled() {
+		t.Error("precompiled without the AVIF copies")
 	}
 	if _, ok := a.byName[key+"/160w-q80.webp"]; ok || len(a.byName) != 2 {
 		t.Errorf("a copy became an asset: %d assets", len(a.byName))
@@ -161,6 +184,11 @@ func TestImagesPrecompiled(t *testing.T) {
 	mux.ServeHTTP(w, httptest.NewRequest("GET", "/assets/resized/"+key+"/160w-q80.webp", nil))
 	if w.Code != 200 || w.Body.String() != "the build's" || w.Header().Get("Content-Type") != "image/webp" || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
 		t.Errorf("%d %q %v", w.Code, w.Body, w.Header())
+	}
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/assets/resized/"+key+"/160w-q50.avif", nil))
+	if w.Code != 200 || w.Body.String() != "the build's AVIF" || w.Header().Get("Content-Type") != "image/avif" {
+		t.Errorf("AVIF: %d %q %v", w.Code, w.Body, w.Header())
 	}
 	if entries, _ := os.ReadDir(built.pipeline.Dir); len(entries) != 0 {
 		t.Error("a copy was made on request")
@@ -231,7 +259,7 @@ func TestImagesChanged(t *testing.T) {
 		t.Fatal("a changed picture kept its key")
 	}
 	made, err := after.Precompile(context.Background(), dir)
-	if err != nil || made != 3 { // 160, 240 and 320: the widths up to its 400
+	if err != nil || made != 2*3 { // 160, 240 and 320, each format: the widths up to its 400
 		t.Errorf("made %d (%v)", made, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, newKey, "160w-q80.webp")); err != nil {

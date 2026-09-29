@@ -3,11 +3,10 @@
 // quality (WebP at 80 unless the app says otherwise), each made once and
 // kept, with a tiny blurred placeholder to show while the photo loads.
 //
-// Formats are adapters. An Encoder writes the copies (WebP and JPEG ship
-// here); a Decoder reads what Go's image package can't (images/heic reads an
-// iPhone's HEIC). An adapter that needs cgo, a native AVIF encoder say,
-// belongs in a module of its own, so an app that doesn't use it keeps a
-// static binary.
+// Formats are adapters. An Encoder writes the copies (WebP, AVIF and JPEG
+// ship here); a Decoder reads what Go's image package can't (images/heic
+// reads an iPhone's HEIC). An adapter that needs cgo belongs in a module of
+// its own, so an app that doesn't use it keeps a static binary.
 //
 // Making a copy takes far more memory than serving one (a 24-megapixel photo
 // takes a few hundred megabytes), so the server has a short-lived copy of
@@ -19,6 +18,7 @@ import (
 	"image/jpeg"
 	"io"
 
+	"github.com/gen2brain/avif" // registers AVIF with image.Decode; WASM, no cgo
 	"github.com/gen2brain/webp" // registers WebP with image.Decode; WASM, no cgo
 )
 
@@ -38,6 +38,23 @@ func (WebP) ContentType() string { return "image/webp" }
 func (WebP) Ext() string         { return ".webp" }
 func (WebP) Encode(w io.Writer, img image.Image, quality int) error {
 	return webp.Encode(w, img, webp.Options{Quality: quality})
+}
+
+// AVIF is about half WebP's size for the same look, read by every current
+// browser but older ones (a page offers WebP beside it), and slow to make:
+// a second or so for a phone-sized copy, so it suits copies made ahead (the
+// assets', in the build) over ones made on request. Its quality scale runs
+// lower than WebP's: AVIFQuality, 50, looks like WebP's 80.
+type AVIF struct{}
+
+// AVIFQuality is AVIF's quality that looks like WebP at 80 (libvips' AVIF
+// default, as Rails' image processing).
+const AVIFQuality = 50
+
+func (AVIF) ContentType() string { return "image/avif" }
+func (AVIF) Ext() string         { return ".avif" }
+func (AVIF) Encode(w io.Writer, img image.Image, quality int) error {
+	return avif.Encode(w, img, avif.Options{Quality: quality, Speed: 6})
 }
 
 // JPEG is for where WebP won't do (an email, an old device).

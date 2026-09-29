@@ -102,7 +102,7 @@ func TestPrecompilePictures(t *testing.T) {
 	a, im := pictures(t)
 	dir := t.TempDir()
 	made, err := a.Precompile(context.Background(), dir)
-	if err != nil || made != 4+1 {
+	if err != nil || made != 2*(4+1) {
 		t.Fatalf("made %d (%v)", made, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "images", im.byName["hero.png"].key, "160w-q80.webp")); err != nil {
