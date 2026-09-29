@@ -60,11 +60,17 @@ func (WebP) Encode(w io.Writer, img image.Image, quality int) error {
 }
 
 // AVIF is about half WebP's size for the same look, read by every current
-// browser but older ones (a page offers WebP beside it), and slow to make:
-// a second or so for a phone-sized copy, so it suits copies made ahead (the
-// assets', in the build) over ones made on request. Its quality scale runs
-// lower than WebP's: AVIFQuality, 50, looks like WebP's 80.
+// browser but older ones (a page offers WebP beside it). It's made at the
+// encoder's speed 8: a third of a second of one core for a 1200px copy,
+// where its default (6) took 1.7 s for files 6% smaller. The encoder's
+// runtime needs 200-300 MB, whatever the copy's size, so an app makes AVIF
+// ahead (the assets', in the build), not in a small container on request.
+// Its quality scale runs lower than WebP's: AVIFQuality, 50, looks like
+// WebP's 80.
 type AVIF struct{}
+
+// avifSpeed is the encoder's: 8 of 0 (slowest) to 10.
+const avifSpeed = 8
 
 // AVIFQuality is AVIF's quality that looks like WebP at 80 (libvips' AVIF
 // default, as Rails' image processing).
@@ -109,7 +115,7 @@ func encoderFor(path string) (Encoder, bool) {
 func (AVIF) ContentType() string { return "image/avif" }
 func (AVIF) Ext() string         { return ".avif" }
 func (AVIF) Encode(w io.Writer, img image.Image, quality int) error {
-	return avif.Encode(w, img, avif.Options{Quality: quality, Speed: 6})
+	return avif.Encode(w, img, avif.Options{Quality: quality, Speed: avifSpeed})
 }
 
 // JPEG is for where WebP won't do (an email, an old device).
