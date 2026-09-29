@@ -9,14 +9,26 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 
 [Valley Built CrossFit](https://github.com/scttymn/valleybuiltcrossfit) runs on it, deployed with [Houston](https://github.com/scttymn/houston).
 
+## Start an app
+gantry runs apps with [Houston](https://github.com/scttymn/houston) (install it first), in Docker, so nothing else is installed on your machine.
+```sh
+go install github.com/scttymn/gantry/cmd/gantry@latest
+gantry new myapp               # --db postgres for Postgres; SQLite by default
+cd myapp && gantry dev         # http://myapp.localhost, rebuilt as you change it
+gantry g migration create_posts title:string:required body:text
+gantry db migrate              # db rollback, status, seed, reset, console: in the app's container
+gantry test                    # the app's tests, in a throwaway copy
+```
+`gantry dev`, `test`, `console` and `deploy` are Houston's commands; `gantry db` and `gantry task` run the app's own.
+
 ## Packages
 | Package | What it does |
 |---|---|
-| `db` | Opens SQLite or Postgres from a URL; SQLite gets one writer and a read pool. goose migrations, and a data version that changes on every write. |
+| `db` | Opens SQLite or Postgres from a URL; SQLite gets one writer and a read pool. goose migrations (migrate, roll back, status), the schema as SQL, a SQL console, and a data version that changes on every write. |
 | `web` | Handlers that return errors, one place that turns them into pages, the middleware every app wants, and the page cache. |
 | `assets` | Fingerprinted, minified, gzipped-once assets; stylesheet bundles drawn into the page or linked by size, with the first screen's fonts preloaded by name (`Face{Family: "Oswald", Weight: 600}`). |
 | `images` | Resized copies at fixed widths, 160 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. One `Server` serves the copies and writes the `<img>` tags that ask for them, so a page can't ask for one it doesn't serve. |
-| `testkit` | A database with fixtures for each test, and `Links`/`Crawl`: every image, font, script and link a page (or a whole section) refers to must load. |
+| `testkit` | A database with fixtures for each test (SQLite, or one of its own on Postgres), `Migrations` (each one up and down), and `Links`/`Crawl`: every image, font, script and link a page (or a whole section) refers to must load. |
 | `sign`, `mail`, `compress` | Signed tokens, email, and gzip. |
 
 ## Working on gantry
