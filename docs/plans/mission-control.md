@@ -42,10 +42,7 @@ gantry is a framework for many apps; MC is its reference app, a test of it, not 
 ## In gantry, in the port's order
 Each lands with its tests, and in the gym site where it applies, before the next.
 
-**G0: `gantry new`** (moved here from the main plan's batch 6; Rails: `rails new`)
-- Writes the app layout in the main plan (`cmd/`, `config/`, `app/routes.go`, `app/models/`, sqlc for the chosen engine, the test setup), and the generated error pages. A generated app builds and passes its own tests.
-- Two modes: a new module (`gantry new myapp`, with its `go.mod`), and an app inside the module you're in (`gantry new cmd/mission-control --in-module`), for monorepos and for MC, which imports Houston's `internal/` packages. The layout is the same; only `go.mod` and import paths differ.
-- MC is created with it on day one. What G1 to G3 add to every app (pipelines in `routes.go`, error pages) goes into `gantry new` as it lands; what the port adds by hand is the list of what `gantry new` still lacks.
+**G0: `gantry new`** (moved here from the main plan's batch 6; Rails: `rails new`). Its full map is below.
 
 **G1: API and auth**
 - Filters and pipelines (the pipes-and-filters pattern; Phoenix: plugs, `pipeline`, `pipe_through`; Rails: `before_action`, once `before_filter`). A filter is an ordinary handler listed in a pipeline: `type Filter = Handler`, a second name for the role, not a new type (as `byte` is `uint8`). Filters run in order before the route's handler; the pipeline stops at the first that returns an error (answered like any handler's error) or writes a response (a redirect), else goes on. Named pipelines (`rt.Pipeline(filters...)`), and scopes that run one for a group of routes (`rt.Scope("/api/v1", api, func(s *web.Scope) {...})`; Phoenix and Rails: `scope`). Current: the request's own state, typed, which a filter sets and later filters and the handler read (`web.Set`, `web.Get`), in place of each package's own context key (Rails: `Current`, `CurrentAttributes`). It sits in the request's context, changed in place, so a filter passes values on without making a new request. Standard middleware stays for what wraps a handler (gzip, recovery).
@@ -100,7 +97,7 @@ Each lands with its tests, and in the gym site where it applies, before the next
 - A cache, `Rails.cache` in Go: `cache.Fetch(ctx, key, ttl, func() (T, error))`, `Read`, `Write`, `Delete`. In memory, capped at 32 MB (Rails' memory store default), least recently used out first; concurrent misses for one key compute it once (`singleflight`). A database-backed store (Solid Cache) waits for an app that runs several processes. Separate from `web.PageCache`, which keeps whole responses.
 - Text helpers, with Rails' exact wording so pages match: `TimeAgo` (`time_ago_in_words`: "less than a minute", "about 1 hour"), `ByteSize` (`number_to_human_size`: 1024-based, "1.23 MB"), `Pluralize` (`pluralize(2, "person")`, the generator's inflections). Times: the app's zone (UTC by default, `config.time_zone`) and a request's own zone in Current (`Time.use_zone`); helpers format in it.
 
-**Throughout** (Rails' defaults, made for Go)
+**Throughout** (Rails' defaults, made for Go; built in G0, since they shape every app from its first day)
 - Migrations, the Rails set (today there's only `db.Migrate`, run at startup):
   - `gantry g migration create_posts` writes `db/migrations/<timestamp>_create_posts.sql` (Rails' timestamps, so branches don't collide; the gym site's `00001`-style files keep working), in the app's engine's SQL. The name shapes the file as Rails' does: `create_posts` a table, `add_email_to_users` a column.
   - `gantry g resource` writes its table's migration from its fields.
@@ -117,6 +114,57 @@ Each lands with its tests, and in the gym site where it applies, before the next
   - `gantry new` writes all of this, and runs `houston init` for Houston's files (Dockerfile stages, `compose.yml` with `x-houston`), with its commands set: `test` is `go test ./...`, `console` is `myapp db console`. A new app runs under `houston dev` from the start, at http://<appname>.localhost (a branch at <branch>.<appname>.localhost), with no ports to choose or remember; gantry already treats `*.localhost` as local (plain-HTTP cookies).
   - gantry includes Houston by running it: gantry's own commands are `new`, `g`, `db` and `task`, and anything else goes to `houston` (`gantry dev` is `houston dev`, and `test`, `console`, `deploy`), as `bin/rails server` and `bin/rails test` are one command. The gantry library stays free of Houston's code; each is released on its own. If `houston` isn't installed, gantry says how to install it, or offers to. (One binary holding both was considered: it needs Houston's CLI made public and gantry's CLI in its own module; it can come later without changing a command.)
   - Needs from Houston (Houston's plan): `houston exec CMD...`, any command in the app's container or a one-off one; `console` becomes a case of it.
+
+## G0: `gantry new` (full map)
+**The slice:** `gantry new myapp`, then `gantry dev`, serves a working app at http://myapp.localhost: a home page, `/up`, the error pages, and `gantry test` passing, on SQLite or Postgres. `gantry new cmd/mission-control --in-module` does the same inside Houston's module, and MC starts there. G0 also takes the Throughout items, migrations and an app's commands, since they shape `main.go` and every app from its first day.
+
+**What it writes** (the main plan's layout; all of it the app's, to edit):
+```
+myapp/
+  go.mod                   module myapp (--module github.com/you/myapp); requires the gantry release that made it
+  cmd/myapp/main.go        config, then serve, or a command: db ..., jobs, task NAME
+  config/config.go         the environment into a Config (caarlos0/env): DATABASE_URL, SECRET_KEY_BASE, PORT
+  app/app.go               opens the database, runs migrations, builds the router
+  app/routes.go            the routes, and the browser pipeline
+  app/tasks.go             the app's own tasks: none yet
+  app/home/                controller.go, index.templ, controller_test.go
+  app/models/              empty, for sqlc's output
+  app/shared/layout/       layout.templ: the page shell, the stylesheet, the flash
+  assets/css/application.css
+  db/migrations/           empty; db/seeds.go
+  db/schema.sql            written by db migrate in development
+  public/                  400.html, 404.html, 422.html, 500.html (the error pages)
+  test/fixtures/
+  sqlc.yaml                for the chosen engine
+  Dockerfile               toolchain, dev, test and production stages (as the gym site's)
+  compose.yml, .dockerignore, .env, .gitignore: from `houston init`
+  README.md                gantry dev, gantry test, gantry db migrate, where things go
+```
+- **Flags:** `--db sqlite|postgres` (SQLite by default, as Rails 8), `--module PATH` (the name by default), `--in-module` (an app in the module you're in: no `go.mod` of its own, imports under the module's path, and a Dockerfile whose build context is the module's root), `--gantry PATH` (a `go.work` using a local gantry, for developing both, as the gym site's), `--skip-houston`.
+- **Steps:** write the files; `houston init` (named after the app); `go mod tidy`, `templ generate` and `sqlc generate` in the toolchain container; `git init`. A folder that exists and isn't empty is refused.
+- **Turbo, Stimulus, pipelines and the rest** go into the skeleton as G1 to G3 land. G0's app is what gantry has today.
+
+**gantry gains:**
+- `db`: rollback (one step, or n), status, pending migrations run in any order, and the schema written to `db/schema.sql` (SQLite from itself, Postgres with `pg_dump --schema-only`).
+- `testkit.Migrations`: every migration up, each down and up again, on a fresh database.
+- The CLI: `new`; `g migration` (a timestamped file shaped by its name); `g error-pages` (skips pages that exist, `--force` to replace); `g resource` writes its table's migration; `db` and `task` run the app's binary through `houston exec` (`--local`: on the host); anything else goes to `houston`, which gantry offers to install when it's missing.
+- An app's commands are plain generated code: `main.go` switches on its arguments and calls `db`'s functions and the app's tasks. No framework package for it, as the main plan's "code generation, not runtime magic".
+
+**Needs from Houston first:** `houston exec CMD...` (in the running dev container, or a one-off one from the same image, code, data and environment), and `houston init` taking the name without asking. Both in Houston's plan.
+
+**Tests:**
+- The generated files against golden copies in `cmd/gantry/testdata`, for each engine and for `--in-module`.
+- A generated app, on each engine, in the toolchain container: builds, `go vet` is clean, and its own tests pass (Postgres when `GANTRY_TEST_POSTGRES_URL` is set, as the framework's).
+- `g migration`'s shapes (create a table, add a column), `g error-pages` not overwriting, `g resource`'s migration applying and rolling back.
+- `db` rollback and status on both engines; `testkit.Migrations` failing on a broken down section.
+
+**Evidence, recorded here when G0 is done:**
+- `gantry new myapp && cd myapp && gantry dev`: http://myapp.localhost answers 200, `/up` answers, `/nope` is the generated 404; `gantry test` passes; `gantry db migrate` runs in the container.
+- The same with `--db postgres`.
+- MC created with `--in-module` in Houston's module, building and serving its home page.
+- The new app's footprint, the baseline for G1 to G3: its binary's size, and its memory idle and under load, measured as the gym site's.
+
+**Order:** Houston's two changes; `db` and `testkit.Migrations`; the generators and the skeleton; the CLI's commands and Houston pass-through; the generated app's tests on both engines; MC created. gantry `v0.5.0` at the end.
 
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
