@@ -5,6 +5,7 @@ go 1.27.1
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
 	github.com/a-h/templ v0.3.1020
+	github.com/adhocore/gronx v1.20.5
 	github.com/gen2brain/heic v0.7.2
 	github.com/gen2brain/webp v0.6.4
 	github.com/jackc/pgx/v5 v5.11.0
