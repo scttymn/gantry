@@ -9,8 +9,12 @@ package testkit
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
+	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"slices"
@@ -146,4 +150,52 @@ func File(t testing.TB, fsys fs.FS, name string) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// Postgres is DB on Postgres: a new database on the server at
+// TEST_DATABASE_URL (a user that may create databases), brought up to date
+// by migrate (which may be nil), and dropped after the test. So each test,
+// in parallel or not, has a database of its own, as DB's SQLite file is.
+// Without TEST_DATABASE_URL the test fails: a Postgres app's queries don't
+// run on SQLite.
+func Postgres(t testing.TB, migrate func(context.Context, *db.DB) error) *db.DB {
+	t.Helper()
+	server := os.Getenv("TEST_DATABASE_URL")
+	if server == "" {
+		t.Fatal("TEST_DATABASE_URL isn't set: a Postgres server for the tests' databases (gantry test sets it)")
+	}
+	ctx := context.Background()
+	admin, err := db.Open(ctx, server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	raw := make([]byte, 6)
+	rand.Read(raw)
+	name := "test_" + hex.EncodeToString(raw)
+	if _, err := admin.Write.ExecContext(ctx, `CREATE DATABASE `+name); err != nil {
+		t.Fatal(err)
+	}
+	u, err := url.Parse(server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u.Path = "/" + name
+	d, err := db.Open(ctx, u.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		d.Close()
+		if admin, err := db.Open(context.Background(), server); err == nil {
+			admin.Write.Exec(`DROP DATABASE IF EXISTS ` + name + ` WITH (FORCE)`)
+			admin.Close()
+		}
+	})
+	if migrate != nil {
+		if err := migrate(ctx, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return d
 }

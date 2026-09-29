@@ -2,6 +2,8 @@ package testkit
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -40,5 +42,29 @@ func TestFixtures(t *testing.T) {
 	var value string
 	if d.Read.QueryRow(`SELECT value FROM settings WHERE name = 'theme'`).Scan(&value); value != "dark" {
 		t.Error("a table without id or timestamps")
+	}
+}
+
+func TestPostgres(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL isn't set")
+	}
+	var names []string
+	for range 2 {
+		d := Postgres(t, func(ctx context.Context, d *db.DB) error {
+			_, err := d.Write.ExecContext(ctx, `CREATE TABLE posts (id bigint PRIMARY KEY)`)
+			return err
+		})
+		var name string
+		if err := d.Read.QueryRow(`SELECT current_database()`).Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Write.Exec(`INSERT INTO posts VALUES (1)`); err != nil {
+			t.Fatal("each test's database starts empty:", err)
+		}
+		names = append(names, name)
+	}
+	if names[0] == names[1] || !strings.HasPrefix(names[0], "test_") {
+		t.Fatalf("databases %q", names)
 	}
 }
