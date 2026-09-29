@@ -2,7 +2,6 @@ package db
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -138,13 +137,13 @@ func TestTx(t *testing.T) {
 	if err := d.Migrate(ctx, postsMigrations, "app_migrations"); err != nil {
 		t.Fatal(err)
 	}
-	insert := func(tx *sql.Tx) error {
+	insert := func(tx *Tx) error {
 		_, err := tx.Exec(`INSERT INTO posts (title, created_at) VALUES ('x', ?)`, time.Now())
 		return err
 	}
 	t.Run("an error rolls back", func(t *testing.T) {
 		boom := errors.New("boom")
-		err := d.Tx(ctx, func(tx *sql.Tx) error {
+		err := d.Tx(ctx, func(tx *Tx) error {
 			if err := insert(tx); err != nil {
 				return err
 			}
@@ -241,7 +240,7 @@ func TestPostgres(t *testing.T) {
 	if err := d.Migrate(ctx, pg, "gantry_pg_test_migrations"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Tx(ctx, func(tx *sql.Tx) error { _, err := tx.Exec(`INSERT INTO posts (title) VALUES ($1)`, "x"); return err }); err != nil {
+	if err := d.Tx(ctx, func(tx *Tx) error { _, err := tx.Exec(`INSERT INTO posts (title) VALUES ($1)`, "x"); return err }); err != nil {
 		t.Fatal(err)
 	}
 	if d.Engine != Postgres || d.Read != d.Write {
@@ -322,7 +321,7 @@ func TestVersion(t *testing.T) {
 	})
 	t.Run("so does a transaction, once it commits", func(t *testing.T) {
 		before, _ := d.Version(ctx)
-		d.Tx(ctx, func(tx *sql.Tx) error {
+		d.Tx(ctx, func(tx *Tx) error {
 			tx.Exec(`INSERT INTO posts (title, created_at) VALUES ('y', ?)`, time.Now())
 			if during, _ := d.Version(ctx); during != before {
 				t.Error("changed before the commit")

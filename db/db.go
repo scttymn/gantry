@@ -89,19 +89,40 @@ func (d *DB) Close() error {
 }
 
 // Tx runs fn in a transaction on the write pool, committed if fn returns
-// nil and rolled back otherwise. On SQLite it begins IMMEDIATE, so it holds
-// the write lock from the start and can't fail partway on a busy database.
-func (d *DB) Tx(ctx context.Context, fn func(*sql.Tx) error) error {
-	tx, err := d.Write.BeginTx(ctx, nil)
+// nil and rolled back otherwise, then runs what fn asked to run after the
+// commit (AfterCommit). On SQLite it begins IMMEDIATE, so it holds the write
+// lock from the start and can't fail partway on a busy database.
+func (d *DB) Tx(ctx context.Context, fn func(*Tx) error) error {
+	sqlTx, err := d.Write.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	tx := &Tx{Tx: sqlTx}
 	if err := fn(tx); err != nil {
-		tx.Rollback()
+		sqlTx.Rollback()
 		return err
 	}
-	return tx.Commit()
+	if err := sqlTx.Commit(); err != nil {
+		return err
+	}
+	for _, f := range tx.after {
+		f()
+	}
+	return nil
 }
+
+// Tx is a transaction: Go's (so sqlc's queries take it as they are), and
+// what's to run once it commits.
+type Tx struct {
+	*sql.Tx
+	after []func()
+}
+
+// AfterCommit runs f once the transaction commits, after any registered
+// before it, and never if it rolls back (Rails' after_commit): sending the
+// email, enqueuing the job, telling the pages. The change is saved by then,
+// so f can't undo it; it logs its own failure.
+func (t *Tx) AfterCommit(f func()) { t.after = append(t.after, f) }
 
 // redact hides a URL's password, for errors and logs.
 func redact(url string) string {

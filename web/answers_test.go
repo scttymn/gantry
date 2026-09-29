@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -158,5 +159,17 @@ func TestJSON(t *testing.T) {
 	var got map[string]int
 	if json.Unmarshal(w.Body.Bytes(), &got); w.Code != 202 || got["n"] != 3 || w.Header().Get("Content-Type") != "application/json; charset=utf-8" {
 		t.Errorf("%d %q %q", w.Code, w.Header().Get("Content-Type"), w.Body)
+	}
+}
+
+type conflict struct{}
+
+func (conflict) Error() string   { return "someone else changed it" }
+func (conflict) HTTPStatus() int { return http.StatusConflict }
+
+// An error may say its own status (db.ErrStale's 409), wrapped or not.
+func TestStatusOfItsOwn(t *testing.T) {
+	if got := StatusOf(fmt.Errorf("saving: %w", conflict{})); got != http.StatusConflict {
+		t.Errorf("= %d", got)
 	}
 }

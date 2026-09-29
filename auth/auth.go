@@ -259,7 +259,7 @@ func (a *Auth) SetPassword(ctx context.Context, userID int64, password string) e
 	if err != nil {
 		return err
 	}
-	return a.DB.Tx(ctx, func(tx *sql.Tx) error {
+	return a.DB.Tx(ctx, func(tx *db.Tx) error {
 		if _, err := tx.ExecContext(ctx, `UPDATE users SET password_digest = $1, updated_at = $2 WHERE id = $3`, digest, a.now(), userID); err != nil {
 			return err
 		}

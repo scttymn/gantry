@@ -60,6 +60,7 @@ var NotFound = Status(http.StatusNotFound, nil)
 //   - 404 for a row that doesn't exist (sql.ErrNoRows)
 //   - 413 for a body over its limit
 //   - 422 for Invalid
+//   - an error's own, when it says (an HTTPStatus method: db.ErrStale's 409)
 //   - 500 for anything else
 func StatusOf(err error) int {
 	var e *Error
@@ -73,6 +74,10 @@ func StatusOf(err error) int {
 		return http.StatusRequestEntityTooLarge
 	case errors.As(err, new(Invalid)):
 		return http.StatusUnprocessableEntity
+	}
+	var own interface{ HTTPStatus() int }
+	if errors.As(err, &own) {
+		return own.HTTPStatus()
 	}
 	return http.StatusInternalServerError
 }
