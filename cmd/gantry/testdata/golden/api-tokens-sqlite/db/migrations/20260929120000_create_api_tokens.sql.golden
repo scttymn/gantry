@@ -1,0 +1,17 @@
+-- API tokens (gantry g api-tokens): named keys for scripts, CLIs and
+-- agents calling the API. Only each token's SHA-256 is kept; the token
+-- itself is shown once, when it's issued.
+-- +goose Up
+CREATE TABLE "api_tokens" (
+  "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  "name" text NOT NULL,
+  "token_digest" text NOT NULL,
+  "last_used_at" datetime,
+  "created_at" datetime NOT NULL,
+  "updated_at" datetime NOT NULL
+);
+CREATE UNIQUE INDEX "index_api_tokens_on_name" ON "api_tokens" ("name");
+CREATE UNIQUE INDEX "index_api_tokens_on_token_digest" ON "api_tokens" ("token_digest");
+
+-- +goose Down
+DROP TABLE "api_tokens";

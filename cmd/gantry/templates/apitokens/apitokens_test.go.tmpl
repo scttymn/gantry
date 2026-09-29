@@ -1,0 +1,118 @@
+package apitokens_test
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/testkit"
+	"github.com/scttymn/gantry/token"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/apitokens"
+	"{{.Module}}/app/models"
+	"{{.Module}}/test"
+)
+
+// api is an API behind Require, answering who the token is.
+func api(t *testing.T) (*testkit.Visitor, *db.DB, *testkit.FakeClock) {
+	d := test.DB(t)
+	clock := testkit.Clock(time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC))
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Scope("/api", web.Pipeline{web.AcceptJSON, apitokens.Require(d, clock.Now)}, func(s *web.Scope) {
+		s.Handle("GET /me", func(w http.ResponseWriter, r *http.Request) error {
+			tok, _ := web.Get(r, apitokens.Key)
+			return web.JSON(w, http.StatusOK, map[string]string{"name": tok.Name})
+		})
+	})
+	return testkit.Browser(t, rt.Handler()), d, clock
+}
+
+func issue(t *testing.T, d *db.DB, name string, now time.Time) (string, models.ApiToken) {
+	t.Helper()
+	tok, row, err := apitokens.Issue(context.Background(), models.New(d.Write), name, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tok, row
+}
+
+func TestIssueAndUse(t *testing.T) {
+	b, d, clock := api(t)
+	tok, row := issue(t, d, "deploy bot", clock.Now())
+	if !strings.HasPrefix(tok, apitokens.Prefix) || row.TokenDigest != token.Digest(tok) || strings.Contains(row.TokenDigest, tok) {
+		t.Fatalf("token %q, stored %q", tok, row.TokenDigest)
+	}
+	b.Header.Set("Authorization", "Bearer "+tok)
+	if page := b.Get("/api/me"); page.Code != 200 || strings.TrimSpace(page.Body) != `{"name":"deploy bot"}` {
+		t.Errorf("with the token: %d %s", page.Code, page.Body)
+	}
+}
+
+func TestRefused(t *testing.T) {
+	ctx := context.Background()
+	b, d, clock := api(t)
+	tok, row := issue(t, d, "deploy bot", clock.Now())
+	// A token stored under another prefix: refused before any lookup.
+	other := "x_" + strings.TrimPrefix(tok, apitokens.Prefix)
+	models.New(d.Write).CreateAPIToken(ctx, models.CreateAPITokenParams{Name: "other", TokenDigest: token.Digest(other), Now: clock.Now()})
+	for name, header := range map[string]string{
+		"no token":        "",
+		"a wrong one":     "Bearer " + apitokens.Prefix + "nope",
+		"another prefix":  "Bearer " + other,
+		"another scheme":  "Basic " + tok,
+	} {
+		b.Header.Set("Authorization", header)
+		if page := b.Get("/api/me"); page.Code != 401 || !strings.Contains(page.Body, `"error"`) {
+			t.Errorf("%s: %d %s", name, page.Code, page.Body)
+		}
+	}
+	// Revoked: its row deleted.
+	models.New(d.Write).DeleteAPIToken(ctx, row.ID)
+	b.Header.Set("Authorization", "Bearer "+tok)
+	if page := b.Get("/api/me"); page.Code != 401 {
+		t.Errorf("revoked: %d", page.Code)
+	}
+}
+
+func TestNameTaken(t *testing.T) {
+	_, d, clock := api(t)
+	issue(t, d, "deploy bot", clock.Now())
+	if _, _, err := apitokens.Issue(context.Background(), models.New(d.Write), "deploy bot", clock.Now()); !db.IsUnique(err) {
+		t.Errorf("a second deploy bot: %v", err)
+	}
+}
+
+// last_used_at is written at most once a minute, however busy the token.
+func TestLastUsed(t *testing.T) {
+	b, d, clock := api(t)
+	tok, row := issue(t, d, "deploy bot", clock.Now())
+	b.Header.Set("Authorization", "Bearer "+tok)
+	lastUsed := func() time.Time {
+		t.Helper()
+		got, err := models.New(d.Read).FindAPITokenByDigest(context.Background(), row.TokenDigest)
+		if err != nil || !got.LastUsedAt.Valid {
+			t.Fatalf("last used: %+v %v", got.LastUsedAt, err)
+		}
+		return got.LastUsedAt.Time
+	}
+	start := clock.Now()
+	b.Get("/api/me")
+	if !lastUsed().Equal(start) {
+		t.Errorf("first use: %v", lastUsed())
+	}
+	clock.Advance(30 * time.Second)
+	b.Get("/api/me")
+	if !lastUsed().Equal(start) {
+		t.Errorf("written again within the minute: %v", lastUsed())
+	}
+	clock.Advance(31 * time.Second)
+	b.Get("/api/me")
+	if !lastUsed().Equal(clock.Now()) {
+		t.Errorf("after the minute: %v, want %v", lastUsed(), clock.Now())
+	}
+}

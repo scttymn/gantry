@@ -229,6 +229,8 @@ myapp/
 - Its tests, with testkit's browser and clock.
 
 **Tests of the generators:** golden files for what each writes; a new app with the recipe applied builds, and its generated tests pass after `sqlc generate` and `templ generate` (in the toolchain, as `TestNewAppBuilds`); the mutation check on the generated code's behaviour, through its tests.
+**Recipes progress:**
+- **API tokens** (2026-09-29): `gantry g api-tokens [--prefix PREFIX_]` writes the migration, `app/models/api_tokens.sql`, and `app/apitokens` (`Prefix`, `Key`, `Issue`, `Require`) with its tests, and prints the route and the next steps. The framework gained `web.AcceptJSON` for it (an API's errors are JSON whatever the Accept header). The generators find an app's import path in a module (`appModule`). Tests: golden files on each engine, `TestAPITokensRules`, `TestAPITokensInModule`, and `TestAPITokensBuilds` (a new app with the recipe: migrated, `sqlc generate`, vetted, its generated tests passing); on Postgres by hand through Houston (`gantry new depot --db postgres`, the recipe, `gantry db migrate`, `gantry exec sqlc generate`, `gantry exec go test ./...`: all pass, `last_used_at` a `sql.NullTime`). The mutation check, through the generated tests, caught all 7 (two first broke the generated code's build and were redone).
 
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.

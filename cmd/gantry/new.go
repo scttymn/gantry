@@ -246,13 +246,13 @@ const (
 )
 
 // enclosingModule is the module dir is in: its root and its path, from the
-// nearest go.mod above dir.
+// nearest go.mod at or above dir.
 func enclosingModule(dir string) (root, path string, err error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return "", "", err
 	}
-	for d := filepath.Dir(abs); ; d = filepath.Dir(d) {
+	for d := abs; ; d = filepath.Dir(d) {
 		if data, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {

@@ -1,0 +1,81 @@
+// Package apitokens is the app's API tokens, written by gantry g
+// api-tokens: named keys for scripts, CLIs and agents calling its API.
+// Only a token's SHA-256 is kept (token.Digest), so a copy of the database
+// lets nobody in; the token itself is shown once, when it's issued. A
+// token doesn't expire: it's revoked by deleting its row, on the app's own
+// settings page (ListAPITokens and DeleteAPIToken are there for it).
+//
+// The API's routes go behind Require:
+//
+//	api := web.Pipeline{web.AcceptJSON, apitokens.Require(a.DB, time.Now)}
+//	rt.Scope("/api/v1", api, func(s *web.Scope) { ... })
+package apitokens
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/token"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/models"
+)
+
+// Prefix starts every token, so a leaked one is recognisable (secret
+// scanners look for such prefixes), and anything else is refused before a
+// lookup.
+const Prefix = "{{.Prefix}}"
+
+// Key is the token a request came with, in Current, for the handlers
+// behind Require.
+var Key = web.NewKey[models.ApiToken]("api token")
+
+// touchEvery is how often a token's last_used_at is written: often enough
+// to show which tokens are in use, rarely enough not to write on every
+// request.
+const touchEvery = time.Minute
+
+// Issue makes a token named name. The token is returned this once: show
+// it, and keep only the row. A name that's taken is db.IsUnique(err).
+func Issue(ctx context.Context, q *models.Queries, name string, now time.Time) (string, models.ApiToken, error) {
+	tok, digest := token.New(Prefix)
+	row, err := q.CreateAPIToken(ctx, models.CreateAPITokenParams{Name: name, TokenDigest: digest, Now: now})
+	if err != nil {
+		return "", models.ApiToken{}, err
+	}
+	return tok, row, nil
+}
+
+var errUnauthorized = web.Status(http.StatusUnauthorized, errors.New("the API token is missing or wrong"))
+
+// Require is a filter that lets a request through with a live token in
+// Authorization: Bearer, the token in Current (Key); any other is 401. now
+// is the clock: time.Now, or a test's.
+func Require(d *db.DB, now func() time.Time) web.Filter {
+	return func(w http.ResponseWriter, r *http.Request) error {
+		tok, ok := web.BearerToken(r)
+		if !ok || !strings.HasPrefix(tok, Prefix) {
+			return errUnauthorized
+		}
+		row, err := models.New(d.Read).FindAPITokenByDigest(r.Context(), token.Digest(tok))
+		if errors.Is(err, sql.ErrNoRows) {
+			return errUnauthorized
+		}
+		if err != nil {
+			return err
+		}
+		if t := now(); !row.LastUsedAt.Valid || t.Sub(row.LastUsedAt.Time) >= touchEvery {
+			err := models.New(d.Write).TouchAPIToken(r.Context(), models.TouchAPITokenParams{Now: sql.NullTime{Time: t, Valid: true}, ID: row.ID})
+			if err != nil {
+				return err
+			}
+		}
+		web.Set(r, Key, row)
+		return nil
+	}
+}
