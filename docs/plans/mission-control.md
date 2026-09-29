@@ -214,6 +214,22 @@ myapp/
 - **G1 is done** (2026-09-29). `v0.7.0` tagged and pushed (your go-ahead). The gym site moved to it (valleybuiltcrossfit `8fe6610`, on main, which deploys: your word, "this is my dev app, so you can commit to main and push"): 15 lines across 8 files for `db.Tx`, `db/schema.sql`'s header regenerated, and `TestErrors`' JSON case; its suite and `gantry test` passed against the published `v0.7.0` before the push. MC's Go app moved to it too (Houston `3d9432a`): `rt.Public = assets.All` for its errors, as `gantry new` writes, and its own error page code gone; its tests and `gantry test` pass.
 - **Next:** the recipes the port needs (sessions, API tokens), on G1's pieces; then G2.
 
+## The recipes (full map)
+**What a recipe is:** a generator that writes filters, tables, queries, pages and tests into the app, which owns them from then on (Rails 8's `generate authentication`, Phoenix's `phx.gen.auth`), built only from the framework's pieces (filters, Current, `token`, `sign`, `web.JSON`, `testkit`). Like `g resource`, it prints what to add to `app/routes.go` and what to run (`gantry exec sqlc generate`, `gantry db migrate`).
+
+**`gantry g api-tokens [--prefix hou_]`** (first: MC's API needs it, and it's the smaller):
+- `db/migrations/<ts>_create_api_tokens.sql`: `api_tokens` (`id`, `name` unique, `token_digest` unique, `last_used_at`, `created_at`, `updated_at`), the app's engine.
+- `app/models/api_tokens.sql`: create, find by digest, list by name, delete, touch.
+- `app/apitokens/`: `Issue(ctx, q, name)` (the token, shown once, and its row; a name taken is `db.IsUnique`), and `Require`, a filter: `web.BearerToken`, the prefix checked before any lookup, the digest found, `last_used_at` written at most once a minute, the token in Current (`apitokens.Key`); otherwise 401 with `{"error": ...}`. No pages: issuing and revoking are the app's settings pages.
+- Its tests, generated with it: issuing, a token that works, one revoked, a wrong prefix never looked up, the minute's throttle (testkit's clock), 401 as JSON.
+
+**`gantry g auth`** (Rails 8's authentication generator, on gantry's pieces; the `auth` package's behaviour, which the gym site keeps using until it moves):
+- A migration for `users` and `sessions` (Rails 8's shape, as `auth`'s), queries in `app/models`.
+- `app/auth/`: `Fetch` (the signed-in user and session into Current, if the cookie names a live one) and `Require` (else to sign in, and back after: return-to); sessions with `Idle` and `Lifetime` (zero: never), an ended one deleted when found; the cookie's own expiry `Lifetime`; `last_seen_at` at most hourly; sign in and out; password reset by an emailed link (`sign`, 15 minutes, dead once used); bcrypt; rate limits; the pages in the app's layout.
+- Its tests, with testkit's browser and clock.
+
+**Tests of the generators:** golden files for what each writes; a new app with the recipe applied builds, and its generated tests pass after `sqlc generate` and `templ generate` (in the toolchain, as `TestNewAppBuilds`); the mutation check on the generated code's behaviour, through its tests.
+
 ## MC's own, or Houston's (not gantry)
 Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
 These are real patterns, but they come from MC being an operations app, not from Rails:
