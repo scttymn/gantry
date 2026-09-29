@@ -37,7 +37,7 @@
 |---|---|---|
 | Routing | `net/http` ServeMux, with a `Resources` helper for the seven REST routes | Methods and path values are built in; no dependency |
 | Handlers | `func(w, r) error` | One place turns errors into pages: `sql.ErrNoRows` → 404, validation errors → 422 |
-| Views | templ, with htmx for server round trips | Compiled and type-safe, so a wrong field is a compile error; no Node |
+| Views | templ, with Turbo and Stimulus by default (changed from htmx on 2026-09-29: see `mission-control.md`, G3); htmx stays supported | Compiled and type-safe, so a wrong field is a compile error; no Node. Turbo and Stimulus are Rails' default, and give fast navigation, live updates and a convention for an app's own JavaScript |
 | Postgres | pgx/v5 through `database/sql` (`pgx/stdlib`) | The fastest driver, behind the same interface SQLite uses |
 | SQLite | modernc.org/sqlite | Pure Go, so the static binary runs on `scratch` |
 | IDs | `int64` by default; UUIDv7 per table when asked (`gantry g resource post --uuid`) | `int64` is the least code, the smallest index, and SQLite's own rowid. UUIDv7 is for rows whose URLs shouldn't reveal a count: made in Go (google/uuid) so both engines behave alike, stored as `uuid` on Postgres and a 16-byte blob on SQLite |

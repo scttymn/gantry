@@ -15,6 +15,7 @@
 - On session expiry: "it doesn't belong in the framework, but the recipe is a good fit"
 - On encrypted fields: keys set at startup, "same as rails"; the extras wait: "yes".
 - On G2 and G3: "do rails defaults that make sense in go. I only want to address questions that you are unsure about"
+- On the default for pages: "turbo and stimulus is fine. We can always rewrite the gym site with the updated version"
 
 ## Goal
 gantry can carry Mission Control (MC): today Rails 8.1, about 7,300 lines of Ruby, SQLite, Solid Queue, Solid Cache, Solid Cable, Turbo and Stimulus, under Puma and Thruster. Target: one Go process, memory that stays flat while it streams, and no regressions against the Rails version run beside it.
@@ -91,6 +92,7 @@ Each lands with its tests, and in the gym site where it applies, before the next
   - A comment line every 30 s keeps proxies from closing idle streams (Cloudflare closes after 100 s). A subscriber too slow to keep up is disconnected rather than buffered, so memory stays flat; the browser reconnects.
   - In one process, the hub is in memory. Rails defaults to Solid Cable (the database) because Rails runs many processes; a gantry app is one. A database-backed hub waits for an app that runs several.
   - Fragments render outside a request: a templ component renders to any writer, and `turbo` wraps it as a stream action.
+- `gantry new` sets up Turbo and Stimulus by default, as Rails does; htmx stays supported (the gym site keeps it until it's rewritten on the new version).
 - Turbo (`turbo` package): stream actions (`turbo.Append(target, c)`, `Prepend`, `Replace`, `Update`, `Remove`, `Refresh`), `turbo.Frame(r)` (the `Turbo-Frame` header: the frame a request is for), and Turbo's HTTP rules as defaults: a redirect after a form submission is 303, a form with errors answers 422 (Rails 7).
 - Import map, no build step (importmap-rails, Rails 8's default): `pin` names to files under the app's assets, served digested; the page gets `<script type="importmap">` and `modulepreload` links. `gantry importmap pin turbo` downloads a package into the app's vendored assets (no CDN at run time). Stimulus controllers under `app/javascript/controllers` are pinned and registered by name, as `pin_all_from` and `eagerLoadControllersFrom`.
 - Flash size: a flash that would push its cookie past 4 KB (browsers' limit) is cut to fit, with a warning logged. Rails raises `CookieOverflow`; a cut message beats a 500.
@@ -116,7 +118,7 @@ These are real patterns, but they come from MC being an operations app, not from
 2. **Live transport.** Server-Sent Events read by `<turbo-stream-source>` (recommended; plain HTTP, one process), rather than ActionCable's WebSocket protocol.
 3. **Jobs: build or adopt.** Needs SQLite and Postgres, per-key limits and recurring entries; G2 starts by checking libraries (goqite covers part), and I expect our own small package.
    G2 and G3 take Rails' defaults as they make sense in Go (your direction, 2026-09-29: "Go through G2 and G3 and do rails defaults that make sense in go").
-4. **Turbo and Stimulus stay.** The 6 Stimulus controllers (175 lines) and the stylesheet move over as they are.
+4. **Turbo and Stimulus stay, and become gantry's default.** MC's 6 Stimulus controllers (175 lines) and the stylesheet move over as they are; `gantry new` sets up Turbo and Stimulus for every app, htmx still supported.
 5. **Moving MC's data.** Encrypted fields read with `crypt.Rails` and rewritten with gantry's keys; sessions reset (everyone signs in again); API tokens keep working (SHA-256 digests).
 6. **Filters are handlers.** A pipeline is a list of `web.Handler`s, so there's one type and nothing new to learn; values pass forward through Current. Considered: a separate type returning the request (`Step`, `Plug`, `Gate`), and an output added to `Handler`, which every action would return and throw away. `Middleware` stays the name for wrappers only.
 
