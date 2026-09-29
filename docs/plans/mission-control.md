@@ -99,11 +99,24 @@ Each lands with its tests, and in the gym site where it applies, before the next
 - A cache, `Rails.cache` in Go: `cache.Fetch(ctx, key, ttl, func() (T, error))`, `Read`, `Write`, `Delete`. In memory, capped at 32 MB (Rails' memory store default), least recently used out first; concurrent misses for one key compute it once (`singleflight`). A database-backed store (Solid Cache) waits for an app that runs several processes. Separate from `web.PageCache`, which keeps whole responses.
 - Text helpers, with Rails' exact wording so pages match: `TimeAgo` (`time_ago_in_words`: "less than a minute", "about 1 hour"), `ByteSize` (`number_to_human_size`: 1024-based, "1.23 MB"), `Pluralize` (`pluralize(2, "person")`, the generator's inflections). Times: the app's zone (UTC by default, `config.time_zone`) and a request's own zone in Current (`Time.use_zone`); helpers format in it.
 
-**Throughout**
-- Migrations run by a release hook on deploy; each migration's down and up run in a test
-- A convention for an app's own subcommands (Rails: rake tasks, `bin/rails runner`)
+**Throughout** (Rails' defaults, made for Go)
+- Migrations, the Rails set (today there's only `db.Migrate`, run at startup):
+  - `gantry g migration create_posts` writes `db/migrations/<timestamp>_create_posts.sql` (Rails' timestamps, so branches don't collide; the gym site's `00001`-style files keep working), in the app's engine's SQL. The name shapes the file as Rails' does: `create_posts` a table, `add_email_to_users` a column.
+  - `gantry g resource` writes its table's migration from its fields.
+  - Pending migrations run in any order, as Rails' (goose's out-of-order option).
+  - `db migrate`, `db rollback` (one, or `STEP=n`), `db status`, `db seed` (the app's `db/seeds.go`), `db reset` (development: drop, migrate, seed), `db console` (sqlite3 or psql, Rails' `dbconsole`).
+  - After `db migrate` in development, `db/schema.sql` is written, the whole schema in one file to read and review (Rails' `structure.sql`); from SQLite itself, from `pg_dump --schema-only` on Postgres.
+  - Migrations keep running at startup by default (Rails 8's `db:prepare` in the container's entrypoint); `myapp db migrate` is there for a separate release step.
+  - `testkit.Migrations(t, ...)` runs every migration up, each down and up again, on a fresh database, so a broken down section fails a test.
+  - A migration that can't be undone leaves its down section empty; `db rollback` stops there with an error (Rails' `IrreversibleMigration`). Postgres' `CREATE INDEX CONCURRENTLY` uses goose's no-transaction marker.
+- An app's own commands (Rails: `bin/rails`, rake tasks, `runner`):
+  - The app's binary is its command line: `myapp` serves (the web and, by default, jobs), `myapp db ...` as above, `myapp jobs` runs only jobs, and `myapp tasks` lists the app's own.
+  - The app's tasks are registered in one file, as routes are (`app/tasks.go`: a name, a line of help and a function given the app's context), and run as `myapp task NAME args...`. That covers rake tasks and `rails runner`. Go has no console (`rails console`); `db console` is the nearest.
+  - In development, `gantry db migrate`, `gantry task ...` and the rest run the app's own binary (`go run ./cmd/myapp ...`), as `bin/rails` does, so the same code runs in development and production.
+  - `gantry new` writes all of this.
 
 ## MC's own, or Houston's (not gantry)
+Checked against the framework-first rule (2026-09-29): only the per-job deadline moved into gantry (G2's `Timeout`). The rest are built on gantry's pieces (compare-and-swap, `token`, filters, jobs' `Limit`) without being general needs.
 These are real patterns, but they come from MC being an operations app, not from Rails:
 - Leases: a claim with a token, heartbeat, takeover after silence, a finish fenced by the token (`backup_run.rb`, `deploy.rb`)
 - Stopping everything a job started when its deadline passes (`DataRun`); the deadline itself is G2's `Timeout`
