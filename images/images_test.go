@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"golang.org/x/image/webp"
 
@@ -372,8 +373,19 @@ func TestCopies(t *testing.T) {
 // The test binary stands in for an app's: `resize` runs the child.
 func TestMain(m *testing.M) {
 	if IsChild(os.Args) {
-		if os.Getenv("GOMEMLIMIT") != ChildMemory {
+		// A good neighbour: one thread, a memory limit for its format, and,
+		// once started, the lowest CPU priority.
+		want := ChildMemory
+		if strings.HasSuffix(os.Args[3], ".avif") {
+			want = AVIFMemory
+		}
+		if os.Getenv("GOMEMLIMIT") != want || os.Getenv("GOMAXPROCS") != "1" {
 			os.Exit(3)
+		}
+		childStarted = func() {
+			if !niceAsCanBe() {
+				os.Exit(4)
+			}
 		}
 		os.Exit((&Pipeline{Encoder: JPEG{}}).RunChild(os.Args))
 	}
@@ -436,5 +448,85 @@ func TestPrepare(t *testing.T) {
 	p2 := &Pipeline{Dir: t.TempDir(), Maker: &counting{fail: true, gate: maker.gate}}
 	if _, err := p2.Prepare(ctx, map[string]Original{"photo": originals["photo"]}, 0); err == nil || !strings.Contains(err.Error(), "photo at 160w") {
 		t.Errorf("a failure: %v", err)
+	}
+}
+
+// A child is a good neighbour: not started without the memory for it,
+// resting as long as it worked, at the lowest priority (TestMain checks).
+func TestChildPolite(t *testing.T) {
+	ctx := context.Background()
+	src := source(t)
+	var rested []time.Duration
+	child := func(free int64) Child {
+		return Child{Exe: os.Args[0],
+			Room: func() (int64, bool) { return free, true },
+			Rest: func(_ context.Context, d time.Duration) { rested = append(rested, d) }}
+	}
+	for _, p := range []*Pipeline{AVIFFor(&Pipeline{Dir: t.TempDir(), Maker: child(250 << 20)}), {Dir: t.TempDir(), Encoder: JPEG{}, Maker: child(150 << 20)}} {
+		if _, err := p.Copy(ctx, "k", src, 160, 0); !errors.Is(err, ErrNoRoom) {
+			t.Errorf("%s with too little room: %v", p.ContentType(), err)
+		}
+		if p.Has("k", 160, 0) {
+			t.Errorf("%s made anyway", p.ContentType())
+		}
+	}
+	if len(rested) != 0 {
+		t.Errorf("rested for copies not made: %v", rested)
+	}
+	a := AVIFFor(&Pipeline{Dir: t.TempDir(), Maker: child(1 << 30)})
+	start := time.Now()
+	path, err := a.Copy(ctx, "k", src, 160, 0)
+	took := time.Since(start)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if _, _, ct, _ := a.Dimensions(data); ct != "image/avif" {
+		t.Errorf("made %s", ct)
+	}
+	if len(rested) != 1 || rested[0] <= 0 || rested[0] > took {
+		t.Errorf("rested %v after a copy that took %v", rested, took)
+	}
+	// The default rest waits, and ends with its context (the server
+	// stopping).
+	s := time.Now()
+	restFor(ctx, 30*time.Millisecond)
+	if time.Since(s) < 30*time.Millisecond {
+		t.Error("didn't rest")
+	}
+	ending, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	s = time.Now()
+	restFor(ending, 10*time.Second)
+	if time.Since(s) > 2*time.Second {
+		t.Error("rested past its context")
+	}
+}
+
+func TestMemoryRoom(t *testing.T) {
+	was, wasInfo := cgroupDir, meminfo
+	t.Cleanup(func() { cgroupDir, meminfo = was, wasInfo })
+	dir := t.TempDir()
+	cgroupDir, meminfo = dir, filepath.Join(dir, "meminfo")
+	write := func(name, s string) { os.WriteFile(filepath.Join(dir, name), []byte(s), 0o644) }
+	if _, known := memoryRoom(); known {
+		t.Error("known with nothing to read")
+	}
+	write("meminfo", "MemTotal:       16374784 kB\nMemAvailable:    1048576 kB\n")
+	if free, known := memoryRoom(); !known || free != 1<<30 {
+		t.Errorf("the machine's: %d %v", free, known)
+	}
+	write("memory.max", "402653184\n") // 384 MiB
+	write("memory.current", "104857600\n")
+	if free, _ := memoryRoom(); free != 402653184-104857600 {
+		t.Errorf("the container's: %d", free)
+	}
+	write("memory.max", "max\n")
+	if free, _ := memoryRoom(); free != 1<<30 {
+		t.Errorf("no container limit: %d", free)
+	}
+	write("memory.max", "8589934592\n") // more than the machine has free
+	if free, _ := memoryRoom(); free != 1<<30 {
+		t.Errorf("the lesser: %d", free)
 	}
 }

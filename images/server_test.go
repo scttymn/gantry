@@ -237,7 +237,7 @@ func TestServerAVIF(t *testing.T) {
 func TestAVIFFor(t *testing.T) {
 	webp := &Pipeline{Dir: "/data/variants", Widths: []int{100, 200}, Decoders: []Decoder{nil}, Maker: Child{Exe: "/app"}, Quality: 70}
 	a := AVIFFor(webp)
-	if a.Dir != webp.Dir || len(a.Widths) != 2 || len(a.Decoders) != 1 || a.Maker != webp.Maker || a.QualityOr(0) != AVIFQuality || a.ContentType() != "image/avif" {
+	if a.Dir != webp.Dir || len(a.Widths) != 2 || len(a.Decoders) != 1 || a.Maker.(Child).Exe != "/app" || a.QualityOr(0) != AVIFQuality || a.ContentType() != "image/avif" {
 		t.Errorf("%+v", a)
 	}
 }

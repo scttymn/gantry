@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -401,38 +402,131 @@ func (m InProcess) Make(_ context.Context, src, dst string, width, quality int) 
 
 // ChildMemory is the Go memory limit a child runs with, so it collects
 // early rather than growing to what it could use: with it a 24-megapixel
-// photo resizes within a 384 MB container.
-const ChildMemory = "160MiB"
+// photo resizes within a 384 MB container. An AVIF copy's is AVIFMemory:
+// its encoder's runtime needs 200-300 MB whatever the copy's size.
+const (
+	ChildMemory = "160MiB"
+	AVIFMemory  = "320MiB"
+)
+
+// childNeeds is the memory a child needs free to make a copy named dst, and
+// the Go memory limit it runs with.
+func childNeeds(dst string) (bytes int64, limit string) {
+	if strings.HasSuffix(dst, AVIF{}.Ext()) {
+		return 320 << 20, AVIFMemory
+	}
+	return 200 << 20, ChildMemory
+}
+
+// ErrNoRoom is a copy not started for want of memory: the container hasn't
+// the room for a child now. Warming again later makes it.
+var ErrNoRoom = errors.New("images: not enough memory free for a copy now")
 
 // ChildCommand is the argument that makes the app's binary a resizing
 // child: `<exe> resize SRC DST WIDTH QUALITY`.
 const ChildCommand = "resize"
 
-// Child resizes in a short-lived copy of this program. The app's main hands
-// the arguments to RunChild before anything else:
+// Child resizes in a short-lived copy of this program, as a good neighbour
+// to the server beside it: the child runs at the lowest CPU priority, on
+// one thread, so requests come first; it isn't started when the container
+// hasn't the memory free for it (ErrNoRoom); and after each copy it rests
+// as long as the copy took, so copies made in the background take at most
+// half of what the container may use. The app's main hands the arguments
+// to RunChild before anything else:
 //
 //	if images.IsChild(os.Args) {
 //		os.Exit(pipeline.RunChild(os.Args))
 //	}
-type Child struct{ Exe string }
+type Child struct {
+	Exe string
+	// Room is the memory free for a child, and whether it's known: nil,
+	// the container's (cgroup v2's memory.max less memory.current) or the
+	// machine's (MemAvailable), whichever is less. Tests set it.
+	Room func() (free int64, known bool)
+	// Rest waits d after a copy: nil, a timer that ends with ctx. Tests set
+	// it.
+	Rest func(ctx context.Context, d time.Duration)
+}
 
 func (c Child) Make(ctx context.Context, src, dst string, width, quality int) error {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	need, limit := childNeeds(dst)
+	room := c.Room
+	if room == nil {
+		room = memoryRoom
+	}
+	if free, known := room(); known && free < need {
+		return fmt.Errorf("%w: %d MB free, this copy needs %d MB", ErrNoRoom, free>>20, need>>20)
+	}
+	run, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, c.Exe, ChildCommand, src, dst, strconv.Itoa(width), strconv.Itoa(quality))
-	cmd.Env = append(os.Environ(), "GOMEMLIMIT="+ChildMemory)
+	cmd := exec.CommandContext(run, c.Exe, ChildCommand, src, dst, strconv.Itoa(width), strconv.Itoa(quality))
+	cmd.Env = append(os.Environ(), "GOMEMLIMIT="+limit, "GOMAXPROCS=1")
+	start := time.Now()
 	out, err := cmd.CombinedOutput()
+	rest := c.Rest
+	if rest == nil {
+		rest = restFor
+	}
+	rest(ctx, time.Since(start))
 	if err != nil {
 		return fmt.Errorf("resize: %w: %s", err, out)
 	}
 	return nil
 }
 
+// childStarted runs in a child once it's lowered its priority; tests check
+// it there.
+var childStarted = func() {}
+
+// restFor waits d, or until ctx ends (the server shutting down).
+func restFor(ctx context.Context, d time.Duration) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+// cgroupDir and meminfo are where memoryRoom reads; tests point them
+// elsewhere.
+var (
+	cgroupDir = "/sys/fs/cgroup"
+	meminfo   = "/proc/meminfo"
+)
+
+// memoryRoom is the memory free for a child: the container's limit less its
+// use (cgroup v2), or the machine's available memory, whichever is less.
+func memoryRoom() (free int64, known bool) {
+	free = math.MaxInt64
+	if max, err := os.ReadFile(filepath.Join(cgroupDir, "memory.max")); err == nil {
+		cur, err := os.ReadFile(filepath.Join(cgroupDir, "memory.current"))
+		limit, err1 := strconv.ParseInt(strings.TrimSpace(string(max)), 10, 64)
+		used, err2 := strconv.ParseInt(strings.TrimSpace(string(cur)), 10, 64)
+		if err == nil && err1 == nil && err2 == nil { // "max": no limit
+			free, known = limit-used, true
+		}
+	}
+	if data, err := os.ReadFile(meminfo); err == nil {
+		for line := range strings.Lines(string(data)) {
+			if rest, ok := strings.CutPrefix(line, "MemAvailable:"); ok {
+				if kb, err := strconv.ParseInt(strings.TrimSuffix(strings.TrimSpace(rest), " kB"), 10, 64); err == nil {
+					free, known = min(free, kb<<10), true
+				}
+			}
+		}
+	}
+	return free, known
+}
+
 // IsChild reports whether the process was started as a resizing child.
 func IsChild(args []string) bool { return len(args) > 1 && args[1] == ChildCommand }
 
-// RunChild is the child's whole life: resize, report, exit code.
+// RunChild is the child's whole life: the lowest CPU priority first, then
+// resize, report, exit code.
 func (p *Pipeline) RunChild(args []string) int {
+	lowerPriority()
+	childStarted()
 	if len(args) != 6 {
 		fmt.Fprintln(os.Stderr, "usage: resize SRC DST WIDTH QUALITY")
 		return 2
