@@ -15,7 +15,8 @@ import (
 // them (Rails' assets:precompile), into dir (assets/built): each script
 // minified, into js/, found again by its source's hash, so a script edited
 // since isn't shadowed; and, when Images was called, every picture's copies
-// into images/, only those missing. Whatever an earlier build left for
+// into images/, only those missing (WebP alone on a machine that would make
+// AVIF at a crawl: images.AVIFSlow says why). Whatever an earlier build left for
 // sources that are gone is removed. Without it (development, tests) the
 // scripts are served as they are and a copy is made when first asked for.
 // made is how many copies it made.

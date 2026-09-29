@@ -29,6 +29,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN templ generate -path /app
+# The assets precompiled as the build does them, so the tests see what
+# production serves and no picture is resized on request.
+RUN --mount=type=cache,id=shop-assets,target=/cache/assets,sharing=locked \
+    go run ./cmd/shop assets /cache/assets && cp -a /cache/assets/. assets/built/
 CMD ["sh", "-c", "go vet ./... && go test ./..."]
 
 FROM toolchain AS build
@@ -36,8 +40,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 # The assets precompiled first (Rails' assets:precompile: the scripts
-# minified, the pictures' copies), for go build to embed.
-RUN templ generate -path /app && go run ./cmd/shop assets && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/shop
+# minified, the pictures' copies), for go build to embed. They're kept in a
+# build cache between deploys, so only a new or changed picture is resized.
+RUN --mount=type=cache,id=shop-assets,target=/cache/assets,sharing=locked \
+    templ generate -path /app && go run ./cmd/shop assets /cache/assets && cp -a /cache/assets/. assets/built/ \
+ && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/shop
 RUN mkdir -p /out/data
 
 FROM scratch AS production

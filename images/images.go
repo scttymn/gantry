@@ -17,6 +17,9 @@ import (
 	"image"
 	"image/jpeg"
 	"io"
+	"runtime"
+
+	"golang.org/x/sys/cpu"
 
 	"github.com/gen2brain/avif" // registers AVIF with image.Decode; WASM, no cgo
 	"github.com/gen2brain/webp" // registers WebP with image.Decode; WASM, no cgo
@@ -50,6 +53,24 @@ type AVIF struct{}
 // AVIFQuality is AVIF's quality that looks like WebP at 80 (libvips' AVIF
 // default, as Rails' image processing).
 const AVIFQuality = 50
+
+// AVIFSlow says why this machine would make AVIF many times slower than it
+// should, "" when it wouldn't. The encoder is WebAssembly run by wazero,
+// which compiles it only for a CPU with SSE4.1 (amd64) or LSE atomics
+// (arm64, for the encoder's threads), and interprets it otherwise: a copy
+// takes minutes, not a second. A virtual machine given a generic CPU model
+// (Proxmox's kvm64, say) hides SSE4.1 from a CPU that has it.
+func AVIFSlow() string {
+	switch {
+	case runtime.GOARCH == "amd64" && !cpu.X86.HasSSE41:
+		return "this CPU has no SSE4.1 (a VM on a generic CPU model, kvm64 say: give it the host's)"
+	case runtime.GOARCH == "arm64" && !cpu.ARM64.HasATOMICS:
+		return "this CPU has no LSE atomics (ARMv8.0: a Raspberry Pi 4, say)"
+	case runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64":
+		return "this is " + runtime.GOARCH + ", where the encoder isn't compiled"
+	}
+	return ""
+}
 
 func (AVIF) ContentType() string { return "image/avif" }
 func (AVIF) Ext() string         { return ".avif" }

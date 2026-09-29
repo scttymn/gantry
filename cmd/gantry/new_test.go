@@ -70,7 +70,7 @@ func TestNewInModule(t *testing.T) {
 	for file, wants := range map[string][]string{
 		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
 		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
-		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "RUN templ generate -path /app/apps/control && go run ./cmd/control assets && go build"},
+		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "templ generate -path /app/apps/control && go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/"},
 		"Dockerfile.dockerignore": {"**/.git", "**/.cache"},
 	} {
 		for _, want := range wants {

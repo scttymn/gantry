@@ -49,6 +49,24 @@ type picture struct {
 	width, height               int
 }
 
+// avifSlow is images.AVIFSlow; tests set it.
+var avifSlow = images.AVIFSlow
+
+// withAVIF reports whether a picture comes in AVIF: its AVIF copies are in
+// the build, or, with nothing built for it (development, tests), this
+// machine makes AVIF at a compiled speed. A build on a machine that
+// doesn't (Precompile skips AVIF there) leaves the picture WebP alone, so
+// no request waits minutes for a copy.
+func (im *Images) withAVIF(key string) bool {
+	built := im.a.copies[key]
+	for name := range built {
+		if strings.HasSuffix(name, im.avif.Encoder.Ext()) {
+			return true
+		}
+	}
+	return len(built) == 0 && avifSlow() == ""
+}
+
 // ImagesPrefix is where the copies are served: /assets/resized/<key>/720w-q80.webp.
 const ImagesPrefix = "/assets/resized/"
 
@@ -124,7 +142,11 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 		}
 		originals[key] = images.Original{Path: path, ContentType: pic.contentType, Width: pic.width}
 	}
-	for _, q := range []*images.Pipeline{im.pipeline, im.avif} {
+	formats := []*images.Pipeline{im.pipeline, im.avif}
+	if avifSlow() != "" {
+		formats = formats[:1] // WebP alone: see images.AVIFSlow
+	}
+	for _, q := range formats {
 		p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker}
 		n, err := p.Prepare(ctx, originals, 0)
 		made += n
@@ -138,8 +160,12 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 // Precompiled reports whether the build made every picture's copies, so no
 // request makes one.
 func (im *Images) Precompiled() bool {
+	formats := []*images.Pipeline{im.pipeline, im.avif}
+	if avifSlow() != "" {
+		formats = formats[:1]
+	}
 	for key, pic := range im.byKey {
-		for _, p := range []*images.Pipeline{im.pipeline, im.avif} {
+		for _, p := range formats {
 			for _, w := range p.WidthsFor(pic.width) {
 				if _, ok := im.a.copies[key][p.Name(w, p.QualityOr(0))]; !ok {
 					return false
@@ -157,6 +183,10 @@ func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p, server := im.pipeline, im.server
 	if strings.HasSuffix(name, im.avif.Encoder.Ext()) {
 		p, server = im.avif, im.avifServer
+		if _, built := im.a.copies[key][name]; !built && !im.withAVIF(key) {
+			http.NotFound(w, r)
+			return
+		}
 	}
 	if body, ok := im.a.copies[key][name]; ok && im.byKey[key] != nil {
 		w.Header().Set("Content-Type", p.ContentType())
@@ -170,8 +200,8 @@ func (im *Images) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	server.ServeHTTP(w, r)
 }
 
-// Img is the picture's <picture>: its AVIF copies, then an <img> of its
-// WebP ones for a browser without AVIF, the browser picking by o.Sizes, and
+// Img is the picture's <picture>: its AVIF copies (when it comes in AVIF:
+// withAVIF), then an <img> of its WebP ones for a browser without AVIF, the browser picking by o.Sizes, and
 // the <img> sized so the page doesn't shift as it loads. (A picture with
 // o.PlaceholderWhen is its WebP <img> alone, which is a <picture> already.)
 // An unknown name is a programming error, so it panics: the page that uses
@@ -183,7 +213,7 @@ func (im *Images) Img(name string, o images.Img) templ.Component {
 	}
 	photo := images.Photo{Key: pic.key, ContentType: pic.contentType, Width: pic.width, Height: pic.height}
 	img := im.server.Img(photo, o)
-	if o.PlaceholderWhen != "" {
+	if o.PlaceholderWhen != "" || !im.withAVIF(pic.key) {
 		return img
 	}
 	_, srcset := im.avifServer.Sources(photo)

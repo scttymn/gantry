@@ -274,3 +274,54 @@ func TestImagesChanged(t *testing.T) {
 		t.Errorf("%s", tag)
 	}
 }
+
+// On a machine that would make AVIF at a crawl, the build makes WebP alone,
+// pages offer WebP alone, and no AVIF copy is made on request.
+func TestImagesWithoutAVIF(t *testing.T) {
+	was := avifSlow
+	avifSlow = func() string { return "no SSE4.1" }
+	t.Cleanup(func() { avifSlow = was })
+	_, im := pictures(t)
+	if tag := draw(t, im, "hero.png", images.Img{}); strings.Contains(tag, "avif") || strings.HasPrefix(tag, "<picture>") {
+		t.Errorf("AVIF offered: %s", tag)
+	}
+	dir := t.TempDir()
+	made, err := im.Precompile(context.Background(), dir)
+	if err != nil || made != 4+1 {
+		t.Errorf("made %d (%v)", made, err)
+	}
+	fsys := fstest.MapFS{
+		"images/hero.png":     {Data: pngOf(t, 500, 300)},
+		"images/maps/pin.png": {Data: pngOf(t, 100, 100)},
+	}
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if strings.HasSuffix(path, ".avif") {
+				t.Errorf("an AVIF copy made: %s", path)
+			}
+			rel, _ := filepath.Rel(dir, path)
+			b, _ := os.ReadFile(path)
+			fsys["built/images/"+filepath.ToSlash(rel)] = &fstest.MapFile{Data: b}
+		}
+		return err
+	})
+	a, _ := New(fsys)
+	built := a.Images(&images.Pipeline{Dir: t.TempDir()})
+	if !built.Precompiled() {
+		t.Error("WebP alone isn't precompiled here")
+	}
+	key := built.byName["hero.png"].key
+	mux := http.NewServeMux()
+	a.Routes(mux.Handle)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/assets/resized/"+key+"/160w-q50.avif", nil))
+	if w.Code != 404 {
+		t.Errorf("an AVIF copy asked for: %d", w.Code)
+	}
+	// A build that did make them (on a machine that could) is offered.
+	fsys["built/images/"+key+"/160w-q50.avif"] = &fstest.MapFile{Data: []byte("avif")}
+	b, _ := New(fsys)
+	if tag := draw(t, b.Images(nil), "hero.png", images.Img{}); !strings.Contains(tag, `type="image/avif"`) {
+		t.Errorf("the build's AVIF not offered: %s", tag)
+	}
+}
