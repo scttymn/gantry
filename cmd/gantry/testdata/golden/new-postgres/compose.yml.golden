@@ -1,0 +1,36 @@
+# Houston's project: gantry dev (houston dev) serves it at
+# http://shop.localhost, gantry test runs its tests, and houston deploy
+# puts it on the server.
+name: shop
+
+services:
+  app:
+    build: { context: ., target: dev }
+    expose: ["8080"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/shop?sslmode=disable
+      # The server gantry test gives each test a database of its own on.
+      TEST_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/postgres?sslmode=disable
+    depends_on: [db]
+    volumes:
+      - .:/app                     # the code, rebuilt on change
+      - data:/data                 # uploads
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: shop
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  data:
+  pgdata:
+
+x-houston:
+  health: /up
+  commands:
+    test: sh -c "go vet ./... && go test ./..."
+    console: { dev: go run ./cmd/shop db console, server: /app db console }

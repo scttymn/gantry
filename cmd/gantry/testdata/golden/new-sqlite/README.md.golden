@@ -1,0 +1,28 @@
+# Shop
+
+A [gantry](https://github.com/scttymn/gantry) app, run and deployed with [Houston](https://github.com/scttymn/houston).
+
+```sh
+gantry dev                 # http://shop.localhost, rebuilt as you change it
+gantry test                # its tests, in a throwaway copy
+gantry db migrate          # run pending migrations (and rewrite db/schema.sql)
+gantry console             # sqlite3 on the dev database
+```
+
+## Where things go
+- `app/routes.go`: every route, and the controllers behind them
+- `app/<name>/`: a controller and its views (`.templ`), one folder per resource
+- `app/models/`: each table's queries (`<table>.sql`, turned into Go by sqlc) and rules (`<table>.go`)
+- `app/tasks.go`: the app's own commands, run with `gantry task NAME`
+- `db/migrations/`: schema changes, written by `gantry g migration`; `db/schema.sql` is what they leave
+- `db/seeds/`: what a fresh database starts with
+- `assets/`: stylesheets, scripts, fonts and images; `assets/public/` is served at the root (robots.txt, the error pages)
+- `config/config.go`: settings, from the environment
+- `test/`: what the tests share
+
+## Generators
+```sh
+gantry g resource admin/posts title:string:required body:text
+gantry g migration add_email_to_users email:string
+gantry g error-pages
+```

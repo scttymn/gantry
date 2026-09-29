@@ -1,0 +1,23 @@
+# Houston's project: gantry dev (houston dev) serves it at
+# http://shop.localhost, gantry test runs its tests, and houston deploy
+# puts it on the server.
+name: shop
+
+services:
+  app:
+    build: { context: ., target: dev }
+    expose: ["8080"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+    volumes:
+      - .:/app                     # the code, rebuilt on change
+      - data:/data                 # the SQLite database and uploads
+
+volumes:
+  data:
+
+x-houston:
+  health: /up
+  commands:
+    test: sh -c "go vet ./... && go test ./..."
+    console: { dev: go run ./cmd/shop db console, server: /app db console }

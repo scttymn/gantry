@@ -139,5 +139,5 @@ func TestResourceMigration(t *testing.T) {
 	if strings.Contains(string(got), "photo") {
 		t.Errorf("a photo isn't a column:\n%s", got)
 	}
-	testkit.Migrations(t, os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
+	testkit.Migrations(t, testkit.DB(t, nil), os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 }

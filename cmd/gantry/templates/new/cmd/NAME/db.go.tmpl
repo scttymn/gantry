@@ -1,0 +1,186 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"strconv"
+{{- if not .Postgres}}
+	"strings"
+{{- end}}
+
+	"github.com/scttymn/gantry/db"
+
+	"{{.Module}}/config"
+	"{{.Module}}/db/migrations"
+	"{{.Module}}/db/seeds"
+)
+
+// dbCommand is `{{.Name}} db ...`, Rails' db: tasks:
+//
+//	migrate       runs what's pending; in development it rewrites db/schema.sql
+//	rollback [N]  undoes the last migration (or N)
+//	status        every migration, and whether it ran
+//	seed          db/seeds
+//	reset         development only: an empty database, migrated and seeded
+//	console       {{if .Postgres}}psql{{else}}sqlite3{{end}} on the database (or gantry's own console)
+func dbCommand(ctx context.Context, cfg config.Config, args []string, in io.Reader, out, errOut io.Writer) int {
+	if len(args) == 0 {
+		fmt.Fprint(errOut, usage)
+		return 2
+	}
+	if args[0] == "console" {
+		return console(ctx, cfg, in, out, errOut)
+	}
+	err := func() error {
+		if args[0] == "reset" {
+			if err := reset(ctx, cfg); err != nil {
+				return err
+			}
+			args = []string{"migrate", "seed"}
+		}
+		d, err := db.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer d.Close()
+		for len(args) > 0 {
+			switch args[0] {
+			case "migrate":
+				if err := migrations.Up(ctx, d); err != nil {
+					return err
+				}
+				if cfg.Development() {
+					if err := writeSchema(ctx, d); err != nil {
+						return err
+					}
+				}
+			case "rollback":
+				steps := 1
+				if len(args) > 1 {
+					if n, err := strconv.Atoi(args[1]); err == nil && n > 0 {
+						steps, args = n, args[1:]
+					}
+				}
+				done, err := migrations.Rollback(ctx, d, steps)
+				for _, name := range done {
+					fmt.Fprintln(out, "rolled back", name)
+				}
+				if err != nil {
+					return err
+				}
+				if len(done) == 0 {
+					fmt.Fprintln(out, "nothing to roll back")
+				}
+				if cfg.Development() {
+					if err := writeSchema(ctx, d); err != nil {
+						return err
+					}
+				}
+			case "status":
+				st, err := migrations.Status(ctx, d)
+				if err != nil {
+					return err
+				}
+				for _, m := range st {
+					state := "pending"
+					if m.Applied {
+						state = "up " + m.AppliedAt.Format("2006-01-02 15:04:05")
+					}
+					fmt.Fprintf(out, "%-22s %s\n", state, m.Name)
+				}
+			case "seed":
+				if err := seeds.Run(ctx, d); err != nil {
+					return err
+				}
+			default:
+				return fmt.Errorf("no db command %q", args[0])
+			}
+			args = args[1:]
+		}
+		return nil
+	}()
+	if err != nil {
+		fmt.Fprintln(errOut, "{{.Name}} db:", err)
+		return 1
+	}
+	return 0
+}
+
+// writeSchema rewrites db/schema.sql: the schema the migrations leave, for
+// sqlc and for reading (Rails' schema file).
+func writeSchema(ctx context.Context, d *db.DB) error {
+	s, err := d.Schema(ctx, migrations.Table)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("db/schema.sql", []byte(s), 0o644)
+}
+
+// reset empties the database, in development only (Rails protects every
+// other environment the same way).
+func reset(ctx context.Context, cfg config.Config) error {
+	if !cfg.Development() {
+		return errors.New("reset empties the database, so it runs in development only (GANTRY_ENV=development)")
+	}
+{{- if .Postgres}}
+	d, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer d.Close()
+	_, err = d.Write.ExecContext(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`)
+	return err
+{{- else}}
+	path := sqlitePath(cfg.DatabaseURL)
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		if err := os.Remove(path + suffix); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
+{{- end}}
+}
+
+// console is {{if .Postgres}}psql{{else}}sqlite3{{end}} on the database, attached to the terminal
+// (Rails' dbconsole), or gantry's own SQL console where it isn't installed:
+// the production image has only the app.
+func console(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Writer) int {
+{{- if .Postgres}}
+	cmd := exec.Command("psql", cfg.DatabaseURL)
+{{- else}}
+	cmd := exec.Command("sqlite3", sqlitePath(cfg.DatabaseURL))
+{{- end}}
+	if cmd.Err != nil {
+		d, err := db.Open(ctx, cfg.DatabaseURL)
+		if err == nil {
+			defer d.Close()
+			err = d.Console(ctx, in, out)
+		}
+		if err != nil {
+			fmt.Fprintln(errOut, "{{.Name}} db console:", err)
+			return 1
+		}
+		return 0
+	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = in, out, errOut
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return exit.ExitCode()
+		}
+		fmt.Fprintln(errOut, "{{.Name}} db console:", err)
+		return 1
+	}
+	return 0
+}
+{{- if not .Postgres}}
+
+// sqlitePath is the file a sqlite:// URL names.
+func sqlitePath(url string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(url, "sqlite:"), "//")
+}
+{{- end}}

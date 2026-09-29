@@ -4,26 +4,21 @@ import (
 	"context"
 	"errors"
 	"io/fs"
-	"path/filepath"
 	"testing"
 	"testing/fstest"
 
 	"github.com/scttymn/gantry/db"
 )
 
-// Migrations checks an app's migrations on a fresh database: every one up,
-// then each down, newest first, then every one up again. A down section
-// that fails, or that doesn't leave the schema as it was before its up
-// (a table it forgot to drop), fails the test. Rolling back stops at a
-// migration that can't be undone (an empty down section), as Rails' does.
-func Migrations(t testing.TB, fsys fs.FS, table string) {
+// Migrations checks an app's migrations on d, a fresh, empty database
+// (testkit.DB(t, nil), or Postgres(t, nil)): every one up, then each down,
+// newest first, then every one up again. A down section that fails, or that
+// doesn't leave the schema as it was before its up (a table it forgot to
+// drop), fails the test. Rolling back stops at a migration that can't be
+// undone (an empty down section), as Rails' does.
+func Migrations(t testing.TB, d *db.DB, fsys fs.FS, table string) {
 	t.Helper()
 	ctx := context.Background()
-	d, err := db.Open(ctx, "sqlite://"+filepath.Join(t.TempDir(), "migrations.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer d.Close()
 	st, err := d.Status(ctx, fsys, table)
 	if err != nil {
 		t.Fatal(err)

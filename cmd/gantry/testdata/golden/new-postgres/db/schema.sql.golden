@@ -1,0 +1,2 @@
+-- The schema as the migrations leave it, for sqlc and for reading. It's
+-- written from the migrations by pg_dump; don't edit it by hand.

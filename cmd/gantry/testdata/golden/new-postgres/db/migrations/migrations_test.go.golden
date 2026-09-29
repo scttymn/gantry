@@ -1,0 +1,30 @@
+package migrations_test
+
+import (
+	"context"
+	"os"
+	"testing"
+
+	"github.com/scttymn/gantry/testkit"
+
+	"example.com/shop/db/migrations"
+	"example.com/shop/test"
+)
+
+// Every migration runs, and its down section undoes it.
+func TestMigrations(t *testing.T) {
+	testkit.Migrations(t, testkit.Postgres(t, nil), migrations.Files, migrations.Table)
+}
+
+// db/schema.sql is what the migrations leave: gantry db migrate rewrites it.
+func TestSchemaIsCurrent(t *testing.T) {
+	d := test.DB(t)
+	got, err := d.Schema(context.Background(), migrations.Table)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := os.ReadFile("../schema.sql")
+	if string(want) != got {
+		t.Fatal("db/schema.sql isn't what the migrations make: run gantry db migrate")
+	}
+}

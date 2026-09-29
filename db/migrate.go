@@ -41,7 +41,7 @@ func (d *DB) Migrate(ctx context.Context, fsys fs.FS, table string) error {
 }
 
 // IrreversibleError is a rollback reaching a migration whose down section
-// does nothing (Rails' IrreversibleMigration). It, and everything before
+// does nothing though its up does something (Rails' IrreversibleMigration). It, and everything before
 // it, stays applied.
 type IrreversibleError struct{ Name string }
 
@@ -135,8 +135,9 @@ func (d *DB) lastApplied(ctx context.Context, table string) (int64, error) {
 	return v, err
 }
 
-// downOf is version's file name, and whether its down section has a
-// statement (a line that isn't blank or a comment).
+// downOf is version's file name, and whether it can be undone: its down
+// section has a statement (a line that isn't blank or a comment), or its up
+// has none, so there's nothing to undo.
 func downOf(fsys fs.FS, p *goose.Provider, version int64) (string, bool, error) {
 	for _, s := range p.ListSources() {
 		if s.Version != version {
@@ -147,20 +148,23 @@ func downOf(fsys fs.FS, p *goose.Provider, version int64) (string, bool, error) 
 			return "", false, err
 		}
 		defer f.Close()
-		down := false
+		down, upDoes := false, false
 		lines := bufio.NewScanner(f)
 		for lines.Scan() {
 			line := strings.TrimSpace(lines.Text())
+			statement := line != "" && !strings.HasPrefix(line, "--")
 			switch {
 			case strings.HasPrefix(line, "-- +goose Down"):
 				down = true
 			case strings.HasPrefix(line, "-- +goose Up"):
 				down = false
-			case down && line != "" && !strings.HasPrefix(line, "--"):
+			case down && statement:
 				return path.Base(s.Path), true, nil
+			case statement:
+				upDoes = true
 			}
 		}
-		return path.Base(s.Path), false, lines.Err()
+		return path.Base(s.Path), !upDoes, lines.Err()
 	}
 	return "", false, fmt.Errorf("migration %d was applied but its file is gone", version)
 }

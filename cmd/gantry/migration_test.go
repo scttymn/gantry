@@ -64,7 +64,7 @@ DROP TABLE "posts";
 	at(t, "2026-09-29T12:05:00Z")
 	migration(t, root, "add_email_to_posts", "email:string", "age:int")
 	// Both run, and roll back, on a real database.
-	testkit.Migrations(t, os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
+	testkit.Migrations(t, testkit.DB(t, nil), os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 	at(t, "2026-09-29T12:10:00Z")
 	migration(t, root, "backfill_titles")
 	d := testkit.DB(t, func(ctx context.Context, d *db.DB) error {

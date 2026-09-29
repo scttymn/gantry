@@ -1,0 +1,53 @@
+package app_test
+
+import (
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/testkit"
+
+	"example.com/shop/app"
+	"example.com/shop/test"
+)
+
+func handler(t *testing.T) http.Handler {
+	a := &app.App{DB: test.DB(t), Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: sign.Signer{Key: []byte("test-key")}}
+	return a.Handler()
+}
+
+func get(t *testing.T, h http.Handler, path string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", path, nil)
+	r.Header.Set("Accept", "text/html")
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestHome(t *testing.T) {
+	h := handler(t)
+	w := get(t, h, "/")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Shop is running.") {
+		t.Fatalf("GET / = %d\n%s", w.Code, w.Body)
+	}
+	// Every stylesheet, script and image the page refers to loads.
+	testkit.Links(t, h, testkit.Page{Path: "/"})
+}
+
+func TestUp(t *testing.T) {
+	if w := get(t, handler(t), "/up"); w.Code != http.StatusOK {
+		t.Fatalf("GET /up = %d", w.Code)
+	}
+}
+
+func TestErrorPages(t *testing.T) {
+	w := get(t, handler(t), "/no-such-page")
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "doesn't exist") {
+		t.Fatalf("a missing page = %d\n%s", w.Code, w.Body)
+	}
+}

@@ -53,6 +53,14 @@ func TestRollback(t *testing.T) {
 			t.Fatalf("%q, %v", done, err)
 		}
 	})
+	t.Run("a migration that does nothing either way rolls back", func(t *testing.T) {
+		d := openTemp(t)
+		empty := fstest.MapFS{"00001_start.sql": {Data: []byte("-- The first.\n-- +goose Up\n\n-- +goose Down\n")}}
+		d.Migrate(ctx, empty, "app_migrations")
+		if done, err := d.Rollback(ctx, empty, "app_migrations", 1); err != nil || len(done) != 1 {
+			t.Fatalf("%q, %v", done, err)
+		}
+	})
 	t.Run("a migration with no down section stops it, changing nothing", func(t *testing.T) {
 		d := openTemp(t)
 		oneWay := fstest.MapFS{
@@ -121,11 +129,12 @@ func TestSchemaPostgres(t *testing.T) {
 	if err := d.Migrate(ctx, pg, "gantry_schema_test_migrations"); err != nil {
 		t.Fatal(err)
 	}
+	d.Write.Exec(`CREATE TABLE IF NOT EXISTS gantry_settings (name text PRIMARY KEY, value text NOT NULL)`)
 	s, err := d.Schema(ctx, "gantry_schema_test_migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(s, "CREATE TABLE public.schema_posts") || strings.Contains(s, "gantry_schema_test_migrations") || strings.Contains(s, `\restrict`) || strings.Contains(s, "SET ") {
+	if !strings.Contains(s, "CREATE TABLE public.schema_posts") || strings.Contains(s, "gantry_schema_test_migrations") || strings.Contains(s, "gantry_settings") || strings.Contains(s, `\restrict`) || strings.Contains(s, "SET ") {
 		t.Fatal(s)
 	}
 	again, _ := d.Schema(ctx, "gantry_schema_test_migrations")

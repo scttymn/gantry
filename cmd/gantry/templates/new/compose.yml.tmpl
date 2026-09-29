@@ -1,0 +1,47 @@
+# Houston's project: gantry dev (houston dev) serves it at
+# http://{{.Name}}.localhost, gantry test runs its tests, and houston deploy
+# puts it on the server.
+name: {{.Name}}
+
+services:
+  app:
+    build: { context: ., target: dev }
+    expose: ["8080"]
+    environment:
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+{{- if .Postgres}}
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/{{.Name}}?sslmode=disable
+      # The server gantry test gives each test a database of its own on.
+      TEST_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/postgres?sslmode=disable
+    depends_on: [db]
+{{- end}}
+    volumes:
+      - .:/app                     # the code, rebuilt on change
+{{- if .GantryMount}}
+      # gantry beside it, for go.work (ignored by git): changes to both at once.
+      # Dev only; tests and deploys build against the gantry go.mod pins.
+      - {{.GantryPath}}:{{.GantryMount}}
+{{- end}}
+      - data:/data                 # {{if .Postgres}}uploads{{else}}the SQLite database and uploads{{end}}
+{{- if .Postgres}}
+
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: {{.Name}}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+{{- end}}
+
+volumes:
+  data:
+{{- if .Postgres}}
+  pgdata:
+{{- end}}
+
+x-houston:
+  health: /up
+  commands:
+    test: sh -c "go vet ./... && go test ./..."
+    console: { dev: go run ./cmd/{{.Name}} db console, server: /app db console }

@@ -284,13 +284,14 @@ func TestSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	d.Write.Exec(`CREATE INDEX posts_by_title ON posts (title)`)
+	d.Write.Exec(`CREATE TABLE gantry_settings (name text PRIMARY KEY, value text NOT NULL)`)
 	s, err := d.Schema(context.Background(), "app_migrations")
 	if err != nil {
 		t.Fatal(err)
 	}
 	table := strings.Index(s, "CREATE TABLE posts")
 	index := strings.Index(s, "CREATE INDEX posts_by_title")
-	if table < 0 || index < table || strings.Contains(s, "app_migrations") || strings.Contains(s, "sqlite_") {
+	if table < 0 || index < table || strings.Contains(s, "app_migrations") || strings.Contains(s, "sqlite_") || strings.Contains(s, "gantry_settings") {
 		t.Fatal(s)
 	}
 }

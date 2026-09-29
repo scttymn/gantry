@@ -13,13 +13,14 @@ import (
 // (Rails' structure.sql), which needs pg_dump installed. An app writes it to
 // db/schema.sql after migrating (as Rails keeps schema.rb), and sqlc reads
 // that, rather than replaying every migration. Tables named in skip (the
-// migrations' version tables) are left out.
+// migrations' version tables) are left out, and so are gantry's own
+// (gantry_settings, where sign keeps its key), which aren't the app's.
 func (d *DB) Schema(ctx context.Context, skip ...string) (string, error) {
 	if d.Engine == Postgres {
 		return d.pgSchema(ctx, skip)
 	}
 	rows, err := d.Read.QueryContext(ctx, `SELECT type, name, tbl_name, sql FROM sqlite_master
-		WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+		WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' AND tbl_name NOT LIKE 'gantry\_%' ESCAPE '\'
 		ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 WHEN 'view' THEN 2 ELSE 3 END, tbl_name, name`)
 	if err != nil {
 		return "", err
@@ -30,7 +31,7 @@ func (d *DB) Schema(ctx context.Context, skip ...string) (string, error) {
 		skipped[s] = true
 	}
 	var b strings.Builder
-	b.WriteString("-- The schema as the migrations leave it, for sqlc. Written from the\n-- migrations (go test ./db/migrations -update); don't edit it by hand.\n\n")
+	b.WriteString("-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations; don't edit it by hand.\n\n")
 	for rows.Next() {
 		var typ, name, table, sql string
 		if err := rows.Scan(&typ, &name, &table, &sql); err != nil {
@@ -48,7 +49,7 @@ func (d *DB) Schema(ctx context.Context, skip ...string) (string, error) {
 // machine to machine (its comments, SET lines, and pg_dump 17's \restrict
 // keys), so db/schema.sql only changes when the schema does.
 func (d *DB) pgSchema(ctx context.Context, skip []string) (string, error) {
-	args := []string{"--schema-only", "--no-owner", "--no-privileges", "--no-comments"}
+	args := []string{"--schema-only", "--no-owner", "--no-privileges", "--no-comments", "--exclude-table=gantry_*"}
 	for _, s := range skip {
 		args = append(args, "--exclude-table="+s)
 	}
@@ -60,7 +61,7 @@ func (d *DB) pgSchema(ctx context.Context, skip []string) (string, error) {
 		return "", fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var b strings.Builder
-	b.WriteString("-- The schema as the migrations leave it, from pg_dump; don't edit it by hand.\n")
+	b.WriteString("-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n")
 	blank := true
 	for _, line := range strings.Split(string(out), "\n") {
 		switch {

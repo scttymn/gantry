@@ -1,0 +1,31 @@
+package app
+
+import (
+	"context"
+	"io"
+	"log/slog"
+
+	"github.com/scttymn/gantry/db"
+)
+
+// Tasks are the app's own commands, Rails' rake tasks: `{{.Name}} task NAME
+// [ARGS...]` runs one, and `gantry task NAME` runs it in development. Add
+// one here:
+//
+//	{Name: "backfill-slugs", Help: "Give every post a slug", Run: backfillSlugs},
+var Tasks = []Task{}
+
+// Task is one of the app's commands.
+type Task struct {
+	Name string
+	Help string // one line, for `{{.Name}} tasks`
+	Run  func(ctx context.Context, env TaskEnv, args []string) error
+}
+
+// TaskEnv is what a task works with: the migrated database, a logger, and
+// where to print.
+type TaskEnv struct {
+	DB  *db.DB
+	Log *slog.Logger
+	Out io.Writer
+}

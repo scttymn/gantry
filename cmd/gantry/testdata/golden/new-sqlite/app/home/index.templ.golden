@@ -1,0 +1,18 @@
+package home
+
+import "example.com/shop/app/shared/layout"
+
+templ index() {
+	@layout.Layout(layout.Page{Title: "Shop"}) {
+		<main class="welcome">
+			<p class="eyebrow">gantry</p>
+			<h1>Shop is running.</h1>
+			<p>This page is <code>app/home/index.templ</code>. Your routes are in <code>app/routes.go</code>.</p>
+			<ul>
+				<li><code>gantry g resource admin/posts title:string body:text</code> — a table with its pages</li>
+				<li><code>gantry g migration create_posts title:string</code> — a change to the schema</li>
+				<li><code>gantry db migrate</code>, <code>gantry test</code>, <code>gantry console</code></li>
+			</ul>
+		</main>
+	}
+}

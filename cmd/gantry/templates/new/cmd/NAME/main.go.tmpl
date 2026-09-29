@@ -1,0 +1,138 @@
+// {{.Name}}: it serves by default, and its other commands are `{{.Name}} db
+// ...` and `{{.Name}} task NAME` (in development, `gantry db migrate` runs
+// them in the app's container).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/sign"
+
+	"{{.Module}}/app"
+	"{{.Module}}/config"
+	"{{.Module}}/db/migrations"
+	"{{.Module}}/db/seeds"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	os.Exit(command(ctx, config.FromEnv(), logger, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+const usage = `usage:
+  {{.Name}}                        serve (the default)
+  {{.Name}} db migrate|rollback [N]|status|seed|reset|console
+  {{.Name}} tasks                  the app's own tasks (app/tasks.go)
+  {{.Name}} task NAME [ARGS...]    run one
+`
+
+// command runs the command args name, and is its exit code.
+func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, in io.Reader, out, errOut io.Writer) int {
+	name := "serve"
+	if len(args) > 0 {
+		name, args = args[0], args[1:]
+	}
+	var err error
+	switch name {
+	case "serve":
+		err = serve(ctx, cfg, logger, nil)
+	case "db":
+		return dbCommand(ctx, cfg, args, in, out, errOut)
+	case "tasks":
+		for _, t := range app.Tasks {
+			fmt.Fprintf(out, "%-20s %s\n", t.Name, t.Help)
+		}
+		return 0
+	case "task":
+		err = task(ctx, cfg, logger, args, out)
+	default:
+		fmt.Fprint(errOut, usage)
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintln(errOut, "{{.Name}}:", err)
+		return 1
+	}
+	return 0
+}
+
+// serve opens the database, brings it up to date, then serves until ctx
+// ends. Anything that fails before listening is returned, so the process
+// exits non-zero and its health check never passes. listening, when set,
+// gets the address.
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listening chan<- string) error {
+	database, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return err
+	}
+	defer database.Close()
+	if err := migrations.Up(ctx, database); err != nil {
+		return err
+	}
+	if err := seeds.Run(ctx, database); err != nil {
+		return err
+	}
+	key, err := sign.Key(ctx, database, cfg.SecretKey)
+	if err != nil {
+		return err
+	}
+	a := &app.App{DB: database, Log: logger, Signer: sign.Signer{Key: key}}
+	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("listening", "addr", ln.Addr().String(), "env", cfg.Env)
+	if listening != nil {
+		listening <- ln.Addr().String()
+	}
+	errs := make(chan error, 1)
+	go func() { errs <- server.Serve(ln) }()
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// task runs one of app.Tasks, on the migrated database.
+func task(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("which task? `{{.Name}} tasks` lists them")
+	}
+	for _, t := range app.Tasks {
+		if t.Name != args[0] {
+			continue
+		}
+		database, err := db.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+		if err := migrations.Up(ctx, database); err != nil {
+			return err
+		}
+		return t.Run(ctx, app.TaskEnv{DB: database, Log: logger, Out: out}, args[1:])
+	}
+	return fmt.Errorf("no task %q: `{{.Name}} tasks` lists them", args[0])
+}

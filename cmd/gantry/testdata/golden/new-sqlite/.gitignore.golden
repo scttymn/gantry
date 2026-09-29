@@ -1,0 +1,5 @@
+.cache/
+.env
+compose.local.yml
+go.work
+go.work.sum

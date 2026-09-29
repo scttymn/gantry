@@ -1,0 +1,33 @@
+// Package app is the app: every route, and the controllers behind them,
+// built from what they depend on.
+package app
+
+import (
+	"log/slog"
+	"net/http"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/home"
+	"{{.Module}}/assets"
+)
+
+// App is what the controllers share.
+type App struct {
+	DB     *db.DB
+	Log    *slog.Logger
+	Signer sign.Signer
+}
+
+// Handler is every route, in gantry's middleware.
+func (a *App) Handler() http.Handler {
+	rt := web.NewRouter(a.Log, errorPage)
+
+	homePage := home.Controller{DB: a.DB}
+	rt.Handle("GET /{$}", homePage.Show)
+
+	assets.Routes(rt.Mount)
+	return rt.Handler()
+}

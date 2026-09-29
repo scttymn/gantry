@@ -12,7 +12,7 @@ func migrations(t *testing.T, fsys fstest.MapFS) *recorder {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		Migrations(r, fsys, "app_migrations")
+		Migrations(r, DB(t, nil), fsys, "app_migrations")
 	}()
 	<-done
 	return r

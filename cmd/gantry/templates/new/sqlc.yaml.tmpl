@@ -1,0 +1,17 @@
+# sqlc turns the queries beside each model (app/models/*.sql) into typed Go,
+# in the same package, over the schema the migrations leave (db/schema.sql).
+# Add app/models/<table>.sql (gantry g resource writes one), then:
+# gantry exec sqlc generate
+version: "2"
+sql:
+  - engine: {{.Engine}}
+    schema: db/schema.sql
+    queries: app/models/*.sql
+    gen:
+      go:
+        package: models
+        out: app/models
+        sql_package: database/sql
+        output_db_file_name: queries.go
+        output_models_file_name: tables.go
+        emit_empty_slices: true
