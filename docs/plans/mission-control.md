@@ -3,6 +3,17 @@
 ## Your direction
 - "OK gantry needs features necessary to rebuild Houston's Mission Control." (2026-09-28)
 - Your list, "Gantry: what Houston needs": MC is gantry's reference app; a side-by-side rewrite with no regressions, then retire the Rails one. Port order: API + auth → jobs + leases → backups/restore → pages + live updates → setup flow.
+- "Even authentication is a recipe or a strategy. So, instead of building every single possibility into the framework, it should be a framework and recipes or strategies to handle certain scenarios or desires." (2026-09-28)
+- "I do think Phoenix and Elixir has a really interesting way of handling this with plug architecture."
+- On the shape: "so we keep generic handler. Since this is technically the pipeline pattern, this is technically a Filter."
+- On the request's state: "since we're apeing Rails a bit, let's do current."
+- On carrying sign-in: "we could just use db sessions. That would also allow us to expire them a lot easier than cookies or jwt." On API tokens: "I think those are separate. It's like a session that doesn't expire … However, you can revoke them at any time in the UI."
+- On error pages: "I like generated pages. It allows the user to customize them."
+- "we need gantry new for sure"; MC created by it, first: "yes".
+- On constraints: "Let's defer to the rails mechanism."
+- "conceptually rails but ideal golang is the goal"
+- On session expiry: "it doesn't belong in the framework, but the recipe is a good fit"
+- On encrypted fields: keys set at startup, "same as rails"; the extras wait: "yes".
 
 ## Goal
 gantry can carry Mission Control (MC): today Rails 8.1, about 7,300 lines of Ruby, SQLite, Solid Queue, Solid Cache, Solid Cable, Turbo and Stimulus, under Puma and Thruster. Target: one Go process, memory that stays flat while it streams, and no regressions against the Rails version run beside it.
@@ -18,21 +29,43 @@ In Houston's module (`houston/cmd/mission-control`), since its Go code is `inter
 ## What belongs in gantry
 gantry is a framework for many apps; MC is its reference app, a test of it, not its spec. A feature goes into gantry when most web apps would want it (what Rails ships, or standard web plumbing), built for apps in general rather than shaped to MC. Everything else is MC's own code, or Houston's, until a second app needs it; then it moves into gantry, generalised.
 
+**Conceptually Rails, ideally Go:** each feature takes its concept, defaults and (where they read well) names from Rails, and is built as a Go expert would: plain structs and fields for settings, standard library types, no hidden global state.
+
+**Framework, strategies and recipes** (Phoenix's split):
+- The framework is primitives and extension points, and decides nothing about who a caller is: filters, pipelines and scopes in the router, typed values on the request, one way of answering errors, and helpers like `sign`, a constant-time compare and `web.JSON`.
+- A strategy is a filter: a session check, a bearer token check, a shared secret.
+- A recipe writes filters, tables and pages into the app, which owns them from then on (as `mix phx.gen.auth`). Sign-in and API tokens are recipes; today's `auth` package becomes one later.
+
 ## In gantry, in the port's order
 Each lands with its tests, and in the gym site where it applies, before the next.
 
+**G0: `gantry new`** (moved here from the main plan's batch 6; Rails: `rails new`)
+- Writes the app layout in the main plan (`cmd/`, `config/`, `app/routes.go`, `app/models/`, sqlc for the chosen engine, the test setup), and the generated error pages. A generated app builds and passes its own tests.
+- Two modes: a new module (`gantry new myapp`, with its `go.mod`), and an app inside the module you're in (`gantry new cmd/mission-control --in-module`), for monorepos and for MC, which imports Houston's `internal/` packages. The layout is the same; only `go.mod` and import paths differ.
+- MC is created with it on day one. What G1 to G3 add to every app (pipelines in `routes.go`, error pages) goes into `gantry new` as it lands; what the port adds by hand is the list of what `gantry new` still lacks.
+
 **G1: API and auth**
-- Bearer tokens for APIs: named tokens, stored as digests, shown once, last-used throttled; a constant-time check for a secret from the environment (Rails: `authenticate_with_http_token`, `secure_compare`)
-- Host-based routing ahead of paths, with a func for hosts only known at runtime (Rails: route constraints)
-- Trusted proxies: which peers are trusted, and which header carries the client's address, set per app; spoofable forwarding headers stripped (Rails: `RemoteIp`, `trusted_proxies`). The default stays today's rule.
-- Session expiry, idle and absolute, and return-to after sign-in (Rails 8's sign-in generator has return-to)
-- Encrypted fields with key rotation, never shown in logs or `%v` (Rails: `encrypts`)
-- `db.IsUnique(err)` and a compare-and-swap helper (rows affected), on both engines (Rails: `RecordNotUnique`, `update_all`)
-- JSON columns, with a tested example on both engines
-- `web.ReadJSON` with a size cap (413, 400) and `web.JSON`, with `{error}` answers
-- `Tx` runs code after commit (Rails: `after_commit`)
-- Streaming: never buffered by gantry; a failure after the first byte aborts the connection; the client leaving cancels the work; a download helper with a safe filename (Rails: `ActionController::Live`, `send_data`)
-- `testkit`: the integration-test browser (cookies, forms, redirects; the gym site's moves in), a fake clock, outbound HTTP stubs, parallel-safe (Rails: `IntegrationTest`, `travel_to`, `parallelize`; WebMock)
+- Filters and pipelines (the pipes-and-filters pattern; Phoenix: plugs, `pipeline`, `pipe_through`; Rails: `before_action`, once `before_filter`). A filter is an ordinary handler listed in a pipeline: `type Filter = Handler`, a second name for the role, not a new type (as `byte` is `uint8`). Filters run in order before the route's handler; the pipeline stops at the first that returns an error (answered like any handler's error) or writes a response (a redirect), else goes on. Named pipelines (`rt.Pipeline(filters...)`), and scopes that run one for a group of routes (`rt.Scope("/api/v1", api, func(s *web.Scope) {...})`; Phoenix and Rails: `scope`). Current: the request's own state, typed, which a filter sets and later filters and the handler read (`web.Set`, `web.Get`), in place of each package's own context key (Rails: `Current`, `CurrentAttributes`). It sits in the request's context, changed in place, so a filter passes values on without making a new request. Standard middleware stays for what wraps a handler (gzip, recovery).
+- Building blocks for sign-in recipes: `web.BearerToken(r)` (RFC 6750; the scheme's case ignored, an empty token is none), and a `token` package: `token.New(prefix)` (a random key and its SHA-256, the key handed out once, the digest stored), `token.Digest`, and `token.Equal` (constant time, both sides hashed first so a secret's length doesn't leak). `auth`'s private `digestOf` moves there. `sign` stays as it is; expiry on signed values waits for a recipe that needs it (Rails: `authenticate_with_http_token`, `secure_compare`)
+- Error pages, as Rails': the router answers an error with the app's static `<status>.html` (embedded, self-contained, no layout or database, so it renders when the app is broken), else a generic page with the status's name; an API client gets `{"error": "Not Found"}` instead of an empty body. An app may still draw its own (`ErrorPage`); if that fails, the static page is served. The pages are the app's, generated for it to restyle (400, 404, 422, 500): by `gantry new`, and by `gantry g error-pages` for an app that exists (MC lives in Houston's module, so it isn't made by `gantry new`) (Rails: `public/404.html`, `PublicExceptions`, `exceptions_app`)
+- Constraints, as Rails': `rt.Constraint(check, func(s *web.Scope) {...})`, where `check` sees the whole request; a request that fails it never reaches those routes. Rails' fall-through: when the check passes but no route inside matches, the rest of the routes get a try, then 404. Helpers that build checks: `web.Host(...)` (the hostname cleaned: no port, lowercase, no trailing dot; fixed or decided at run time) and `web.Subdomain(...)`; an app writes its own for anything else (the client's address, a header). Constraints nest and combine with scopes and pipelines. A constraint decides whether a route exists (404, or another route answers); a filter, whether a request may proceed (401, a redirect) (Rails: `constraints`, `matches?`; Phoenix: `scope host:`)
+- Trusted proxies and allowed hosts, as fields on the router: `rt.Proxies = web.Proxies{Trusted: ..., ClientIP: ...}` (which peers are proxies, as `netip.Prefix`es, `web.PrivateNetworks` by default, Rails' rule and today's; which header carries the client's address, `X-Forwarded-For` by default or a provider's own such as `CF-Connecting-IP`), and `rt.Hosts` (empty: any host; else others get 403). The client's address, scheme and host are worked out once as the request arrives and kept in Current; `web.ClientIP`, `web.Secure` and `web.Host` read them. From an untrusted peer the forwarding headers are ignored, and removed on the router's own copy of the request, so nothing later reads a forged one. Rails' IP spoofing check is left out: with a trusted list it adds nothing (Rails: `RemoteIp`, `trusted_proxies`, `config.hosts`)
+- Encrypted fields, as Rails' `encrypts`: a column type, `crypt.String`, declared per column in `sqlc.yaml` (sqlc's overrides), encrypted when written and decrypted when read. Keys from the environment, set once at startup (`crypt.Use`, as `sql.Register`); the newest encrypts, all decrypt, each value records its key; re-encrypting old rows is an app command. AES-256-GCM, stored as versioned text on both engines. Printed, logged or as JSON it's `[FILTERED]`; `.Reveal()` gives the value. Deterministic mode and unencrypted data wait for an app that needs them (Rails: `encrypts`, `filter_attributes`)
+- Constraint errors and stale writes: `db.IsUnique(err)` and `db.IsForeignKey(err)`, the same on both engines (Rails: `RecordNotUnique`, `InvalidForeignKey`). Compare-and-swap is sqlc's `:execrows` (0 rows: someone got there first); a model then returns `db.ErrStale`, answered 409 (Rails: `StaleObjectError`). Automatic optimistic locking (`lock_version`) waits for an app that needs it
+- JSON columns: `db.JSON[T]`, a column type declared in `sqlc.yaml` like `crypt.String`, encoded when written and decoded when read; `jsonb` on Postgres, `text` on SQLite, the same Go on both; `NULL` reads as the zero value. Queries inside the JSON are the app's own SQL, per engine. Tested on both engines (Rails: `json` columns, `serialize ... coder: JSON`)
+- JSON in and out: `web.JSON(w, status, v)` (Rails: `render json:`) and `web.ReadJSON(r, &v)` into a struct, capped at 1 MB by default and per route (413 over, 400 malformed), unknown fields ignored. A client asking for JSON gets errors as JSON: `{"error": "Not Found"}`, or the handler's own message; a 500 says only "Internal Server Error" (the detail is logged); a 422 gives the fields' errors, `{"errors": {"name": ["can't be blank"]}}` (Rails: `render json: record.errors`)
+- After commit: `db.Tx`'s function gets a `*db.Tx` (Go's `*sql.Tx`, embedded, so sqlc's queries work unchanged) with `AfterCommit(func)`: run in order once the transaction commits, never on rollback; a hook can't undo the commit and logs its own failure. Jobs (G2) and live updates (G3) enqueued inside a transaction wait for its commit (Rails 7.2's jobs). The gym site's `db.Tx` calls change their parameter's type. `after_rollback` waits (Rails: `after_commit`)
+- Streaming: nothing in gantry holds a stream back (gzip passes flushes through; `text/event-stream` is never compressed; flushing is Go's `http.ResponseController`, no gantry helper). A long stream extends its own write deadline. A failure after the first byte aborts the connection, so the client sees an error, not a cut-off response that looks whole. The client leaving cancels the handler's context, not logged as an error. `web.Download(w, r, filename, contentType, reader)` streams with a safe `Content-Disposition` (non-ASCII names too); files on disk use `http.ServeContent`, with ranges (Rails: `ActionController::Live`, `send_data`, `send_file`)
+- `testkit` (Rails: `IntegrationTest`, `travel_to`, `parallelize`; WebMock):
+  - A test browser: `testkit.Browser(t, app)` with `Get`, `Post` and `Submit` (fills and submits a form on the page); keeps cookies, follows redirects if asked, sends headers (a bearer token); `Find` by CSS selector (`assert_select`) and JSON bodies. The gym site's request helpers move in.
+  - A clock you can set and move (`testkit.Clock`), handed in as gantry's parts take a `Now`, not a patched global time.
+  - Outbound HTTP: code is handed an `*http.Client`; testkit's answers what the test scripted, and any other request fails the test.
+  - Parallel-safe: a database per test and nothing global, so `t.Parallel()` works.
+  - Job helpers (run inline, assert what was queued) come with G2.
+
+**Recipes the port needs** (built on G1; written into the app, which owns them; not the framework)
+- Sessions: sign-in has two sides, a method that proves who someone is once (password, emailed code, TOTP, passkey, OAuth), and a database session that holds the result, its key carried by a cookie (browsers) or `Authorization: Bearer` (the CLI, agents, apps). Expiry and revocation live in the row, whichever way the key came. Expiry: `Idle` and `Lifetime` (zero: never, Rails' default); an ended session is deleted when found and the request goes on signed out; the cookie's own expiry matches `Lifetime`; `last_seen_at` written at most hourly; return-to after sign-in. Tested with testkit's clock. JWT is left to a recipe for an app that needs stateless tokens. Today's `auth` package becomes this recipe.
+- API tokens: their own table, built as sessions are (a random key, its digest stored): named, shown once, never expiring, revoked in the app's UI, and not ended by signing out everywhere.
 
 **G2: jobs** (Rails: Active Job + Solid Queue)
 - In the app's database and process: named queues with their own concurrency; enqueue now or later; retries with a wait, a number of attempts, and a hook when they run out; at most N at a time per key; recurring schedules (every N seconds, daily at a time in a zone); finished jobs cleared; a job's context cancelled on shutdown
@@ -66,6 +99,7 @@ These are real patterns, but they come from MC being an operations app, not from
 3. **Jobs: build or adopt.** Needs SQLite and Postgres, per-key limits and recurring entries; G2 starts by checking libraries (goqite covers part), and I expect our own small package.
 4. **Turbo and Stimulus stay.** The 6 Stimulus controllers (175 lines) and the stylesheet move over as they are.
 5. **Moving MC's data.** Encrypted fields read with `crypt.Rails` and rewritten with gantry's keys; sessions reset (everyone signs in again); API tokens keep working (SHA-256 digests).
+6. **Filters are handlers.** A pipeline is a list of `web.Handler`s, so there's one type and nothing new to learn; values pass forward through Current. Considered: a separate type returning the request (`Step`, `Plug`, `Gate`), and an output added to `Handler`, which every action would return and throw away. `Middleware` stays the name for wrappers only.
 
 ## Evidence
 The three inventories (2026-09-28), from MC at Houston's main:

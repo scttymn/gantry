@@ -175,7 +175,7 @@ gantry/
 3. **Resources.** The site's admin CRUD becomes the conventions: `Resources`, forms, validation, flash. Then `gantry g resource` is extracted from what the example actually does.
 4. **Codes, TOTP, passkeys.**
 5. **OAuth:** Google and Apple first (the site's admin gets "Sign in with Google"), then Microsoft and GitHub.
-6. **`gantry new` and Postgres parity.** A generated app on each engine passes its generated tests; the framework's tests run against both.
+6. **`gantry new` and Postgres parity.** (`gantry new` moved forward, 2026-09-29: it's G0 of `mission-control.md`, and Mission Control is the first app it makes.) A generated app on each engine passes its generated tests; the framework's tests run against both.
 7. **Switch over.** The full comparison with the POC runs on the same data. Then, on your say-so, the live project moves to the gantry repo.
 
 Each batch gets its full map (contract pin, tests, evidence) before its code, as in the POC's plan.
