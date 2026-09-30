@@ -28,7 +28,8 @@ var schema = fstest.MapFS{"00001_auth.sql": {Data: []byte(`-- +goose Up
 CREATE TABLE users (id integer PRIMARY KEY, email_address text NOT NULL UNIQUE, password_digest text NOT NULL,
   created_at datetime NOT NULL, updated_at datetime NOT NULL);
 CREATE TABLE sessions (id integer PRIMARY KEY, user_id integer NOT NULL REFERENCES users (id), token_digest text NOT NULL UNIQUE,
-  ip_address text NOT NULL DEFAULT '', user_agent text NOT NULL DEFAULT '', created_at datetime NOT NULL, last_seen_at datetime NOT NULL);
+  ip_address text NOT NULL DEFAULT '', user_agent text NOT NULL DEFAULT '', created_at datetime NOT NULL, last_seen_at datetime NOT NULL,
+  bound_to text NOT NULL DEFAULT '');
 `)}}
 
 type fakeMail struct{ sent []mail.Message }
@@ -479,5 +480,102 @@ func TestDefaultRules(t *testing.T) {
 	}
 	if errs := DefaultRules("long enough", "different"); len(errs) != 1 {
 		t.Errorf("%v", errs)
+	}
+}
+
+// Idle and Lifetime end a session: unused too long, or signed in too long
+// ago. An ended one is deleted when it's shown.
+func TestSessionEnds(t *testing.T) {
+	t.Run("idle", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Idle = 2 * 24 * time.Hour
+		a.signIn("one@example.com", password)
+		a.now = a.now.Add(47 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("ended within its idle time")
+		}
+		a.now = a.now.Add(47 * time.Hour) // used an hour-plus ago, it was written
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("use didn't keep it")
+		}
+		a.now = a.now.Add(48 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("idle: %d, %d sessions", rec.Code, a.count("sessions"))
+		}
+	})
+	t.Run("lifetime", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Lifetime = 30 * 24 * time.Hour
+		a.signIn("one@example.com", password)
+		if c := a.cookie("session"); c.MaxAge != 30*24*3600 {
+			t.Errorf("cookie lasts %d", c.MaxAge)
+		}
+		for range 29 {
+			a.now = a.now.Add(24 * time.Hour)
+			if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+				t.Fatalf("ended at %v", a.now)
+			}
+		}
+		a.now = a.now.Add(24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("lifetime: %d, %d sessions", rec.Code, a.count("sessions"))
+		}
+	})
+	t.Run("never, by default", func(t *testing.T) {
+		a := newApp(t)
+		a.signIn("one@example.com", password)
+		a.now = a.now.Add(5 * 365 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("ended")
+		}
+	})
+}
+
+// Bind: a session works only the way it was made.
+func TestSessionBind(t *testing.T) {
+	a := newApp(t)
+	way := "lan"
+	a.auth.Bind = func(r *http.Request) string { return way }
+	a.signIn("one@example.com", password)
+	var bound string
+	a.auth.DB.Read.QueryRow(`SELECT bound_to FROM sessions`).Scan(&bound)
+	if bound != "lan" {
+		t.Errorf("bound to %q", bound)
+	}
+	way = "tunnel"
+	if rec := a.do("GET", "/admin", nil); rec.Code != 302 {
+		t.Fatal("worked another way")
+	}
+	if a.count("sessions") != 1 { // it isn't ended: it still works the way it was made
+		t.Error("deleted")
+	}
+	way = "lan"
+	if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+		t.Fatal("didn't work the way it was made")
+	}
+}
+
+// Attempt and Failed are an app's own sign-in policy.
+func TestSignInPolicy(t *testing.T) {
+	a := newApp(t)
+	var failed []string
+	open := true
+	a.auth.Attempt = func(r *http.Request) bool { return open }
+	a.auth.Failed = func(r *http.Request, email string) { failed = append(failed, email) }
+	a.signIn("one@example.com", "wrong")
+	a.signIn("one@example.com", password)
+	if len(failed) != 1 || failed[0] != "one@example.com" || a.cookie("session") == nil {
+		t.Fatalf("failed %q, cookie %v", failed, a.cookie("session"))
+	}
+	a.jar = nil
+	open = false
+	if a.signIn("one@example.com", password); a.cookie("session") != nil {
+		t.Fatal("signed in when the app said no")
+	}
+	if body := a.do("GET", "/login", nil).Body.String(); !strings.Contains(body, "Try again later.") {
+		t.Error(body)
+	}
+	if len(failed) != 1 {
+		t.Errorf("a turned-away try counted as failed: %q", failed)
 	}
 }

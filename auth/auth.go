@@ -6,7 +6,7 @@
 //	users:    id, email_address (unique, lowercased), password_digest,
 //	          created_at, updated_at
 //	sessions: id, user_id, token_digest (unique), ip_address, user_agent,
-//	          created_at, last_seen_at
+//	          created_at, last_seen_at (and bound_to, with Bind)
 //
 // A session's cookie holds a random token and the table holds its SHA-256,
 // so a copy of the database signs nobody in, and ending a session is
@@ -99,6 +99,24 @@ type Auth struct {
 	Now    func() time.Time
 	// Cookie is the session cookie's name: "session" when empty.
 	Cookie string
+	// Idle ends a session unused this long (Devise's timeoutable), and
+	// Lifetime one this long after sign-in (Phoenix's session validity,
+	// Django's cookie age). Zero is never, as Rails 8's generator. Use is
+	// written at most hourly, so Idle counts in hours. An ended session is
+	// deleted when it's next shown.
+	Idle, Lifetime time.Duration
+	// Bind ties a session to something about the request that made it: the
+	// network it came through, or its address (CodeIgniter's match_ip). A
+	// session works only for requests with the same value; the value is
+	// kept in the sessions table's bound_to column, which the app adds to
+	// use it.
+	Bind func(r *http.Request) string
+	// Attempt, when set, is asked before each sign-in, after the
+	// per-address limit: false turns it away ("Try again later."). Failed
+	// is told of each failed one. Together they're an app's own policy: a
+	// cap on failures from every address, a lockout, an audit log.
+	Attempt func(r *http.Request) bool
+	Failed  func(r *http.Request, email string)
 }
 
 // The messages are Rails 8's generator's.
@@ -272,18 +290,31 @@ func (a *Auth) SetPassword(ctx context.Context, userID int64, password string) e
 }
 
 // StartSession records a new session for the user and sets its cookie,
-// lasting until sign-out (Rails 8's permanent cookie).
+// lasting until sign-out (Rails 8's permanent cookie), or for Lifetime.
 func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Session, error) {
 	key, digest := token.New("")
 	now := a.now()
 	s := Session{UserID: u.ID, LastSeenAt: now}
-	err := a.DB.Write.QueryRowContext(r.Context(), `INSERT INTO sessions (user_id, token_digest, ip_address, user_agent, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
-		u.ID, digest, web.ClientIP(r), r.UserAgent(), now).Scan(&s.ID)
-	if err != nil {
+	query, args := `INSERT INTO sessions (user_id, token_digest, ip_address, user_agent, created_at, last_seen_at) VALUES ($1, $2, $3, $4, $5, $5) RETURNING id`,
+		[]any{u.ID, digest, web.ClientIP(r), r.UserAgent(), now}
+	if a.Bind != nil {
+		query = `INSERT INTO sessions (user_id, token_digest, ip_address, user_agent, created_at, last_seen_at, bound_to) VALUES ($1, $2, $3, $4, $5, $5, $6) RETURNING id`
+		args = append(args, a.Bind(r))
+	}
+	if err := a.DB.Write.QueryRowContext(r.Context(), query, args...).Scan(&s.ID); err != nil {
 		return Session{}, err
 	}
-	web.SetCookie(w, r, a.cookie(), key, 20*365*24*time.Hour)
+	lasts := 20 * 365 * 24 * time.Hour
+	if a.Lifetime > 0 {
+		lasts = a.Lifetime
+	}
+	web.SetCookie(w, r, a.cookie(), key, lasts)
 	return s, nil
+}
+
+// ended is a session past Idle or Lifetime.
+func (a *Auth) ended(created, seen, now time.Time) bool {
+	return (a.Lifetime > 0 && !now.Before(created.Add(a.Lifetime))) || (a.Idle > 0 && !now.Before(seen.Add(a.Idle)))
 }
 
 // touchEvery is how often a session's last_seen_at is written: often
@@ -299,9 +330,15 @@ func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 	}
 	var u User
 	var s Session
-	err = a.DB.Read.QueryRowContext(r.Context(), `SELECT s.id, s.user_id, s.last_seen_at, u.email_address, u.password_digest
+	var created time.Time
+	bound := "''"
+	if a.Bind != nil {
+		bound = "s.bound_to"
+	}
+	var boundTo string
+	err = a.DB.Read.QueryRowContext(r.Context(), `SELECT s.id, s.user_id, s.created_at, s.last_seen_at, `+bound+`, u.email_address, u.password_digest
 		FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_digest = $1`, token.Digest(c.Value)).
-		Scan(&s.ID, &s.UserID, &s.LastSeenAt, &u.EmailAddress, &u.PasswordDigest)
+		Scan(&s.ID, &s.UserID, &created, &s.LastSeenAt, &boundTo, &u.EmailAddress, &u.PasswordDigest)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) && a.Log != nil {
 			a.Log.Error("auth: session lookup", "err", err)
@@ -309,7 +346,17 @@ func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 		return User{}, Session{}, false
 	}
 	u.ID = s.UserID
-	if now := a.now(); now.Sub(s.LastSeenAt) >= touchEvery {
+	if a.Bind != nil && boundTo != a.Bind(r) {
+		return User{}, Session{}, false
+	}
+	now := a.now()
+	if a.ended(created, s.LastSeenAt, now) {
+		if _, err := a.DB.Write.ExecContext(r.Context(), `DELETE FROM sessions WHERE id = $1`, s.ID); err != nil && a.Log != nil {
+			a.Log.Error("auth: an ended session", "err", err)
+		}
+		return User{}, Session{}, false
+	}
+	if now.Sub(s.LastSeenAt) >= touchEvery {
 		if _, err := a.DB.Write.ExecContext(r.Context(), `UPDATE sessions SET last_seen_at = $1 WHERE id = $2`, now, s.ID); err == nil {
 			s.LastSeenAt = now
 		}
@@ -421,12 +468,15 @@ func (a *Auth) loginPage(w http.ResponseWriter, r *http.Request) error {
 
 func (a *Auth) login(w http.ResponseWriter, r *http.Request) error {
 	p := a.paths()
-	if !a.allow(r, "login") {
+	if !a.allow(r, "login") || (a.Attempt != nil && !a.Attempt(r)) {
 		a.flash().Redirect(w, r, p.Login, "alert", msgTooMany)
 		return nil
 	}
 	u, ok := a.Authenticate(r.Context(), r.PostFormValue("email_address"), r.PostFormValue("password"))
 	if !ok {
+		if a.Failed != nil {
+			a.Failed(r, r.PostFormValue("email_address"))
+		}
 		a.flash().Redirect(w, r, p.Login, "alert", msgBadLogin)
 		return nil
 	}
