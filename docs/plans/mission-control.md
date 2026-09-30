@@ -301,3 +301,10 @@ The three inventories (2026-09-28), from MC at Houston's main:
 - Web: 125 routes, 28 HTML and 28 API controllers, 41 templates (2,040 lines), 6 Stimulus controllers, one 66 KB stylesheet, 9 fonts; live updates only through `Turbo::StreamsChannel` (a deploy's append and replace; `broadcast_refresh_to "flight_board"` from about 18 places).
 - Data and jobs: 16 tables, 40 indexes (11 partial unique, used as mutexes), 16 foreign keys, 38 migrations; 17 Active Record models and 43 plain objects; 11 jobs, 4 queues, 7 recurring entries; deploys aren't jobs (runners long-poll a claim for up to 25 s).
 - Integrations and security: one admin, no mail; three token kinds (personal, runner, per deploy); the `ForwardedHeaders` middleware and tunnel-bound sessions; 9 encrypted fields in 5 tables; no outbound retries; timeouts on everything outbound; subprocesses by argv only, secrets through the environment or stdin.
+
+## Found while porting (2026-09-30)
+What Mission Control's port turned up about gantry, for a later look:
+- Done: `Proxies.Names` and an opt-in `ForwardedHost` (v0.10.0); `Hub.Listen` for tests of live updates (v0.10.1).
+- `db migrate` builds the app, and the app doesn't build while its queries name a table sqlc hasn't seen: a new table's migration, its queries and the code using them can't land together without moving the code aside first. A schema written from the migrations alone (they're plain SQL) would break the loop.
+- sqlc on SQLite: a named parameter after a `sqlc.slice` is numbered, and the slice's expansion shifts the number (put named parameters first); a named parameter in `ORDER BY` is left unrewritten; `first` and `size` can't be column aliases. Worth a line in the generated `sqlc.yaml`'s comments, or a check in `gantry test`.
+- A 5xx answer's words go to the log, never the client. Right for errors, but an upstream's refusal the person should read (Cloudflare's, as a 502) has to be written by hand.
