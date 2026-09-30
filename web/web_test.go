@@ -144,6 +144,37 @@ func TestProtection(t *testing.T) {
 			t.Fatalf("%d", rec.Code)
 		}
 	})
+	t.Run("a body that isn't a form is the handler's to limit, within 25 MB", func(t *testing.T) {
+		rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+		read := func(w http.ResponseWriter, r *http.Request) error {
+			b, err := io.ReadAll(r.Body)
+			fmt.Fprintf(w, "%d %v", len(b), err != nil)
+			return nil
+		}
+		rt.Handle("POST /hook", read)
+		rt.Handle("PATCH /hook", read)
+		h := rt.Handler()
+		for _, c := range []struct {
+			method, contentType string
+			size                int
+			want                string
+		}{
+			{"POST", "application/json", 3 << 20, fmt.Sprint(3<<20, " false")},
+			{"POST", "", 3 << 20, fmt.Sprint(3<<20, " false")},
+			{"POST", "application/json", 25<<20 + 1, fmt.Sprint(25<<20, " true")},
+			{"PATCH", "application/json", 25<<20 + 1, fmt.Sprint(25<<20, " true")},
+		} {
+			req := httptest.NewRequest(c.method, "/hook", strings.NewReader(strings.Repeat("x", c.size)))
+			if c.contentType != "" {
+				req.Header.Set("Content-Type", c.contentType)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Body.String() != c.want {
+				t.Errorf("%s %s of %d: %q, want %q", c.method, c.contentType, c.size, rec.Body.String(), c.want)
+			}
+		}
+	})
 	t.Run("an HTML form can PATCH and DELETE", func(t *testing.T) {
 		rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 		rt.Handle("PATCH /posts/{id}", func(w http.ResponseWriter, r *http.Request) error {
