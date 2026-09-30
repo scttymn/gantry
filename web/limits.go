@@ -41,3 +41,15 @@ func (l *Limits) Allow(key string, to int, within time.Duration, now time.Time) 
 	w.count++
 	return w.count <= to
 }
+
+// Count is how many requests are counted under key in its current window,
+// without counting one: for a check made before the work that decides
+// whether a request counts (a webhook refused only once its body is read).
+func (l *Limits) Count(key string, now time.Time) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if w, ok := l.windows[key]; ok && now.Before(w.ends) {
+		return w.count
+	}
+	return 0
+}

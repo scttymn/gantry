@@ -216,8 +216,17 @@ func TestLimits(t *testing.T) {
 	if !l.Allow("login:5.6.7.8", 3, time.Minute, now) {
 		t.Fatal("another key shares the count")
 	}
+	if got := l.Count("login:1.2.3.4", now); got != 4 {
+		t.Errorf("Count = %d, want 4", got)
+	}
+	if l.Count("login:1.2.3.4", now) != 4 || l.Count("login:none", now) != 0 {
+		t.Error("Count counted")
+	}
 	if !l.Allow("login:1.2.3.4", 3, time.Minute, now.Add(time.Minute)) {
 		t.Fatal("a new window didn't start")
+	}
+	if got := l.Count("login:1.2.3.4", now.Add(2*time.Minute)); got != 0 {
+		t.Errorf("Count past its window = %d", got)
 	}
 }
 
