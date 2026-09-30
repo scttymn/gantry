@@ -10,16 +10,16 @@ import (
 )
 
 func TestMessage(t *testing.T) {
-	m := Message{From: "Valley Built CrossFit <no-reply@valleybuiltcrossfit.com>", To: "jessica@valleybuiltcrossfit.com", ReplyTo: "sam@example.com",
-		Subject: "New website inquiry: Sam Lee (CrossFit)", Text: "line one\nline — two\n"}
+	m := Message{From: "Example Studio <no-reply@example.com>", To: "owner@example.com", ReplyTo: "sam@example.org",
+		Subject: "New website inquiry: Sam Lee (Yoga)", Text: "line one\nline — two\n"}
 	var b bytes.Buffer
 	if err := m.WriteTo(&b, time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)); err != nil {
 		t.Fatal(err)
 	}
 	raw := b.String()
 	for _, want := range []string{
-		`From: "Valley Built CrossFit" <no-reply@valleybuiltcrossfit.com>`, "To: <jessica@valleybuiltcrossfit.com>",
-		"Reply-To: <sam@example.com>", "Subject: New website inquiry: Sam Lee (CrossFit)",
+		`From: "Example Studio" <no-reply@example.com>`, "To: <owner@example.com>",
+		"Reply-To: <sam@example.org>", "Subject: New website inquiry: Sam Lee (Yoga)",
 		"Date: Wed, 07 Oct 2026 12:00:00 +0000", "Message-ID: <", "text/plain; charset=UTF-8", "line one\r\nline",
 	} {
 		if !strings.Contains(raw, want) {

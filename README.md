@@ -7,8 +7,6 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - **Fast by default:** pages the same for every visitor are cached in memory until the data changes; photos come in a few fixed widths (never enlarged), in WebP by default; one static binary on a `scratch` image.
 - **Sign-in solved once** (coming): email and password, emailed codes, TOTP, passkeys, and OAuth.
 
-[Valley Built CrossFit](https://github.com/scttymn/valleybuiltcrossfit) runs on it, deployed with [Houston](https://github.com/scttymn/houston).
-
 ## Start an app
 gantry runs apps with [Houston](https://github.com/scttymn/houston) (install it first), in Docker, so nothing else is installed on your machine.
 ```sh

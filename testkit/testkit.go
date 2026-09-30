@@ -2,8 +2,8 @@
 // fixtures into it: YAML files named for their table, as Rails' are.
 //
 //	# test/fixtures/programs.yml
-//	crossfit:
-//	  name: CrossFit
+//	yoga:
+//	  name: Yoga
 //	  position: 1
 package testkit
 
