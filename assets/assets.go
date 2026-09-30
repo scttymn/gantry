@@ -15,7 +15,8 @@
 //	                         copies, and each script minified
 //
 // A file is named by its path under its top folder, as Rails' Propshaft
-// names them, so a stylesheet refers to a font as url("oswald.woff2").
+// names them, so a stylesheet refers to a font as url("oswald.woff2") (or
+// url("/oswald.woff2")).
 // Files in public/ are served at the site's root instead, for the names
 // browsers and crawlers ask for (robots.txt, app icons).
 package assets
@@ -135,7 +136,8 @@ func New(fsys fs.FS) (*Assets, error) {
 	for _, name := range css {
 		f := a.byName[name]
 		body := cssURL.ReplaceAllFunc(f.body, func(m []byte) []byte {
-			ref := string(cssURL.FindSubmatch(m)[1])
+			// "oswald.woff2", or "/oswald.woff2" as Propshaft also takes it.
+			ref := strings.TrimPrefix(string(cssURL.FindSubmatch(m)[1]), "/")
 			if target, ok := a.byName[ref]; ok && target.digested != "" {
 				return []byte(`url("/assets/` + target.digested + `")`)
 			}

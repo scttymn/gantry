@@ -23,7 +23,7 @@ import (
 var files = fstest.MapFS{
 	"assets.go":                    {Data: []byte("package assets")},
 	"css/site.css":                 {Data: []byte("/* the site */\nbody {\n  color: red;\n  font-family: Oswald;\n}\n\n.logo { background: url('logo.svg'); }\n")},
-	"css/fonts.css":                {Data: []byte("@font-face {\n  font-family: Oswald;\n  src: url(\"oswald.woff2\") format('woff2');\n}\n.x { background: url(https://example.com/a.png); }\n")},
+	"css/fonts.css":                {Data: []byte("@font-face {\n  font-family: Oswald;\n  src: url(\"oswald.woff2\") format('woff2');\n}\n.x { background: url(https://example.com/a.png); }\n.y { background: url(\"/logo.svg\"); }\n.z { background: url(//cdn.example.com/b.png); }\n")},
 	"fonts/oswald.woff2":           {Data: []byte("wOF2 not really")},
 	"images/logo.svg":              {Data: []byte("<svg/>")},
 	"images/maps/apple.png":        {Data: []byte("\x89PNG")},
@@ -134,8 +134,11 @@ func TestAssets(t *testing.T) {
 		if !strings.Contains(css, "url("+a.Path("oswald.woff2")+")") || !strings.Contains(string(a.Read("site.css")), a.Path("logo.svg")) {
 			t.Errorf("%q", css)
 		}
-		if !strings.Contains(css, "https://example.com/a.png") {
+		if !strings.Contains(css, "https://example.com/a.png") || !strings.Contains(css, "//cdn.example.com/b.png") {
 			t.Error("an outside url was changed")
+		}
+		if !strings.Contains(css, "url("+a.Path("logo.svg")+")") { // "/logo.svg", as Propshaft takes it
+			t.Errorf("a rooted name: %q", css)
 		}
 		// The stylesheet's own fingerprint covers the rewritten fonts.
 		sum := sha256.Sum256(a.Read("fonts.css"))
