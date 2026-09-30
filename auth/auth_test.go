@@ -419,6 +419,52 @@ func TestPaths(t *testing.T) {
 	})
 }
 
+// Required guards a scope as Require guards a handler.
+func TestRequired(t *testing.T) {
+	a := newApp(t)
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	a.auth.Routes(rt)
+	rt.Scope("/admin", web.Pipeline{a.auth.Required}, func(s *web.Scope) {
+		s.Handle("GET /inside", func(w http.ResponseWriter, r *http.Request) error {
+			u, _ := Current(r)
+			_, err := io.WriteString(w, "hello "+u.EmailAddress)
+			return err
+		})
+	})
+	a.h = rt.Handler()
+	rec := a.do("GET", "/admin/inside?x=1", nil)
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("signed out: %d %v", rec.Code, rec.Header())
+	}
+	rec = a.do("POST", "/login", url.Values{"email_address": {"one@example.com"}, "password": {password}})
+	if got := rec.Header().Get("Location"); got != "/admin/inside?x=1" {
+		t.Errorf("back to where they were going: %q", got)
+	}
+	if body := a.do("GET", "/admin/inside", nil).Body.String(); body != "hello one@example.com" {
+		t.Errorf("signed in: %q", body)
+	}
+}
+
+// An app that sends no email offers no reset: no pages, and no link.
+func TestNoMail(t *testing.T) {
+	a := newApp(t)
+	a.auth.Mail = nil
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	a.auth.Routes(rt)
+	a.h = rt.Handler()
+	if body := a.do("GET", "/login", nil).Body.String(); strings.Contains(body, "Forgot password?") || !strings.Contains(body, `action="/login"`) {
+		t.Errorf("sign-in page: %s", body)
+	}
+	for _, path := range []string{"/passwords/new", "/passwords/x/edit"} {
+		if rec := a.do("GET", path, nil); rec.Code != http.StatusNotFound {
+			t.Errorf("%s: %d, want 404", path, rec.Code)
+		}
+	}
+	if rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}}); rec.Code != http.StatusNotFound && rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /passwords: %d", rec.Code)
+	}
+}
+
 func TestDefaultRules(t *testing.T) {
 	for pw, want := range map[string]string{
 		"":                      "Password can't be blank",

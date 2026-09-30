@@ -164,6 +164,8 @@ type Photo struct {
 // Img is how a page shows a photo.
 type Img struct {
 	Alt string
+	// Class is the <img>'s class, for the page's stylesheet.
+	Class string
 	// Sizes is how wide the photo draws, as a srcset's sizes ("(max-width:
 	// 640px) 100vw, 50vw"). The browser picks the copy that fits from the
 	// widths the photo comes in.
@@ -231,6 +233,9 @@ func (s *Server) imgHTML(p Photo, o Img) string {
 	loading := `loading="lazy"`
 	if o.Priority {
 		loading = `loading="eager" fetchpriority="high"`
+	}
+	if o.Class != "" {
+		loading = `class="` + esc(o.Class) + `" ` + loading
 	}
 	if !s.Pipeline.Resizable(p.ContentType) {
 		return fmt.Sprintf(`<img alt="%s" %s src="%s">`, esc(o.Alt), loading, esc(s.OriginalURL(p.Key)))

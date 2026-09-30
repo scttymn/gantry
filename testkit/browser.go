@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -52,6 +53,27 @@ func (v *Visitor) Get(path string) *Response { return v.do("GET", path, nil, "")
 // Post posts a form to path.
 func (v *Visitor) Post(path string, form url.Values) *Response {
 	return v.do("POST", path, strings.NewReader(form.Encode()), "application/x-www-form-urlencoded")
+}
+
+// PostFiles posts a form with files to path, as multipart/form-data.
+func (v *Visitor) PostFiles(path string, form url.Values, files map[string]Upload) *Response {
+	v.t.Helper()
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	for name, values := range form {
+		for _, val := range values {
+			mw.WriteField(name, val)
+		}
+	}
+	for name, f := range files {
+		part, err := mw.CreateFormFile(name, f.Filename)
+		if err != nil {
+			v.t.Fatalf("testkit: %v", err)
+		}
+		part.Write(f.Data)
+	}
+	mw.Close()
+	return v.do("POST", path, &body, mw.FormDataContentType())
 }
 
 // JSON sends body (nil for none) as JSON to path, asking for JSON back.
@@ -141,6 +163,21 @@ func (p *Response) Follow() *Response {
 // and a form without an action posts to the page it's on.
 func (p *Response) Submit(selector string, fields map[string]string) *Response {
 	p.v.t.Helper()
+	return p.SubmitFiles(selector, fields, nil)
+}
+
+// Upload is a file a test chooses for a form's file field (Rails'
+// fixture_file_upload): its bytes, from File(t, fixtures, "still.jpg").
+type Upload struct {
+	Filename string
+	Data     []byte
+}
+
+// SubmitFiles is Submit with files chosen for the form's file fields, by
+// name: the form goes as multipart/form-data, as a browser sends one with
+// a file.
+func (p *Response) SubmitFiles(selector string, fields map[string]string, files map[string]Upload) *Response {
+	p.v.t.Helper()
 	form := p.Find(selector).FilterFunction(func(_ int, s *goquery.Selection) bool { return goquery.NodeName(s) == "form" }).First()
 	if form.Length() == 0 {
 		form = p.Find(selector).Find("form").First()
@@ -193,6 +230,9 @@ func (p *Response) Submit(selector string, fields map[string]string) *Response {
 		p.v.t.Fatalf("testkit: the form's action %q: %v", action, err)
 	}
 	if method, _ := form.Attr("method"); strings.EqualFold(method, "post") {
+		if len(files) > 0 {
+			return p.v.PostFiles(target.RequestURI(), values, files)
+		}
 		return p.v.Post(target.RequestURI(), values)
 	}
 	target.RawQuery = values.Encode()

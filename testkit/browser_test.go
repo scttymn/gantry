@@ -108,6 +108,31 @@ func TestBrowser(t *testing.T) {
 	}
 }
 
+// SubmitFiles sends a form with its file, multipart, keeping what the page
+// set, as a browser does.
+func TestSubmitFiles(t *testing.T) {
+	h := http.NewServeMux()
+	h.HandleFunc("GET /form", func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `<form method="post" action="/upload" enctype="multipart/form-data">
+<input type="hidden" name="_method" value="put"><input name="clip[title]" value="old">
+<input type="file" name="clip[thumbnail]"></form>`)
+	})
+	h.HandleFunc("POST /upload", func(w http.ResponseWriter, r *http.Request) {
+		f, header, err := r.FormFile("clip[thumbnail]")
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		data, _ := io.ReadAll(f)
+		fmt.Fprintf(w, "%s %s %s %s", r.FormValue("_method"), r.FormValue("clip[title]"), header.Filename, data)
+	})
+	page := Browser(t, h).Get("/form").SubmitFiles("form", map[string]string{"clip[title]": "new"},
+		map[string]Upload{"clip[thumbnail]": {Filename: "still.jpg", Data: []byte("jpeg bytes")}})
+	if page.Code != 200 || page.Body != "put new still.jpg jpeg bytes" {
+		t.Errorf("%d %q", page.Code, page.Body)
+	}
+}
+
 // failures runs f with a recorder, as a test would, and is what it reported.
 func failures(t *testing.T, f func(tb testing.TB)) *recorder {
 	r := &recorder{TB: t}

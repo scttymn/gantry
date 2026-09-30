@@ -80,8 +80,11 @@ type Paths struct {
 type Auth struct {
 	DB     *db.DB
 	Signer sign.Signer
-	Mail   mail.Sender
-	From   string // who reset emails are from
+	// Mail sends password reset links. Nil: no reset by email (an app that
+	// sends no email): its pages aren't mounted, and Page.Paths.Passwords is
+	// blank, so the sign-in page doesn't offer it.
+	Mail mail.Sender
+	From string // who reset emails are from
 	// URL is an absolute address on the site for path, for emailed links:
 	// the app's configured host, never the request's, which whoever asks
 	// could set to their own.
@@ -316,10 +319,16 @@ func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 
 type userKey struct{}
 
-// Current is the signed-in user of a request that went through Require.
+// currentUser is the signed-in user in web.Current, where Required puts it.
+var currentUser = web.NewKey[User]("auth.user")
+
+// Current is the signed-in user of a request that went through Require or
+// Required.
 func Current(r *http.Request) (User, bool) {
-	u, ok := r.Context().Value(userKey{}).(User)
-	return u, ok
+	if u, ok := r.Context().Value(userKey{}).(User); ok {
+		return u, true
+	}
+	return web.Get(r, currentUser)
 }
 
 // SignedIn reports whether the request carries a live session, for a page
@@ -349,6 +358,22 @@ func (a *Auth) Require(next http.Handler) http.Handler {
 	})
 }
 
+// Required is Require as a filter, for a scope's pipeline (Rails'
+// before_action :require_authentication): signed-in users go on, their
+// user in Current; anyone else goes to sign in, and comes back after.
+//
+//	rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
+func (a *Auth) Required(w http.ResponseWriter, r *http.Request) error {
+	u, _, ok := a.sessionOf(r)
+	if !ok {
+		web.SetCookie(w, r, returnToCookie, a.Signer.Sign(returnToCookie, r.URL.RequestURI()), time.Hour)
+		http.Redirect(w, r, a.paths().Login, http.StatusFound)
+		return nil
+	}
+	web.Set(r, currentUser, u)
+	return nil
+}
+
 // Routes mounts the sign-in pages on rt.
 func (a *Auth) Routes(rt *web.Router) {
 	p := a.paths()
@@ -356,6 +381,9 @@ func (a *Auth) Routes(rt *web.Router) {
 	rt.Handle("POST "+p.Login, a.login)
 	for _, m := range []string{"GET", "POST", "DELETE"} {
 		rt.Handle(m+" "+p.Logout, a.logout)
+	}
+	if a.Mail == nil {
+		return
 	}
 	rt.Handle("GET "+p.Passwords+"/new", a.forgotPassword)
 	rt.Handle("POST "+p.Passwords, a.sendReset)
@@ -367,6 +395,9 @@ func (a *Auth) Routes(rt *web.Router) {
 // page is the flash for this page, taken.
 func (a *Auth) page(w http.ResponseWriter, r *http.Request) Page {
 	p := Page{Paths: a.paths()}
+	if a.Mail == nil {
+		p.Paths.Passwords = ""
+	}
 	if kind, msg, ok := a.flash().Take(w, r); ok {
 		if kind == "alert" {
 			p.Alert = msg

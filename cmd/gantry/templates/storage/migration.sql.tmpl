@@ -22,7 +22,7 @@ CREATE TABLE "active_storage_blobs" (
   "service_name" varchar NOT NULL,
   "byte_size" bigint NOT NULL,
   "checksum" varchar,
-  "created_at" datetime(6) NOT NULL
+  "created_at" datetime NOT NULL
 {{- end}}
 );
 CREATE UNIQUE INDEX "index_active_storage_blobs_on_key" ON "active_storage_blobs" ("key");
@@ -40,7 +40,7 @@ CREATE TABLE "active_storage_attachments" (
   "record_type" varchar NOT NULL,
   "record_id" bigint NOT NULL,
   "blob_id" bigint NOT NULL REFERENCES "active_storage_blobs" ("id"),
-  "created_at" datetime(6) NOT NULL
+  "created_at" datetime NOT NULL
 {{- end}}
 );
 CREATE INDEX "index_active_storage_attachments_on_blob_id" ON "active_storage_attachments" ("blob_id");

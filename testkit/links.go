@@ -118,7 +118,10 @@ type reference struct {
 	link bool   // an <a>, which may redirect
 }
 
-var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
+// cssURL is a url(): double-quoted, single-quoted or bare. A quoted one is
+// read whole, so a data: URL's own url() inside it (an SVG's filter) isn't
+// taken for another.
+var cssURL = regexp.MustCompile(`url\(\s*(?:"([^"]*)"|'([^']*)'|([^"'\s)][^)]*?))\s*\)`)
 
 // references are the URLs a page refers to, in order.
 func references(page string) ([]reference, error) {
@@ -134,7 +137,7 @@ func references(page string) ([]reference, error) {
 	}
 	styles := func(from, css string) {
 		for _, m := range cssURL.FindAllStringSubmatch(css, -1) {
-			add(from, m[1], false)
+			add(from, m[1]+m[2]+m[3], false)
 		}
 	}
 	for n := range doc.Descendants() {

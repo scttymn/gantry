@@ -142,6 +142,16 @@ func (s *Storage) Path(key string) string {
 // first, then the rows go in together, so a crash leaves at most a file
 // nothing names. A picture's copies are made in the background.
 func (s *Storage) Attach(ctx context.Context, ref Ref, f File) (Blob, error) {
+	return s.store(ctx, &ref, f)
+}
+
+// Store stores f as a blob attached to nothing (Rails' create_and_upload!),
+// for AttachBlob to attach later. Unattached lists it until then.
+func (s *Storage) Store(ctx context.Context, f File) (Blob, error) {
+	return s.store(ctx, nil, f)
+}
+
+func (s *Storage) store(ctx context.Context, ref *Ref, f File) (Blob, error) {
 	s.setup()
 	b := Blob{Key: newKey(), Filename: f.Filename, ByteSize: int64(len(f.Data))}
 	metadata := map[string]any{"identified": true}
@@ -161,16 +171,18 @@ func (s *Storage) Attach(ctx context.Context, ref Ref, f File) (Blob, error) {
 		err := tx.QueryRowContext(ctx, `INSERT INTO active_storage_blobs (key, filename, content_type, metadata, service_name, byte_size, checksum, created_at)
 			VALUES ($1, $2, $3, $4, 'local', $5, $6, $7) RETURNING id`,
 			b.Key, b.Filename, b.ContentType, string(encoded), b.ByteSize, b.Checksum, time.Now().UTC()).Scan(&b.ID)
-		if err != nil {
+		if err != nil || ref == nil {
 			return err
 		}
-		return s.replace(ctx, tx, ref, b.ID)
+		return s.replace(ctx, tx, *ref, b.ID)
 	})
 	if err != nil {
 		os.Remove(s.Path(b.Key))
 		return Blob{}, err
 	}
-	s.WarmLater()
+	if ref != nil {
+		s.WarmLater()
+	}
 	return b, nil
 }
 
@@ -301,6 +313,16 @@ func (s *Storage) deleteBlob(ctx context.Context, tx *db.Tx, b Blob) error {
 		}
 	})
 	return nil
+}
+
+// Blob is the blob with this key, attached or not.
+func (s *Storage) Blob(ctx context.Context, key string) (Blob, bool, error) {
+	s.setup()
+	b, err := s.blob(ctx, s.DB.Read, `b.key = $1`, key)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Blob{}, false, nil
+	}
+	return b, err == nil, err
 }
 
 // Find is the blob attached at ref.

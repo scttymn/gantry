@@ -16,8 +16,7 @@ func DefaultViews() Views {
 <label>Email <input type="email" name="email_address" required autofocus autocomplete="username"></label>
 <label>Password <input type="password" name="password" required autocomplete="current-password" maxlength="72"></label>
 <button type="submit">Sign in</button>
-</form>
-<p><a href="`+html.EscapeString(p.Paths.Passwords)+`/new">Forgot password?</a></p>`)
+</form>`+forgot(p))
 		},
 		ForgotPassword: func(w http.ResponseWriter, r *http.Request, p Page) error {
 			return plain(w, "Forgot your password?", p, `<form method="post" action="`+html.EscapeString(p.Paths.Passwords)+`">
@@ -34,6 +33,15 @@ func DefaultViews() Views {
 </form>`)
 		},
 	}
+}
+
+// forgot links to the password reset, when the app offers one.
+func forgot(p Page) string {
+	if p.Paths.Passwords == "" {
+		return ""
+	}
+	return `
+<p><a href="` + html.EscapeString(p.Paths.Passwords) + `/new">Forgot password?</a></p>`
 }
 
 func plain(w http.ResponseWriter, title string, p Page, form string) error {

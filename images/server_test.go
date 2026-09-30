@@ -161,6 +161,15 @@ func TestImg(t *testing.T) {
 		}
 	})
 
+	t.Run("a class is the <img>'s, escaped, resized or not", func(t *testing.T) {
+		if got := render(photo, Img{Class: `thumb "x"`}); !strings.HasPrefix(got, `<img `) || !strings.Contains(got, ` class="thumb &#34;x&#34;" `) {
+			t.Error(got)
+		}
+		if got := render(Photo{Key: "k", ContentType: "image/tiff"}, Img{Class: "thumb"}); got != `<img alt="" class="thumb" loading="lazy" src="/photos/k/original">` {
+			t.Error(got)
+		}
+	})
+
 	t.Run("the blurred placeholder keeps the photo's shape, escaped for a CSS url()", func(t *testing.T) {
 		got := s.Blurred(Photo{Width: 800, Height: 600, Placeholder: "data:image/webp;base64,AAAA"})
 		if !strings.HasPrefix(got, `url("data:image/svg+xml,`) || !strings.Contains(got, "viewBox=%220%200%2032%2024%22") || strings.ContainsAny(strings.TrimSuffix(strings.TrimPrefix(got, `url("`), `")`), ` "<>#`) {

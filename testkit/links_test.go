@@ -40,7 +40,8 @@ func check(t *testing.T, h http.Handler, p Page) *recorder {
 const page = `<!DOCTYPE html><html><head>
 <link rel="preload" href="/assets/font.woff2" as="font">
 <link rel="icon" href="/favicon.svg?v=1">
-<style>@font-face{src:url(/assets/font.woff2)} .x{background:url("data:image/gif;base64,R0")}</style>
+<style>@font-face{src:url(/assets/font.woff2)} .x{background:url("data:image/gif;base64,R0")}
+.n{background:url("data:image/svg+xml,%%3Csvg%%3E%%3Crect filter='url(%%23n)'/%%3E%%3C/svg%%3E")} .q{background:url( '/assets/q.png' )}</style>
 <script src="/assets/site.js"></script>
 </head><body>
 <picture><source media="(max-width: 640px)" srcset="data:image/webp;base64,AAAA">
@@ -108,9 +109,10 @@ func TestLinks(t *testing.T) {
 	})
 
 	t.Run("each broken reference is reported, with where the page has it", func(t *testing.T) {
-		r := check(t, site(`<img src="/photos/gone.webp"><a href="/admin/gone">Gone</a>`, "/photos/k/160w.webp", "/assets/font.woff2", "/photos/gone.webp", "/admin/gone"), Page{Path: "/", Skip: []string{"/logout"}})
+		r := check(t, site(`<img src="/photos/gone.webp"><a href="/admin/gone">Gone</a>`, "/photos/k/160w.webp", "/assets/font.woff2", "/photos/gone.webp", "/admin/gone", "/assets/q.png"), Page{Path: "/", Skip: []string{"/logout"}})
 		got := strings.Join(r.errors, "\n")
 		for _, want := range []string{
+			"/: style /assets/q.png: 404",
 			"/: link preload /assets/font.woff2: 404",
 			"/: img srcset /photos/k/160w.webp: 404",
 			"/: img src /photos/gone.webp: 404",
@@ -120,7 +122,7 @@ func TestLinks(t *testing.T) {
 				t.Errorf("missing %q in:\n%s", want, got)
 			}
 		}
-		if len(r.errors) != 4 {
+		if len(r.errors) != 5 {
 			t.Errorf("each once:\n%s", got)
 		}
 	})

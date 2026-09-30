@@ -185,6 +185,29 @@ func TestDetachAndAttachBlob(t *testing.T) {
 	}
 }
 
+func TestStore(t *testing.T) {
+	s := newStorage(t)
+	b, err := s.Store(ctx, File{"a.jpg", picture(t, 200, 100)})
+	if err != nil || b.Width != 200 || !exists(s.Path(b.Key)) {
+		t.Fatalf("Store: %+v %v", b, err)
+	}
+	if loose, _ := s.Unattached(ctx); len(loose) != 1 || loose[0].Key != b.Key {
+		t.Errorf("a stored blob is attached to nothing: %+v", loose)
+	}
+	if got, ok, err := s.Blob(ctx, b.Key); err != nil || !ok || got != b {
+		t.Errorf("Blob: %+v %v %v", got, ok, err)
+	}
+	if _, ok, err := s.Blob(ctx, "nosuchkey"); ok || err != nil {
+		t.Errorf("Blob of no key: %v %v", ok, err)
+	}
+	if _, err := s.AttachBlob(ctx, clip(1), b.Key); err != nil {
+		t.Fatal(err)
+	}
+	if found, ok, _ := s.Find(ctx, clip(1)); !ok || found.Key != b.Key {
+		t.Errorf("attached later: %+v", found)
+	}
+}
+
 func TestPurge(t *testing.T) {
 	s := newStorage(t)
 	a, _ := s.Attach(ctx, clip(1), File{"a.jpg", picture(t, 200, 100)})
