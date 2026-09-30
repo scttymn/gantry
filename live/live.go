@@ -203,6 +203,42 @@ func (h *Hub) remove(s *subscriber) {
 	s.drop()
 }
 
+// Listen subscribes to streams from inside the app rather than a page:
+// each message sent to them arrives on the channel, the Turbo stream
+// actions a page would get, until stop (or Close) closes it. One that falls
+// Buffer messages behind is dropped, as a page is. For tests (Rails'
+// assert_broadcast_on) and for code that follows a stream.
+func (h *Hub) Listen(streams ...string) (messages <-chan string, stop func()) {
+	out := make(chan string, h.o.Buffer)
+	s := h.subscribe(streams)
+	if s == nil {
+		close(out)
+		return out, func() {}
+	}
+	go func() {
+		defer close(out)
+		for {
+			select {
+			case msg := <-s.ch:
+				out <- msg
+			case <-s.gone:
+				for { // what arrived before it was dropped
+					select {
+					case msg := <-s.ch:
+						out <- msg
+					default:
+						return
+					}
+				}
+			}
+		}
+	}()
+	return out, func() {
+		h.unsubscribe(s)
+		s.drop()
+	}
+}
+
 // Subscribers is how many are listening to stream.
 func (h *Hub) Subscribers(stream string) int {
 	h.mu.Lock()

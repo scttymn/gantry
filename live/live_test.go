@@ -353,3 +353,45 @@ func TestClose(t *testing.T) {
 		t.Errorf("after closing: %v", err)
 	}
 }
+
+// The app can listen as a page does: what's broadcast and refreshed
+// arrives, until it stops.
+func TestListen(t *testing.T) {
+	ctx := context.Background()
+	h := New(sign.Signer{Key: []byte("k")}, Options{Debounce: time.Millisecond})
+	messages, stop := h.Listen("project:1", "board")
+	if h.Subscribers("project:1") != 1 || h.Subscribers("board") != 1 {
+		t.Fatal("not subscribed")
+	}
+	h.Broadcast(ctx, "project:1", turbo.Append("deploys", text("<li>one</li>")))
+	h.Broadcast(ctx, "project:2", turbo.Remove("elsewhere"))
+	h.Refresh("board", "req-1")
+	for _, want := range []string{
+		`<turbo-stream action="append" target="deploys"><template><li>one</li></template></turbo-stream>`,
+		`<turbo-stream action="refresh" request-id="req-1"></turbo-stream>`,
+	} {
+		select {
+		case got := <-messages:
+			if got != want {
+				t.Errorf("got %q, want %q", got, want)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("no %q", want)
+		}
+	}
+	stop()
+	if _, open := <-messages; open {
+		t.Error("still open after stop")
+	}
+	if h.Subscribers("project:1") != 0 {
+		t.Error("still subscribed after stop")
+	}
+
+	// After Close, a listener gets a closed channel.
+	h.Close()
+	if _, open := <-first(h.Listen("x")); open {
+		t.Error("listening to a closed hub")
+	}
+}
+
+func first(c <-chan string, _ func()) <-chan string { return c }
