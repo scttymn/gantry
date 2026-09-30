@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 
@@ -335,6 +336,66 @@ func TestWarm(t *testing.T) {
 	if made, err := s.Warm(ctx); made != 0 || !errors.Is(err, images.ErrNoRoom) {
 		t.Errorf("made %d, err %v: want a stop at ErrNoRoom", made, err)
 	}
+}
+
+// held makes copies in this process, the first one held until it's let go:
+// a warming in the middle of a copy.
+type held struct {
+	p       *images.Pipeline
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (h *held) Make(ctx context.Context, src, dst string, width, quality int) error {
+	h.once.Do(func() {
+		close(h.started)
+		<-h.release
+	})
+	return images.InProcess{Pipeline: h.p}.Make(ctx, src, dst, width, quality)
+}
+
+// Uploads that come while a warming runs queue one more between them, not
+// one each; it makes every copy they need.
+func TestWarmLaterQueuesOne(t *testing.T) {
+	s := newStorage(t)
+	var logged strings.Builder
+	s.Log = slog.New(slog.NewTextHandler(&syncWriter{w: &logged}, nil))
+	s.Images = &images.Pipeline{}
+	h := &held{p: s.Images, started: make(chan struct{}), release: make(chan struct{})}
+	s.Images.Maker = h
+	first, _ := s.Attach(ctx, clip(1), File{"a.jpg", picture(t, 200, 100)})
+	<-h.started // the first upload's warming is making a copy
+	var later []Blob
+	for id := int64(2); id <= 5; id++ {
+		b, err := s.Attach(ctx, clip(id), File{"b.jpg", picture(t, 200, 100)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		later = append(later, b)
+	}
+	close(h.release)
+	s.Wait()
+	if n := strings.Count(logged.String(), "[storage] made"); n != 2 {
+		t.Errorf("%d warmings, want the running one and one queued:\n%s", n, logged.String())
+	}
+	for _, b := range append(later, first) {
+		if !s.Images.Has(b.Key, 160, 0) {
+			t.Errorf("%s has no copies", b.Filename)
+		}
+	}
+}
+
+// syncWriter is a writer for goroutines' logs.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // Rows Rails wrote read as they are: its timestamps, its metadata, and its

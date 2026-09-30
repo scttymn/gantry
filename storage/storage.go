@@ -32,6 +32,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a-h/templ"
@@ -78,6 +79,7 @@ type Storage struct {
 	server     *images.Server
 	warm       sync.Mutex
 	background sync.WaitGroup
+	queued     atomic.Bool // a warming is waiting to start
 }
 
 // Ref names an attachment: a record's file under a name.
@@ -481,6 +483,7 @@ func (s *Storage) Img(b Blob, o images.Img) templ.Component {
 func (s *Storage) Warm(ctx context.Context) (made int, err error) {
 	s.setup()
 	s.warm.Lock()
+	s.queued.Store(false) // from here, a new attachment queues a warming of its own
 	defer s.warm.Unlock()
 	defer func() {
 		s.Log.Info(fmt.Sprintf("[storage] made %d cop%s", made, map[bool]string{true: "y", false: "ies"}[made == 1]))
@@ -559,8 +562,13 @@ func (s *Storage) Warm(ctx context.Context) (made int, err error) {
 	return made, nil
 }
 
-// WarmLater warms in the background: after an upload, and at start.
+// WarmLater warms in the background: after an upload, and at start. A
+// warming already waiting to start covers this one too (it warms whatever
+// is attached when it starts), so uploads in a row queue one, not one each.
 func (s *Storage) WarmLater() {
+	if !s.queued.CompareAndSwap(false, true) {
+		return
+	}
 	s.background.Go(func() { s.Warm(context.Background()) })
 }
 
