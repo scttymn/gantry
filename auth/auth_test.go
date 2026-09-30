@@ -466,6 +466,30 @@ func TestNoMail(t *testing.T) {
 	}
 }
 
+// Sign-in's pages in a scope run its filters first: an app that sends
+// every page to first-run setup until its admin exists.
+func TestRoutesInAScope(t *testing.T) {
+	a := newApp(t)
+	setUp := false
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Scope("", web.Pipeline{func(w http.ResponseWriter, r *http.Request) error {
+		if !setUp {
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+		}
+		return nil
+	}}, func(s *web.Scope) { a.auth.Routes(s) })
+	a.h = rt.Handler()
+	for _, method := range []string{"GET", "POST"} {
+		if rec := a.do(method, "/login", nil); rec.Header().Get("Location") != "/setup" {
+			t.Errorf("%s /login before setup: %d %q", method, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	setUp = true
+	if body := a.do("GET", "/login", nil).Body.String(); !strings.Contains(body, `action="/login"`) {
+		t.Errorf("sign-in page after setup: %s", body)
+	}
+}
+
 func TestDefaultRules(t *testing.T) {
 	for pw, want := range map[string]string{
 		"":                      "Password can't be blank",

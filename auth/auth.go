@@ -421,8 +421,9 @@ func (a *Auth) Required(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// Routes mounts the sign-in pages on rt.
-func (a *Auth) Routes(rt *web.Router) {
+// Routes mounts the sign-in pages on rt: the router, or a scope whose
+// filters run first.
+func (a *Auth) Routes(rt web.Routes) {
 	p := a.paths()
 	rt.Handle("GET "+p.Login, a.loginPage)
 	rt.Handle("POST "+p.Login, a.login)

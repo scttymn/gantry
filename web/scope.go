@@ -39,6 +39,15 @@ func (p Pipeline) then(h Handler) Handler {
 	}
 }
 
+// Routes is where a package adds its routes: the Router, or a Scope, so
+// the app's filters run before them too (Rails' before_action on an
+// engine's controllers):
+//
+//	rt.Scope("", web.Pipeline{firstRun}, func(s *web.Scope) { signIn.Routes(s) })
+type Routes interface {
+	Handle(pattern string, h Handler)
+}
+
 // Scope is where routes are added: the router's own (its root scope), or
 // one under a path prefix running a pipeline for its routes (Rails' and
 // Phoenix's scope). Scopes nest: prefixes join, and the outer scope's
