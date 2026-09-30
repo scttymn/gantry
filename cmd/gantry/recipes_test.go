@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"io/fs"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/storage"
 )
 
 // shopApp is a new app, written without Houston, on engine.
@@ -28,6 +33,7 @@ func TestRecipesGolden(t *testing.T) {
 	}{
 		{"api-tokens", []string{"--prefix", "shop_"}, 4},
 		{"auth", nil, 7},
+		{"storage", nil, 1},
 	} {
 		for _, engine := range []string{"sqlite", "postgres"} {
 			t.Run(tc.recipe+"/"+engine, func(t *testing.T) {
@@ -50,7 +56,7 @@ func recipeGolden(t *testing.T, recipe string, args []string, files int, engine 
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, stderr)
 	}
-	if !strings.Contains(out, "rt.Scope(") {
+	if !strings.Contains(out, "rt.Scope(") && !strings.Contains(out, "rt.Mount(") {
 		t.Errorf("no route to add:\n%s", out)
 	}
 	golden := filepath.Join("testdata", "golden", recipe+"-"+engine)
@@ -188,6 +194,87 @@ func TestAuthRules(t *testing.T) {
 	}
 	gantry(t, dir, "g", "auth")
 	if code, _, stderr := gantry(t, dir, "g", "auth"); code != 1 || !strings.Contains(stderr, "the recipe was applied") {
+		t.Errorf("twice: %d %s", code, stderr)
+	}
+}
+
+// The tables g storage writes migrate, on each engine, and the storage
+// package works on them.
+func TestStorageMigrates(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			url := "sqlite://" + filepath.Join(t.TempDir(), "app.sqlite3")
+			if engine == "postgres" {
+				if url = os.Getenv("GANTRY_TEST_POSTGRES_URL"); url == "" {
+					t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
+				}
+			}
+			dir := shopApp(t, engine)
+			if code, _, stderr := gantry(t, dir, "g", "storage"); code != 0 {
+				t.Fatal(stderr)
+			}
+			ctx := context.Background()
+			d, err := db.Open(ctx, url)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if engine == "postgres" {
+				d.Write.Exec(`DROP TABLE IF EXISTS active_storage_attachments, active_storage_blobs, gantry_storage_test_migrations`)
+			}
+			migrations, _ := filepath.Glob(filepath.Join(dir, "db", "migrations", "*_create_active_storage_tables.sql"))
+			if len(migrations) != 1 {
+				t.Fatalf("migrations: %v", migrations)
+			}
+			if err := d.Migrate(ctx, os.DirFS(filepath.Dir(migrations[0])), "gantry_storage_test_migrations"); err != nil {
+				t.Fatal(err)
+			}
+			st := &storage.Storage{DB: d, Root: t.TempDir(), NoAVIF: true, Log: slog.New(slog.DiscardHandler)}
+			defer st.Wait()
+			ref := storage.Ref{RecordType: "Clip", RecordID: 1, Name: "thumbnail"}
+			b, err := st.Attach(ctx, ref, storage.File{Filename: "a.txt", Data: []byte("hello")})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if found, ok, err := st.Find(ctx, ref); err != nil || !ok || found.Key != b.Key {
+				t.Fatalf("Find: %+v %v %v", found, ok, err)
+			}
+			if all, err := st.All(ctx, "Clip", "thumbnail"); err != nil || all[1].Key != b.Key {
+				t.Fatalf("All: %+v %v", all, err)
+			}
+			if _, ok, err := st.Detach(ctx, ref); err != nil || !ok {
+				t.Fatalf("Detach: %v", err)
+			}
+			if loose, err := st.Unattached(ctx); err != nil || len(loose) != 1 {
+				t.Fatalf("Unattached: %+v %v", loose, err)
+			}
+			if _, err := st.AttachBlob(ctx, ref, b.Key); err != nil {
+				t.Fatal(err)
+			}
+			st.Detach(ctx, ref)
+			if err := st.PurgeBlob(ctx, b.Key); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := st.Attach(ctx, ref, storage.File{Filename: "b.txt", Data: []byte("again")}); err != nil {
+				t.Fatal(err)
+			}
+			if err := st.Purge(ctx, ref); err != nil {
+				t.Fatal(err)
+			}
+			if loose, _ := st.Unattached(ctx); len(loose) != 0 {
+				t.Errorf("left: %+v", loose)
+			}
+		})
+	}
+}
+
+func TestStorageRules(t *testing.T) {
+	dir := shopApp(t, "sqlite")
+	if code, _, stderr := gantry(t, dir, "g", "storage", "extra"); code != 1 || !strings.Contains(stderr, "no arguments") {
+		t.Errorf("an argument: %d %s", code, stderr)
+	}
+	gantry(t, dir, "g", "storage")
+	if code, _, stderr := gantry(t, dir, "g", "storage"); code != 1 || !strings.Contains(stderr, "the recipe was applied") {
 		t.Errorf("twice: %d %s", code, stderr)
 	}
 }

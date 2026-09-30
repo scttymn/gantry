@@ -25,6 +25,7 @@ const usage = `usage:
   gantry g error-pages [--force]
   gantry g api-tokens [--prefix PREFIX_]                      a recipe: named API tokens
   gantry g auth                                               a recipe: sign-in, sessions, password reset
+  gantry g storage                                            Active Storage's tables, for attached files
   gantry g fonts FAMILY[:400,600,400i]... [--subsets latin,latin-ext] [--force]
                                                               Google Fonts, served from the app
   gantry importmap pin|unpin PACKAGE[@VERSION]...              JavaScript packages, into assets/js/vendor
@@ -60,6 +61,8 @@ func run(args []string, root string, out, errOut io.Writer) int {
 			err = generateAPITokens(root, args[2:], out)
 		case "auth":
 			err = generateAuth(root, args[2:], out)
+		case "storage":
+			err = generateStorage(root, args[2:], out)
 		case "fonts":
 			err = generateFonts(root, args[2:], out)
 		case "error-pages":
