@@ -15,8 +15,8 @@ import (
 
 // seen is what a handler behind the router learns of the request.
 func seen(w http.ResponseWriter, r *http.Request) error {
-	fmt.Fprintf(w, "ip=%s scheme=%s host=%s xff=%q proto=%q", ClientIP(r), Scheme(r), RequestHost(r),
-		r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Forwarded-Proto"))
+	fmt.Fprintf(w, "ip=%s scheme=%s host=%s xff=%q proto=%q xfh=%q", ClientIP(r), Scheme(r), RequestHost(r),
+		r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Forwarded-Proto"), r.Header.Get("X-Forwarded-Host"))
 	return nil
 }
 
@@ -45,18 +45,18 @@ func TestProxies(t *testing.T) {
 	}
 	forged := http.Header{"X-Forwarded-For": {"203.0.113.9"}, "X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"admin.example.com"}}
 
-	h := router(Proxies{})
+	h := router(Proxies{ForwardedHost: true})
 	for _, tc := range []struct {
 		name, peer string
 		header     http.Header
 		want       string
 	}{
 		{"direct, forged headers ignored and removed", "198.51.100.7", forged,
-			`ip=198.51.100.7 scheme=http host=app.example.com xff="" proto=""`},
+			`ip=198.51.100.7 scheme=http host=app.example.com xff="" proto="" xfh=""`},
 		{"through a private proxy", "10.0.0.2", http.Header{"X-Forwarded-For": {"1.2.3.4, 203.0.113.9, 10.0.0.9"}, "X-Forwarded-Proto": {"https"}, "X-Forwarded-Host": {"Shop.Example.com:443"}},
-			`ip=203.0.113.9 scheme=https host=shop.example.com xff="1.2.3.4, 203.0.113.9, 10.0.0.9" proto="https"`},
+			`ip=203.0.113.9 scheme=https host=shop.example.com xff="1.2.3.4, 203.0.113.9, 10.0.0.9" proto="https" xfh="Shop.Example.com:443"`},
 		{"a private proxy, no header", "172.18.0.2", nil,
-			`ip=172.18.0.2 scheme=http host=app.example.com xff="" proto=""`},
+			`ip=172.18.0.2 scheme=http host=app.example.com xff="" proto="" xfh=""`},
 	} {
 		if got := from(h, tc.peer, tc.header); got != tc.want {
 			t.Errorf("%s:\n got %s\nwant %s", tc.name, got, tc.want)
@@ -78,6 +78,19 @@ func TestProxies(t *testing.T) {
 		t.Errorf("a forged host reached the admin: %d", w.Code)
 	}
 
+	// Without ForwardedHost, a proxy's X-Forwarded-Host is a visitor's own
+	// (Cloudflare passes it through): ignored and removed.
+	keep := router(Proxies{})
+	if got := from(keep, "10.0.0.2", http.Header{"X-Forwarded-Host": {"admin.example.com"}, "X-Forwarded-Proto": {"https"}}); got != `ip=10.0.0.2 scheme=https host=app.example.com xff="" proto="https" xfh=""` {
+		t.Errorf("a forwarded host believed: %s", got)
+	}
+	w = httptest.NewRecorder()
+	r.RemoteAddr = "10.0.0.2:1"
+	keep.ServeHTTP(w, r)
+	if w.Code != 404 {
+		t.Errorf("a proxy's forwarded host reached the admin: %d", w.Code)
+	}
+
 	// A provider's own header (Cloudflare's), trusted from a proxy only.
 	cf := router(Proxies{ClientIP: "CF-Connecting-IP"})
 	header := http.Header{"Cf-Connecting-Ip": {"203.0.113.50"}, "X-Forwarded-For": {"198.51.100.1"}}
@@ -95,6 +108,64 @@ func TestProxies(t *testing.T) {
 	}
 	if got := from(own, "10.0.0.2", http.Header{"X-Forwarded-For": {"198.51.100.20"}}); !strings.HasPrefix(got, "ip=10.0.0.2 ") {
 		t.Errorf("a private address that isn't on the list was trusted: %s", got)
+	}
+}
+
+// Proxies by name: a container's name on a Docker network, looked up at
+// most once a minute. Only its address is trusted, not the network's; a
+// failed lookup trusts no one.
+func TestProxiesByName(t *testing.T) {
+	var (
+		lookups int
+		addrs   = []netip.Addr{netip.MustParseAddr("172.18.0.5")}
+		failing bool
+		now     = time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)
+	)
+	defer func(l func(string) ([]netip.Addr, error), c func() time.Time) { lookupProxy, proxyClock = l, c }(lookupProxy, proxyClock)
+	proxyNames.Clear()
+	lookupProxy = func(name string) ([]netip.Addr, error) {
+		lookups++
+		if name != "cloudflared" {
+			t.Errorf("looked up %q", name)
+		}
+		if failing {
+			return nil, fmt.Errorf("no such host")
+		}
+		return addrs, nil
+	}
+	proxyClock = func() time.Time { return now }
+
+	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Proxies = Proxies{Names: []string{"cloudflared"}, ClientIP: "Cf-Connecting-Ip"}
+	rt.Handle("GET /who", seen)
+	h := rt.Handler()
+	tunnel := http.Header{"Cf-Connecting-Ip": {"203.0.113.50"}, "X-Forwarded-Proto": {"https"}}
+	if got := from(h, "172.18.0.5", tunnel); !strings.HasPrefix(got, "ip=203.0.113.50 scheme=https ") {
+		t.Errorf("from cloudflared: %s", got)
+	}
+	if got := from(h, "172.18.0.9", tunnel); !strings.HasPrefix(got, "ip=172.18.0.9 scheme=http ") {
+		t.Errorf("another container on its network: %s", got)
+	}
+	if got := from(h, "127.0.0.1", tunnel); !strings.HasPrefix(got, "ip=127.0.0.1 scheme=http ") {
+		t.Errorf("loopback, trusted by default but not with Names: %s", got)
+	}
+	if lookups != 1 {
+		t.Errorf("%d lookups in a minute, want 1", lookups)
+	}
+
+	// cloudflared restarts at another address: seen after the minute.
+	addrs = []netip.Addr{netip.MustParseAddr("172.18.0.6")}
+	now = now.Add(61 * time.Second)
+	if got := from(h, "172.18.0.6", tunnel); !strings.HasPrefix(got, "ip=203.0.113.50 ") {
+		t.Errorf("after a restart: %s", got)
+	}
+	failing = true
+	now = now.Add(61 * time.Second)
+	if got := from(h, "172.18.0.6", tunnel); !strings.HasPrefix(got, "ip=172.18.0.6 ") {
+		t.Errorf("a failed lookup trusted: %s", got)
+	}
+	if lookups != 3 {
+		t.Errorf("%d lookups, want 3", lookups)
 	}
 }
 

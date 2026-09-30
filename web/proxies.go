@@ -1,10 +1,14 @@
 package web
 
 import (
+	"context"
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Proxies is which peers are proxies the app trusts, and which header one
@@ -15,14 +19,24 @@ import (
 // anyone can also send. So they're believed only from a trusted peer, and
 // from any other they're ignored and removed before the app sees them.
 type Proxies struct {
-	// Trusted are the proxies' addresses; nil is PrivateNetworks, Rails'
-	// default, which trusts whatever reaches the app from a private or
-	// loopback address.
+	// Trusted are the proxies' addresses; nil (with no Names) is
+	// PrivateNetworks, Rails' default, which trusts whatever reaches the app
+	// from a private or loopback address.
 	Trusted []netip.Prefix
+	// Names are proxies by their name in DNS: a container's on a Docker
+	// network ("cloudflared"), whose address changes as it restarts. Each is
+	// looked up at most once a minute; while a lookup fails, it's trusted
+	// nowhere. Only its addresses are trusted, not the rest of its network.
+	Names []string
 	// ClientIP is the header a proxy puts the visitor's address in:
 	// X-Forwarded-For when "" (the nearest address that isn't a proxy's),
 	// or a provider's own, one address: "CF-Connecting-IP", "Fly-Client-IP".
 	ClientIP string
+	// ForwardedHost believes a proxy's X-Forwarded-Host, for a proxy that
+	// changes the Host header and says so there. Off, the header is removed:
+	// a proxy that keeps Host (kamal-proxy, Cloudflare's tunnel) may pass on
+	// a visitor's own, which would let them name any host.
+	ForwardedHost bool
 }
 
 // PrivateNetworks are the loopback, private and link-local ranges.
@@ -49,8 +63,13 @@ var originKey = NewKey[origin]("origin")
 
 func (p Proxies) trusts(a netip.Addr) bool {
 	a = a.Unmap()
+	for _, name := range p.Names {
+		if slices.Contains(proxyAddrs(name), a) {
+			return true
+		}
+	}
 	nets := p.Trusted
-	if nets == nil {
+	if nets == nil && len(p.Names) == 0 {
 		nets = PrivateNetworks
 	}
 	for _, n := range nets {
@@ -93,7 +112,7 @@ func (p Proxies) origin(r *http.Request) (origin, bool) {
 	if proto := strings.ToLower(strings.TrimSpace(firstValue(r.Header.Get("X-Forwarded-Proto")))); proto == "https" || proto == "http" {
 		o.scheme = proto
 	}
-	if host := strings.TrimSpace(lastValue(r.Header.Get("X-Forwarded-Host"))); host != "" {
+	if host := strings.TrimSpace(lastValue(r.Header.Get("X-Forwarded-Host"))); host != "" && p.ForwardedHost {
 		o.host = cleanHost(host)
 	}
 	return o, true
@@ -109,7 +128,9 @@ func (rt *Router) arrive(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		o, trusted := rt.Proxies.origin(r)
 		if !trusted {
-			r = withoutForwarding(r, rt.Proxies.ClientIP)
+			r = withoutForwarding(r, forwarding, rt.Proxies.ClientIP)
+		} else if !rt.Proxies.ForwardedHost {
+			r = withoutForwarding(r, []string{"X-Forwarded-Host"})
 		}
 		Set(r, originKey, o)
 		if rt.TimeZone != nil {
@@ -123,13 +144,11 @@ func (rt *Router) arrive(next http.Handler) http.Handler {
 	})
 }
 
-// withoutForwarding is r without the headers a proxy speaks in, on a copy,
-// so nothing later reads a forged one. r itself when it has none.
-func withoutForwarding(r *http.Request, clientIP string) *http.Request {
-	names := forwarding
-	if clientIP != "" {
-		names = append(names[:len(names):len(names)], clientIP)
-	}
+// withoutForwarding is r without the headers names (and a provider's
+// client IP header), on a copy, so nothing later reads a forged one. r
+// itself when it has none.
+func withoutForwarding(r *http.Request, names []string, clientIP ...string) *http.Request {
+	names = append(names[:len(names):len(names)], clientIP...)
 	var copied *http.Request
 	for _, name := range names {
 		if _, ok := r.Header[http.CanonicalHeaderKey(name)]; !ok {
@@ -197,4 +216,37 @@ func RequestHost(r *http.Request) string {
 		return o.host
 	}
 	return cleanHost(r.Host)
+}
+
+// A proxy's addresses by name, looked up at most once a minute (lookupProxy
+// and proxyClock are variables for the tests).
+var (
+	proxyNames  sync.Map // name → *proxyLookup
+	proxyClock  = time.Now
+	lookupProxy = func(name string) ([]netip.Addr, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return net.DefaultResolver.LookupNetIP(ctx, "ip", name)
+	}
+)
+
+type proxyLookup struct {
+	mu    sync.Mutex
+	at    time.Time
+	addrs []netip.Addr
+}
+
+func proxyAddrs(name string) []netip.Addr {
+	v, _ := proxyNames.LoadOrStore(name, &proxyLookup{})
+	l := v.(*proxyLookup)
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if now := proxyClock(); l.at.IsZero() || now.Sub(l.at) > time.Minute {
+		addrs, _ := lookupProxy(name) // failed: none
+		for i := range addrs {
+			addrs[i] = addrs[i].Unmap()
+		}
+		l.at, l.addrs = now, addrs
+	}
+	return l.addrs
 }
