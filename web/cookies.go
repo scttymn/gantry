@@ -9,16 +9,14 @@ import (
 	"github.com/scttymn/gantry/sign"
 )
 
-// Secure reports whether cookies for this request should be Secure: always,
-// but on a local development host, which browsers don't all treat as secure
-// over plain http (localhost, *.localhost, 127.0.0.1).
-func Secure(r *http.Request) bool {
-	host := RequestHost(r)
-	return !(host == "localhost" || strings.HasSuffix(host, ".localhost") || host == "127.0.0.1" || host == "::1")
-}
+// Secure reports whether cookies for this request should be Secure: when
+// the visitor used https (Scheme: a trusted proxy's X-Forwarded-Proto, or
+// TLS), as Rails' cookies are. Over plain http a browser drops a Secure
+// cookie, so an app reached at http://<LAN address> couldn't sign anyone in.
+func Secure(r *http.Request) bool { return Scheme(r) == "https" }
 
 // SetCookie sets an HttpOnly, SameSite=Lax cookie for the whole site,
-// Secure unless the host is local. maxAge 0 is a cookie for the session.
+// Secure when the request was https. maxAge 0 is a cookie for the session.
 func SetCookie(w http.ResponseWriter, r *http.Request, name, value string, maxAge time.Duration) {
 	http.SetCookie(w, cookie(r, name, value, maxAge))
 }

@@ -12,16 +12,25 @@ import (
 	"github.com/scttymn/gantry/sign"
 )
 
+// Secure when the visitor used https: over TLS, or a trusted proxy's
+// X-Forwarded-Proto; plain http (a LAN address, localhost) isn't.
 func TestSecure(t *testing.T) {
-	for host, want := range map[string]bool{
-		"example.com": true, "example.com:443": true, "localhost": false, "localhost:8080": false,
-		"app.localhost": false, "branch.app.localhost": false, "127.0.0.1:3000": false,
+	for url, want := range map[string]bool{
+		"https://example.com/": true, "http://example.com/": false, "http://192.0.2.10:3000/": false,
+		"http://localhost:8080/": false, "http://app.localhost/": false,
 	} {
-		r := httptest.NewRequest("GET", "/", nil)
-		r.Host = host
-		if Secure(r) != want {
-			t.Errorf("%s: %v", host, !want)
+		if got := Secure(httptest.NewRequest("GET", url, nil)); got != want {
+			t.Errorf("%s: %v", url, got)
 		}
+	}
+	r := httptest.NewRequest("GET", "http://example.com/", nil)
+	r.Header.Set("X-Forwarded-Proto", "https")
+	if Secure(r) {
+		t.Error("an untrusted proxy's https")
+	}
+	r.RemoteAddr = "10.0.0.2:4000" // a private proxy: trusted by default
+	if !Secure(r) {
+		t.Error("a trusted proxy's https")
 	}
 }
 
