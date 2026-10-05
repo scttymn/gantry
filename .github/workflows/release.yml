@@ -1,0 +1,54 @@
+# A release: pushing a tag like v0.12.0 tests gantry, then publishes a GitHub
+# Release with the CLI binaries (gantry-$os-$arch) and SHA256SUMS over them.
+# An app's bin/gantry downloads the asset for its go.mod version and checks
+# that file. Nothing is published unless the tests pass.
+# Actions are pinned by commit, and no checkout keeps the token in .git/config.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Go tests
+        run: |
+          docker build -q --target toolchain -t gantry-toolchain .
+          mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
+          docker run --rm -v "$PWD:/src" -w /src \
+            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            gantry-toolchain go test ./...
+      - name: gofmt
+        run: |
+          unformatted=$(docker run --rm -v "$PWD:/src" -w /src gantry-toolchain sh -c 'gofmt -l $(find . -name "*.go" -not -path "./.cache/*")')
+          [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+
+  release:
+    needs: test
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: CLI binaries and SHA256SUMS
+        run: |
+          docker build --target release --output type=local,dest=dist .
+          (cd dist && sha256sum gantry-* > SHA256SUMS)
+          cat dist/SHA256SUMS
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" --generate-notes --verify-tag

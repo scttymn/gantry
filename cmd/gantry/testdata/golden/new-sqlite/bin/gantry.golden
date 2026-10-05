@@ -1,0 +1,243 @@
+#!/bin/sh
+# Downloads this app's gantry (the release go.mod requires) and the Houston
+# release pinned below, then runs gantry. A gantry checkout in go.mod's
+# replace, or in go.work, uses that checkout's bin/gantry instead.
+# Assets are gantry-$os-$arch and houston-$os-$arch, checked against the
+# release's SHA256SUMS. Both land in .gantry/bin, which git ignores.
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+cd "$root"
+cache=$root/.gantry/bin
+
+houston_version="v0.5.4"
+gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
+houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
+
+die() {
+	printf '%s\n' "bin/gantry: $*" >&2
+	exit 1
+}
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+case $(uname -m) in
+x86_64 | amd64) arch=amd64 ;;
+arm64 | aarch64) arch=arm64 ;;
+*) arch=$(uname -m) ;;
+esac
+if [ -n "${GANTRY_OS:-}" ]; then
+	os=$GANTRY_OS
+fi
+if [ -n "${GANTRY_ARCH:-}" ]; then
+	arch=$GANTRY_ARCH
+fi
+case $os in
+darwin | linux) ;;
+*) die "$os isn't a supported system" ;;
+esac
+case $arch in
+amd64 | arm64) ;;
+*) die "$arch isn't a supported architecture" ;;
+esac
+
+is_release() {
+	printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+d=$root
+modfile=""
+while :; do
+	if [ -f "$d/go.mod" ]; then
+		modfile=$d/go.mod
+		break
+	fi
+	parent=$(dirname "$d")
+	if [ "$parent" = "$d" ]; then
+		break
+	fi
+	d=$parent
+done
+[ -n "$modfile" ] || die "no go.mod here or above"
+moddir=$(dirname "$modfile")
+
+parsed=$(awk '
+	{
+		sub(/\/\/.*/, "")
+	}
+	/github\.com\/scttymn\/gantry/ && /=>/ {
+		n = split($0, parts, "=>")
+		rhs = parts[n]
+		sub(/^[ \t]+/, "", rhs)
+		split(rhs, toks, /[ \t]+/)
+		cand = toks[1]
+		if (cand ~ /^\.\.?\// || cand ~ /^\//) {
+			checkout = cand
+		}
+		next
+	}
+	/github\.com\/scttymn\/gantry/ {
+		n = split($0, toks, /[ \t]+/)
+		for (i = 1; i <= n; i++) {
+			if (toks[i] == "github.com/scttymn/gantry" && i < n) {
+				version = toks[i + 1]
+			}
+		}
+	}
+	END {
+		print checkout
+		print version
+	}
+' "$modfile")
+checkout=$(printf '%s\n' "$parsed" | awk 'NR==1')
+version=$(printf '%s\n' "$parsed" | awk 'NR==2')
+
+if [ -z "$checkout" ] && [ -f "$moddir/go.work" ]; then
+	uses=$(awk '
+		{
+			sub(/\/\/.*/, "")
+			n = split($0, toks, /[ \t]+/)
+			for (i = 1; i <= n; i++) {
+				if (toks[i] ~ /^\.\.?\// || toks[i] ~ /^\//) {
+					print toks[i]
+				}
+			}
+		}
+	' "$moddir/go.work")
+	for use in $uses; do
+		case $use in
+		/*) candidate=$use ;;
+		*) candidate=$moddir/$use ;;
+		esac
+		if [ -f "$candidate/go.mod" ] && grep -q '^module github.com/scttymn/gantry$' "$candidate/go.mod"; then
+			checkout=$use
+			break
+		fi
+	done
+fi
+
+if [ -n "$checkout" ]; then
+	case $checkout in
+	/*) ;;
+	*) checkout=$moddir/$checkout ;;
+	esac
+	[ -d "$checkout" ] || die "gantry checkout $checkout isn't there"
+	checkout=$(CDPATH= cd -- "$checkout" && pwd)
+	grep -q '^module github.com/scttymn/gantry$' "$checkout/go.mod" || die "$checkout is not a gantry checkout"
+fi
+
+ensure_link() {
+	link=$1
+	target=$2
+	current=""
+	if [ -L "$link" ]; then
+		current=$(readlink "$link") || current=""
+	fi
+	if [ "$current" = "$target" ]; then
+		return 0
+	fi
+	tmp=$link.$$
+	rm -f "$tmp"
+	ln -s "$target" "$tmp"
+	mv -f "$tmp" "$link"
+}
+
+file_sha256() {
+	out=""
+	if command -v sha256sum >/dev/null 2>&1; then
+		out=$(sha256sum "$1") || return 1
+	elif command -v shasum >/dev/null 2>&1; then
+		out=$(shasum -a 256 "$1") || return 1
+	else
+		echo "sha256sum or shasum is required to check a download" >&2
+		return 1
+	fi
+	printf '%s\n' "$out" | awk '{print tolower($1)}'
+}
+
+# fetch_release name remote version base. remote is the release filename
+# (gantry-$os-$arch, houston-$os-$arch). The copy kept locally is named
+# with the version, so a failed upgrade cannot replace the previous CLI.
+fetch_release() {
+	name=$1
+	remote=$2
+	version=$3
+	base=$4
+	kept=$name-$version-$os-$arch
+	is_release "$version" || die "$name $version isn't a release tag (vX.Y.Z), so there is no CLI build to download"
+	command -v curl >/dev/null 2>&1 || die "curl is required to fetch $name $version"
+	dest=$cache/$kept
+	link=$cache/$name
+	if [ -x "$dest" ] && [ -L "$link" ] && [ "$(readlink "$link")" = "$kept" ]; then
+		return 0
+	fi
+	mkdir -p "$cache"
+	if [ -x "$dest" ]; then
+		ensure_link "$link" "$kept"
+		return 0
+	fi
+	partial=$cache/.$kept.$$
+	sums=$cache/.$kept.sums.$$
+	url=$base/$version/$remote
+	sums_url=$base/$version/SHA256SUMS
+	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$partial" "$url" 2>/dev/null; then
+		rm -f "$partial"
+		die "$name $version has no $os/$arch build at $url"
+	fi
+	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$sums" "$sums_url" 2>/dev/null; then
+		rm -f "$partial" "$sums"
+		die "$name $version published no SHA256SUMS at $sums_url"
+	fi
+	if ! want=$(awk -v asset="$remote" '
+		length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ && ($2 == asset || $2 == "*" asset) { print tolower($1); found = 1; exit }
+		END { if (!found) exit 1 }
+	' "$sums"); then
+		rm -f "$partial" "$sums"
+		die "SHA256SUMS for $name $version has no $remote"
+	fi
+	if ! got=$(file_sha256 "$partial"); then
+		rm -f "$partial" "$sums"
+		die "could not hash $remote"
+	fi
+	if [ "$got" != "$want" ]; then
+		rm -f "$partial" "$sums"
+		die "$remote from $version failed its checksum"
+	fi
+	chmod 755 "$partial"
+	mv -f "$partial" "$dest"
+	rm -f "$sums"
+	ensure_link "$link" "$kept"
+}
+
+if [ -n "${GANTRY_BIN:-}" ]; then
+	[ -x "$GANTRY_BIN" ] || die "GANTRY_BIN ($GANTRY_BIN) isn't executable"
+elif [ -n "$checkout" ]; then
+	if [ -x "$checkout/bin/gantry" ]; then
+		GANTRY_BIN=$checkout/bin/gantry
+	else
+		printf '%s\n' "bin/gantry: this app builds against the gantry checkout at $checkout, which has no bin/gantry yet." >&2
+		printf '%s\n' "Build it, then run this again:" >&2
+		printf '%s\n' "  (cd $checkout && bin/go go build -o bin/gantry ./cmd/gantry)" >&2
+		exit 1
+	fi
+else
+	[ -n "$version" ] || die "go.mod doesn't require github.com/scttymn/gantry"
+	fetch_release gantry "gantry-$os-$arch" "$version" "$gantry_base"
+fi
+
+if [ -n "${HOUSTON_BIN:-}" ]; then
+	[ -x "$HOUSTON_BIN" ] || die "HOUSTON_BIN ($HOUSTON_BIN) isn't executable"
+	case $HOUSTON_BIN in
+	/*) houston_abs=$HOUSTON_BIN ;;
+	*) houston_abs=$(CDPATH= cd -- "$(dirname -- "$HOUSTON_BIN")" && pwd)/$(basename -- "$HOUSTON_BIN") ;;
+	esac
+	mkdir -p "$cache"
+	ensure_link "$cache/houston" "$houston_abs"
+else
+	fetch_release houston "houston-$os-$arch" "$houston_version" "$houston_base"
+fi
+
+export PATH="$cache:$PATH"
+if [ -n "${GANTRY_BIN:-}" ]; then
+	exec "$GANTRY_BIN" "$@"
+fi
+exec "$cache/gantry" "$@"

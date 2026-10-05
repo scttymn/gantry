@@ -27,6 +27,7 @@ type NewApp struct {
 	Postgres bool
 	Engine   string // sqlc's: "sqlite" or "postgresql"
 	Gantry   string // the gantry release go.mod requires
+	Houston  string // the Houston release bin/gantry downloads
 	Templ    string // templ's version, the one gantry builds with
 	// With --gantry: the checkout, relative to the app (go.work and the dev
 	// container's mount), and where the container sees it.
@@ -41,6 +42,10 @@ type NewApp struct {
 // latestRelease is what a new app requires when this gantry isn't a release
 // itself (built from a checkout): the newest tag when it was built.
 const latestRelease = "v0.11.3"
+
+// houstonRelease is the Houston CLI bin/gantry downloads. It is a release
+// that published houston-$os-$arch and SHA256SUMS.
+const houstonRelease = "v0.5.4"
 
 const templVersion = "v0.3.1020"
 
@@ -111,6 +116,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	if a.Postgres {
 		a.Engine = "postgresql"
 	}
+	a.Houston = houstonRelease
 	release := gantryRelease()
 	a.Gantry = release
 	if release == "" {
@@ -142,7 +148,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		return err
 	}
 	if *skipHouston {
-		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec templ generate, gantry exec go mod tidy, and gantry dev.\n", name, name)
+		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec templ generate, gantry exec go mod tidy, and bin/gantry dev.\n", name, name)
 		return nil
 	}
 	steps := [][]string{
@@ -171,7 +177,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 			return fmt.Errorf("%s failed (%v): the files are written; run it, and the steps after it, in %s/", strings.Join(step, " "), err, name)
 		}
 	}
-	fmt.Fprintf(out, "\nNext: cd %s && gantry dev, and it's at http://%s.localhost\n", name, name)
+	fmt.Fprintf(out, "\nNext: cd %s && bin/gantry dev, and it's at http://%s.localhost\n", name, name)
 	return nil
 }
 
@@ -286,7 +292,11 @@ func write(path string, body []byte) error {
 			body = f
 		}
 	}
-	return os.WriteFile(path, body, 0o644)
+	mode := os.FileMode(0o644)
+	if strings.HasSuffix(path, "/bin/gantry") {
+		mode = 0o755
+	}
+	return os.WriteFile(path, body, mode)
 }
 
 // title is a name for people: "my-app" is "My app".
