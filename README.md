@@ -8,16 +8,18 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - **Sign-in solved once** (coming): email and password, emailed codes, TOTP, passkeys, and OAuth.
 
 ## Start an app
-gantry runs apps with [Houston](https://github.com/scttymn/houston) (install it first), in Docker, so nothing else is installed on your machine.
+gantry runs apps with [Houston](https://github.com/scttymn/houston), in Docker.
 ```sh
-go install github.com/scttymn/gantry/cmd/gantry@latest
+go install github.com/scttymn/gantry/cmd/gantry@latest   # once, to make an app
 gantry new myapp               # --db postgres for Postgres; SQLite by default
-cd myapp && gantry dev         # http://myapp.localhost, rebuilt as you change it
-gantry g migration create_posts title:string:required body:text
-gantry db migrate              # db rollback, status, seed, reset, console: in the app's container
-gantry test                    # the app's tests, in a throwaway copy
+cd myapp && bin/gantry dev     # http://myapp.localhost, rebuilt as you change it
+bin/gantry g migration create_posts title:string:required body:text
+bin/gantry db migrate          # db rollback, status, seed, reset, console: in the app's container
+bin/gantry test                # the app's tests, in a throwaway copy
 ```
-`gantry dev`, `test`, `console` and `deploy` are Houston's commands; `gantry db` and `gantry task` run the app's own.
+`bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release the script pins, for this machine, into `.gantry/bin`. Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
+
+`bin/gantry dev`, `test`, `console` and `deploy` are Houston's commands; `bin/gantry db` and `bin/gantry task` run the app's own.
 
 ## Packages
 | Package | What it does |

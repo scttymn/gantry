@@ -3,10 +3,10 @@
 A [gantry](https://github.com/scttymn/gantry) app, run and deployed with [Houston](https://github.com/scttymn/houston).
 
 ```sh
-gantry dev                 # http://shop.localhost, rebuilt as you change it
-gantry test                # its tests, in a throwaway copy
-gantry db migrate          # run pending migrations (and rewrite db/schema.sql)
-gantry console             # psql on the dev database
+bin/gantry dev             # http://shop.localhost, rebuilt as you change it
+bin/gantry test            # its tests, in a throwaway copy
+bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
+bin/gantry console         # psql on the dev database
 ```
 
 ## Where things go
@@ -14,7 +14,7 @@ gantry console             # psql on the dev database
 - `app/<name>/`: a controller and its views (`.templ`), one folder per resource
 - `app/models/`: each table's queries (`<table>.sql`, turned into Go by sqlc) and rules (`<table>.go`)
 - `app/jobs.go`: background jobs, run by the server (or `shop jobs`, with `JOBS_IN_SERVER=false`)
-- `app/tasks.go`: the app's own commands, run with `gantry task NAME`
+- `app/tasks.go`: the app's own commands, run with `bin/gantry task NAME`
 - `db/migrations/`: schema changes, written by `gantry g migration`; `db/schema.sql` is what they leave
 - `db/seeds/`: what a fresh database starts with
 - `assets/`: stylesheets, scripts, fonts and images; `assets/public/` is served at the root (robots.txt, the error pages)
@@ -24,8 +24,8 @@ gantry console             # psql on the dev database
 
 ## Generators
 ```sh
-gantry g resource admin/posts title:string:required body:text
-gantry g migration add_email_to_users email:string
-gantry g error-pages
-gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app
+bin/gantry g resource admin/posts title:string:required body:text
+bin/gantry g migration add_email_to_users email:string
+bin/gantry g error-pages
+bin/gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app
 ```

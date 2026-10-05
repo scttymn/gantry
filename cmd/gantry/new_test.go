@@ -71,7 +71,7 @@ func TestNewInModule(t *testing.T) {
 		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
 		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
 		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "templ generate -path /app/apps/control && go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/"},
-		"Dockerfile.dockerignore": {"**/.git", "**/.cache"},
+		"Dockerfile.dockerignore": {"**/.git", "**/.cache", "**/.gantry"},
 	} {
 		for _, want := range wants {
 			if !strings.Contains(read(file), want) {
@@ -187,7 +187,7 @@ func TestNewSteps(t *testing.T) {
 	if code != 0 || !reflect.DeepEqual(*got, want) {
 		t.Fatalf("exit %d, ran %q\n%s", code, *got, stderr)
 	}
-	if !strings.Contains(out, "cd shop && gantry dev, and it's at http://shop.localhost") || strings.Contains(out+stderr, "said this") {
+	if !strings.Contains(out, "cd shop && bin/gantry dev, and it's at http://shop.localhost") || strings.Contains(out+stderr, "said this") {
 		t.Errorf("output: %s%s", out, stderr)
 	}
 
