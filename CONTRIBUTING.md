@@ -1,5 +1,8 @@
 # Developing Gantry
 
+For agents building applications with Gantry, start with the
+[application guide](docs/agents.md). This page covers changes to the framework.
+
 Run the framework tests in Docker with `bin/go go test ./...` and static checks
 with `bin/go go vet ./...`. Generator changes must update the golden fixtures
 and keep generated apps passing tests and Gantry Strict.

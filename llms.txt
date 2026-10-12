@@ -1,0 +1,19 @@
+# Gantry
+
+> An opinionated Go web framework with generated application code, shared templ layouts, Turbo and Stimulus, SQLite or Postgres, and built-in asset, image and caching features. Apps run and deploy through Houston. Gantry Strict helps apps adopt the framework's performance and development patterns.
+
+## Building applications
+- [Guide for agents](https://github.com/scttymn/gantry/blob/main/docs/agents.md): start here when building or maintaining a Gantry app; defaults, pinned tools, generators, Strict, verification and deployment
+- [README](https://github.com/scttymn/gantry/blob/main/README.md): create an app, run it and find the framework packages
+- [Development checks](https://github.com/scttymn/gantry/blob/main/docs/development.md): current checks and fixes, automatic browser panel, exceptions, timing and an editor example
+- [Gantry Strict](https://github.com/scttymn/gantry/blob/main/docs/strict.md): purpose, rule registry, extensions and coverage limits
+
+## Working on Gantry
+- [Contributing](https://github.com/scttymn/gantry/blob/main/CONTRIBUTING.md): framework tests, generator fixtures and adoption checks for new features
+- [Releases](https://github.com/scttymn/gantry/releases): versioned CLI binaries and checksums; use the app's pinned version
+
+## Deployment
+- [Houston's guide for agents](https://github.com/scttymn/houston/blob/main/docs/agents.md): connect to the user's server, link an app, configure secrets and storage, and verify deployments
+
+## Optional
+- [Design plans](https://github.com/scttymn/gantry/tree/main/docs/plans): implementation history and measurements; confirm current behavior against the app's pinned version

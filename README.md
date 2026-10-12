@@ -7,6 +7,14 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - **Fast by default:** pages the same for every visitor are cached in memory until the data changes; photos come in a few fixed widths (never enlarged), in WebP by default; one static binary on a `scratch` image.
 - **Sign-in solved once** (coming): email and password, emailed codes, TOTP, passkeys, and OAuth.
 
+## Guides
+
+- [Building an app: a guide for agents](docs/agents.md): the defaults to use, the
+  development workflow, Strict checks and how to verify a change. Useful for
+  humans following the same workflow.
+- [Contributing](CONTRIBUTING.md): working on Gantry itself.
+- [llms.txt](llms.txt): the documentation index for AI tools.
+
 ## Start an app
 gantry runs apps with [Houston](https://github.com/scttymn/houston), in Docker.
 ```sh

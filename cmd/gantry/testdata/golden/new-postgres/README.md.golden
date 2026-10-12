@@ -10,6 +10,10 @@ bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
 bin/gantry console         # psql on the dev database
 ```
 
+## Guide for agents
+
+Start with Gantry's [application guide for agents](https://github.com/scttymn/gantry/blob/main/docs/agents.md) for framework defaults, Strict checks and verification. Use this app's pinned version and its `bin/gantry` commands; the guide on `main` may describe newer features.
+
 ## Development checks
 
 `dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
