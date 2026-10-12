@@ -17,3 +17,7 @@
 
 ## Optional
 - [Design plans](https://github.com/scttymn/gantry/tree/main/docs/plans): implementation history and measurements; confirm current behavior against the app's pinned version
+
+- [Authentication](https://github.com/scttymn/gantry/blob/main/docs/auth.md): Email/password and email-code login, verified signup, delivery and shared limits.
+
+- [Mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md): Shared app mail configuration, SMTP delivery and the development inbox.

@@ -2,10 +2,15 @@
 // default, so a blank one falls back.
 package config
 
-import "os"
+import (
+	"os"
+
+	"github.com/scttymn/gantry/mail"
+)
 
 // Config is what the environment sets.
 type Config struct {
+	Mail mail.Config // app-wide delivery: development inbox or configured SMTP
 	Env         string // GANTRY_ENV: development, test or production (the default)
 	Addr        string // ADDR, default :8080
 	DataDir     string // DATA_DIR: {{if .Postgres}}uploads{{else}}the database and uploads{{end}}; default /data
@@ -30,6 +35,7 @@ func Load(getenv func(string) string) Config {
 		return fallback
 	}
 	c := Config{
+		Mail: mail.LoadConfig(getenv),
 		Env:          or("GANTRY_ENV", "production"),
 		Addr:         or("ADDR", ":8080"),
 		DataDir:      or("DATA_DIR", "/data"),

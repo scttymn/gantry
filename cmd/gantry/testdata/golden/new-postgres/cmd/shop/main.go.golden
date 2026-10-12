@@ -21,6 +21,7 @@ import (
 	"github.com/scttymn/gantry/images"
 	"github.com/scttymn/gantry/jobs"
 	"github.com/scttymn/gantry/live"
+	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 
 	"example.com/shop/app"
@@ -120,12 +121,24 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	if err != nil {
 		return nil, nil, err
 	}
+	mailer, err := mail.Open(ctx, cfg.Env, cfg.DataDir, cfg.Mail, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			mailer.Close()
+		}
+	}()
 	signer := sign.Signer{Key: key}
-	a = &app.App{DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger})}
+	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger})}
 	if err := a.DefineJobs(); err != nil {
 		return nil, nil, err
 	}
-	return a, func() { database.Close() }, nil
+	return a, func() {
+		mailer.Close()
+		database.Close()
+	}, nil
 }
 
 // serve builds the app, then serves until ctx ends, running its jobs

@@ -9,6 +9,7 @@ import (
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/jobs"
 	"github.com/scttymn/gantry/live"
+	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/web"
 
@@ -18,6 +19,7 @@ import (
 
 // App is what the controllers share.
 type App struct {
+	Mail *mail.Mailer // shared by auth, controllers and jobs
 	DB     *db.DB
 	Log    *slog.Logger
 	Signer sign.Signer
@@ -43,6 +45,9 @@ func (a *App) Handler() http.Handler {
 	// may listen, as the pages it serves are.
 	rt.Handle("GET /live", a.Live.Serve)
 
+	if a.Mail != nil && a.Mail.Inbox != nil {
+		a.Mail.Inbox.Routes(rt.Mount, "/dev/inbox")
+	}
 	assets.Routes(rt.Mount)
 	return rt.Handler()
 }

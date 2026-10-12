@@ -1,0 +1,80 @@
+package auth
+
+import (
+	"context"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"regexp"
+	"strings"
+	"testing"
+
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/test"
+)
+
+type capture struct{ sent []mail.Message }
+
+func (c *capture) Send(_ context.Context, m mail.Message) error {
+	c.sent = append(c.sent, m)
+	return nil
+}
+
+func TestEmailCodeSignIn(t *testing.T) {
+	d := test.DB(t)
+	m := &capture{}
+	a := New(d, sign.Signer{Key: []byte("test cookies")}, m, "login@example.com", []byte(strings.Repeat("k", 32)))
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	a.Routes(rt)
+	h := rt.Handler()
+	page := httptest.NewRecorder()
+	h.ServeHTTP(page, httptest.NewRequest("GET", "https://example.com/login", nil))
+	if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), `id="request-code"`) {
+		t.Fatalf("email form: %d %s", page.Code, page.Body)
+	}
+	post := func(path string, values url.Values, cookies []*http.Cookie) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", "https://example.com"+path, strings.NewReader(values.Encode()))
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		for _, c := range cookies {
+			r.AddCookie(c)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w
+	}
+	requested := post("/login", url.Values{"email_address": {"rider@example.com"}}, nil)
+	if requested.Code != http.StatusSeeOther || len(m.sent) != 1 {
+		t.Fatalf("request: %d; emails: %d", requested.Code, len(m.sent))
+	}
+	if _, err := a.FindByEmail(t.Context(), "rider@example.com"); err == nil {
+		t.Fatal("account created before email verification")
+	}
+	verifyPage := httptest.NewRecorder()
+	verifyRequest := httptest.NewRequest("GET", "https://example.com/login/verify", nil)
+	for _, c := range requested.Result().Cookies() {
+		verifyRequest.AddCookie(c)
+	}
+	h.ServeHTTP(verifyPage, verifyRequest)
+	if verifyPage.Code != http.StatusOK || !strings.Contains(verifyPage.Body.String(), `autocomplete="one-time-code"`) {
+		t.Fatalf("code form: %d %s", verifyPage.Code, verifyPage.Body)
+	}
+	code := regexp.MustCompile(`\b[0-9]{6}\b`).FindString(m.sent[0].Text)
+	verified := post("/login/verify", url.Values{"code": {code}}, requested.Result().Cookies())
+	if verified.Code != http.StatusSeeOther || verified.Header().Get("Location") != "/" {
+		t.Fatalf("verify: %d %s", verified.Code, verified.Body)
+	}
+	r := httptest.NewRequest("GET", "https://example.com/", nil)
+	for _, c := range verified.Result().Cookies() {
+		if c.MaxAge >= 0 {
+			r.AddCookie(c)
+		}
+	}
+	if !a.SignedIn(r) {
+		t.Fatal("verified browser has no session")
+	}
+}

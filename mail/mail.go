@@ -1,7 +1,7 @@
 // Package mail sends an app's email. Message is what to send; a Sender
-// sends it: SMTP in production (through wneessen/go-mail), and Log when no
-// server is configured, which logs each message as not sent rather than
-// losing it silently.
+// sends it. App-wide Config opens a Mailer: a persistent Inbox in development,
+// SMTP through wneessen/go-mail in production when configured, or disabled.
+// Log is an explicitly chosen summary-only sender.
 package mail
 
 import (

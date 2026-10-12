@@ -18,6 +18,10 @@ Start with Gantry's [application guide for agents](https://github.com/scttymn/ga
 
 `dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
 
+## Mail
+
+All email uses `App.Mail`: controllers, jobs and authentication share one delivery configuration. In development, visit `http://{{.Name}}.localhost/dev/inbox` to see captured messages. The inbox keeps the latest 200 messages across reloads. Configure `MAIL_FROM` and `SMTP_*` through Houston for production; `MAIL_DRIVER=disabled` disables delivery. See [Gantry mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md).
+
 ## Where things go
 - `app/routes.go`: every route, and the controllers behind them
 - `app/<name>/`: a controller and its views (`.templ`), one folder per resource

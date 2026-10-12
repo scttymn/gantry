@@ -10,6 +10,7 @@ import (
 
 	"github.com/scttymn/gantry/jobs"
 	"github.com/scttymn/gantry/live"
+ "github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/testkit"
 
@@ -20,13 +21,17 @@ import (
 // newApp is the app on a test database, its jobs defined; they run when
 // the test calls a.Jobs.Drain.
 func newApp(t *testing.T) *app.App {
-	d := test.DB(t)
+	t.Setenv("DATA_DIR",t.TempDir())
+ d := test.DB(t)
+ mailer, mailErr := mail.Open(t.Context(),"test",t.TempDir(),mail.Config{},nil)
+ if mailErr != nil { t.Fatal(mailErr) }
+ t.Cleanup(func(){mailer.Close()})
 	q, err := jobs.New(t.Context(), d, jobs.Options{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	signer := sign.Signer{Key: []byte("test-key")}
-	a := &app.App{DB: d, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: signer, Jobs: q, Live: live.New(signer, live.Options{})}
+	a := &app.App{Mail:mailer, DB: d, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: signer, Jobs: q, Live: live.New(signer, live.Options{})}
 	if err := a.DefineJobs(); err != nil {
 		t.Fatal(err)
 	}

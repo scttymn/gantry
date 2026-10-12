@@ -18,6 +18,18 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: gantry-tests
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -26,7 +38,8 @@ jobs:
         run: |
           docker build -q --target toolchain -t gantry-toolchain .
           mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
-          docker run --rm -v "$PWD:/src" -w /src \
+          docker run --rm --network host -v "$PWD:/src" -w /src \
+            -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
             gantry-toolchain go test ./...
       - name: gofmt

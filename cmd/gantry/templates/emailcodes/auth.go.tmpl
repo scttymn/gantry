@@ -1,0 +1,36 @@
+// Package auth connects Gantry's email-code authentication to this app's views.
+// Code issuance, verification, limits and sessions stay in gantry/auth.
+package auth
+
+import (
+	"net/http"
+
+	gantryauth "github.com/scttymn/gantry/auth"
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/sign"
+	"github.com/scttymn/gantry/web"
+)
+
+type Auth = gantryauth.Auth
+type User = gantryauth.User
+
+// New selects email-code login. key must be a random secret of at least 32
+// bytes from AUTH_CODE_KEY. Use a real sender or a development mail capture;
+// mail.Log cannot deliver codes. Set Idle and Lifetime for session expiry.
+func New(d *db.DB, signer sign.Signer, sender mail.Sender, from string, key []byte) *Auth {
+	return &Auth{
+		DB: d, Signer: signer, Mail: sender, From: from,
+		EmailCodes: &gantryauth.EmailCodes{Key: key, Signup: {{.Signup}}},
+		Views: gantryauth.Views{
+			RequestCode: func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
+				return web.Render(w, r, http.StatusOK, requestCode(p))
+			},
+			VerifyCode: func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
+				return web.Render(w, r, http.StatusOK, verifyCode(p))
+			},
+		},
+	}
+}
+
+func Current(r *http.Request) (User, bool) { return gantryauth.Current(r) }

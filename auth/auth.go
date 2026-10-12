@@ -1,5 +1,6 @@
 // Package auth signs people in: email and password, sessions, and password
-// reset by emailed link. It works on two tables the app owns, as Rails 8's
+// reset by emailed link, or passwordless email codes (EmailCodes). It works
+// on tables the app owns, as Rails 8's
 // authentication generator leaves them (so a Rails app's users carry over,
 // bcrypt hashes and all):
 //
@@ -56,6 +57,8 @@ type Session struct {
 // the sign-in pages are (for its forms' actions and links).
 type Page struct {
 	Notice, Alert string
+	Status        int    // response status for custom views; zero means 200
+	EmailAddress  string // the address receiving a login code
 	Paths         Paths
 }
 
@@ -63,7 +66,10 @@ type Page struct {
 // draws them in its own layout (and may read its database to do so).
 // gantry's defaults (DefaultViews) are plain forms.
 type Views struct {
+	Setup          func(w http.ResponseWriter, r *http.Request, p Page) error
 	Login          func(w http.ResponseWriter, r *http.Request, p Page) error
+	RequestCode    func(w http.ResponseWriter, r *http.Request, p Page) error
+	VerifyCode     func(w http.ResponseWriter, r *http.Request, p Page) error
 	ForgotPassword func(w http.ResponseWriter, r *http.Request, p Page) error
 	EditPassword   func(w http.ResponseWriter, r *http.Request, p Page, token string) error
 }
@@ -80,11 +86,15 @@ type Paths struct {
 type Auth struct {
 	DB     *db.DB
 	Signer sign.Signer
-	// Mail sends password reset links. Nil: no reset by email (an app that
+	// EmailCodes opts into passwordless email-code login. Nil preserves
+	// password login. Signup is a separate explicit option.
+	EmailCodes *EmailCodes
+	FirstUser  *FirstUser // optional one-time installation setup for password auth
+	// Mail sends login codes or password reset links. Nil: no reset by email (an app that
 	// sends no email): its pages aren't mounted, and Page.Paths.Passwords is
 	// blank, so the sign-in page doesn't offer it.
 	Mail mail.Sender
-	From string // who reset emails are from
+	From string // who authentication emails are from
 	// URL is an absolute address on the site for path, for emailed links:
 	// the app's configured host, never the request's, which whoever asks
 	// could set to their own.
@@ -168,8 +178,17 @@ func (a *Auth) paths() Paths {
 
 func (a *Auth) views() Views {
 	v, d := a.Views, DefaultViews()
+	if v.Setup == nil {
+		v.Setup = d.Setup
+	}
 	if v.Login == nil {
 		v.Login = d.Login
+	}
+	if v.RequestCode == nil {
+		v.RequestCode = d.RequestCode
+	}
+	if v.VerifyCode == nil {
+		v.VerifyCode = d.VerifyCode
 	}
 	if v.ForgotPassword == nil {
 		v.ForgotPassword = d.ForgotPassword
@@ -266,10 +285,33 @@ func (a *Auth) CreateUser(ctx context.Context, email, password string) (User, er
 	if err != nil {
 		return User{}, err
 	}
+	// Completion is permanent. Avoid installation locks for ordinary account
+	// creation once setup is over; the pending path still rechecks under lock.
+	finishSetup := false
+	if a.setupEnabled() {
+		if err := a.DB.Read.QueryRowContext(ctx, `SELECT NOT completed FROM auth_setup WHERE id=1`).Scan(&finishSetup); err != nil {
+			return User{}, err
+		}
+	}
 	now := a.now()
 	u := User{EmailAddress: Normalize(email), PasswordDigest: digest}
-	err = a.DB.Write.QueryRowContext(ctx, `INSERT INTO users (email_address, password_digest, created_at, updated_at) VALUES ($1, $2, $3, $3) RETURNING id`,
-		u.EmailAddress, u.PasswordDigest, now).Scan(&u.ID)
+	err = a.DB.Tx(ctx, func(tx *db.Tx) error {
+		if finishSetup {
+			if _, _, err := a.setupLock(ctx, tx); err != nil {
+				return err
+			}
+		}
+		if err := tx.QueryRowContext(ctx, `INSERT INTO users (email_address, password_digest, created_at, updated_at) VALUES ($1, $2, $3, $3) RETURNING id`, u.EmailAddress, u.PasswordDigest, now).Scan(&u.ID); err != nil {
+			return err
+		}
+		if finishSetup {
+			if err := a.completeSetup(ctx, tx); err != nil {
+				return err
+			}
+			tx.AfterCommit(a.removeSetupCode)
+		}
+		return nil
+	})
 	return u, err
 }
 
@@ -425,12 +467,30 @@ func (a *Auth) Required(w http.ResponseWriter, r *http.Request) error {
 // filters run first.
 func (a *Auth) Routes(rt web.Routes) {
 	p := a.paths()
-	rt.Handle("GET "+p.Login, a.loginPage)
-	rt.Handle("POST "+p.Login, a.login)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := a.PrepareFirstUser(ctx); err != nil {
+		panic(err)
+	}
+	if a.EmailCodes != nil {
+		if err := a.ValidateEmailCodes(); err != nil {
+			panic(err)
+		}
+		rt.Handle("GET "+p.Login, a.requestCodePage)
+		rt.Handle("POST "+p.Login, a.sendCode)
+		rt.Handle("GET "+p.Login+"/verify", a.verifyCodePage)
+		rt.Handle("POST "+p.Login+"/verify", a.confirmCode)
+	} else {
+		rt.Handle("GET "+p.Login, a.loginPage)
+		rt.Handle("POST "+p.Login, a.login)
+		if a.FirstUser != nil {
+			rt.Handle("POST "+p.Login+"/setup", a.setupUser)
+		}
+	}
 	for _, m := range []string{"GET", "POST", "DELETE"} {
 		rt.Handle(m+" "+p.Logout, a.logout)
 	}
-	if a.Mail == nil {
+	if a.Mail == nil || a.EmailCodes != nil {
 		return
 	}
 	rt.Handle("GET "+p.Passwords+"/new", a.forgotPassword)
@@ -443,7 +503,7 @@ func (a *Auth) Routes(rt web.Routes) {
 // page is the flash for this page, taken.
 func (a *Auth) page(w http.ResponseWriter, r *http.Request) Page {
 	p := Page{Paths: a.paths()}
-	if a.Mail == nil {
+	if a.Mail == nil || a.EmailCodes != nil {
 		p.Paths.Passwords = ""
 	}
 	if kind, msg, ok := a.flash().Take(w, r); ok {
@@ -464,6 +524,14 @@ func (a *Auth) allow(r *http.Request, action string) bool {
 }
 
 func (a *Auth) loginPage(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Set("Cache-Control", "no-store")
+	pending, err := a.FirstUserPending(r.Context())
+	if err != nil {
+		return err
+	}
+	if pending {
+		return a.setupPage(w, r, "", "", http.StatusOK)
+	}
 	return a.views().Login(w, r, a.page(w, r))
 }
 
@@ -484,13 +552,17 @@ func (a *Auth) login(w http.ResponseWriter, r *http.Request) error {
 	if _, err := a.StartSession(w, r, u); err != nil {
 		return err
 	}
-	to := p.AfterLogin
+	a.afterLogin(w, r, http.StatusFound)
+	return nil
+}
+
+func (a *Auth) afterLogin(w http.ResponseWriter, r *http.Request, status int) {
+	to := a.paths().AfterLogin
 	if back, ok := web.SignedCookie(r, a.Signer, returnToCookie); ok && strings.HasPrefix(back, "/") && !strings.HasPrefix(back, "//") && !strings.HasPrefix(back, "/\\") {
 		to = back
 	}
 	web.ClearCookie(w, returnToCookie)
-	http.Redirect(w, r, to, http.StatusFound)
-	return nil
+	http.Redirect(w, r, to, status)
 }
 
 func (a *Auth) logout(w http.ResponseWriter, r *http.Request) error {
@@ -500,6 +572,7 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	web.ClearCookie(w, a.cookie())
+	web.ClearCookie(w, codeCookie)
 	http.Redirect(w, r, a.paths().Login, http.StatusSeeOther)
 	return nil
 }

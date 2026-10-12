@@ -50,8 +50,14 @@ an older CLI may not have `check`.
 | Public page caching | `web.PageCache` for explicitly selected pages identical for every visitor | Data-version invalidation, bounded cache size and a suitable maximum age |
 | Images and uploads | `assets.Images`, Gantry's image pipeline and `storage` as appropriate | Sized image variants, responsive markup and the existing precompile process |
 | Data | The app's `db.DB`, migrations, model queries and sqlc configuration | Its selected database, read/write handles and transaction boundaries |
-| Sign-in and API access | Existing auth wiring, or the `auth` / `api-tokens` recipes when missing | Framework password/session handling and server-side access checks |
+| Sign-in and API access | Existing auth wiring, or the `auth` / `api-tokens` recipes when missing; `auth --email-code [--signup]` for email codes | Framework password/session handling and server-side access checks |
+| Email delivery | App-wide `App.Mail`, configured once with `mail.Config`; development inbox at `/dev/inbox` | Shared delivery, safe development capture and reusable testing |
 | Background work and live updates | `jobs` and `live`, wired through the app | Existing queues, schedules and authorization for streams |
+
+For email-code login, use the [shared Auth implementation](auth.md), configure a
+shared [app mail service](mail.md) and an external code secret, and make
+self-registration an explicit app choice. Do not copy an OTP implementation
+from another app or add a shared development bypass.
 
 Keep scripts in `assets/js`, styles in `assets/css`, and shared page shells in
 `app/shared`. Mount the generated asset routes. Avoid a parallel file server,
@@ -177,3 +183,13 @@ Within the user's deployment authorization, use the existing push-to-deploy
 workflow or `bin/gantry deploy --server --follow`. Confirm the intended commit
 is serving and check the affected live pages before reporting success. Creating
 a local development app does not itself require creating a production project.
+
+### First-install password accounts
+
+The password generator now uses shared Gantry Auth with a one-time setup wizard
+at `/login`. Retrieve the code only through the generated `auth:setup-code`
+operator task in a trusted terminal. Never write code output to deployment logs,
+URLs, source, or chat. Existing installations must adopt the setup migration
+with `completed=true`; zero users does not mean a new installation. See
+[Authentication](auth.md#password-login-and-first-install-setup) for hooks,
+recovery, and migration from the older app-owned password implementation.

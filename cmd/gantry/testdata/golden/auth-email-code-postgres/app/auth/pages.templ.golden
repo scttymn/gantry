@@ -1,0 +1,54 @@
+package auth
+
+import (
+	gantryauth "github.com/scttymn/gantry/auth"
+	"example.com/shop/app/shared/layout"
+)
+
+templ messages(p gantryauth.Page) {
+	if p.Notice != "" {
+		<p role="status">{ p.Notice }</p>
+	}
+	if p.Alert != "" {
+		<p role="alert">{ p.Alert }</p>
+	}
+}
+
+templ requestCode(p gantryauth.Page) {
+	@layout.Layout(layout.Page{Title: "Sign in"}) {
+		<main class="auth">
+			<h1>Sign in</h1>
+			<p>We'll email you a code to continue.</p>
+			@messages(p)
+			<form id="request-code" method="post" action={ templ.URL(p.Paths.Login) }>
+				<label>Email <input type="email" name="email_address" required autofocus autocomplete="email" maxlength="254"/></label>
+				<button type="submit">Email me a code</button>
+			</form>
+		</main>
+	}
+}
+
+templ verifyCode(p gantryauth.Page) {
+	@layout.Layout(layout.Page{Title: "Check your email"}) {
+		<main class="auth">
+			<h1>Check your email</h1>
+			<p>Enter the code sent to { p.EmailAddress }.</p>
+			@messages(p)
+			<form id="verify-code" method="post" action={ templ.URL(p.Paths.Login + "/verify") }>
+				<label>Code <input type="text" name="code" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6"/></label>
+				<button type="submit">Continue</button>
+			</form>
+			<form id="resend-code" method="post" action={ templ.URL(p.Paths.Login) }>
+				<input type="hidden" name="email_address" value={ p.EmailAddress }/>
+				<button type="submit">Send a new code</button>
+			</form>
+			<p><a href={ templ.URL(p.Paths.Login) }>Use a different email</a></p>
+		</main>
+	}
+}
+
+templ SignOut() {
+	<form id="sign-out" method="post" action="/logout">
+		<button type="submit">Sign out</button>
+	</form>
+}
