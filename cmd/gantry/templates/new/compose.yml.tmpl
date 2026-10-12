@@ -13,6 +13,7 @@ services:
 {{- end}}
     expose: ["8080"]
     environment:
+      GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true} # development panel; false hides it
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
 {{- if .Postgres}}
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/{{.Name}}?sslmode=disable

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"path"
 	"strconv"
 	"strings"
@@ -181,6 +182,15 @@ func (rt *Router) Handler() http.Handler {
 	h = rt.arrive(h)
 	h = withCurrent(h)
 	h = rt.Recover(h)
+	// Diagnostics are a framework default, including apps created before the
+	// feature existed. Inject before compression; production does no scanning.
+	if os.Getenv("GANTRY_ENV") == "development" {
+		if os.Getenv("GANTRY_DEV_WARNINGS") == "false" {
+			h = Timing(h, rt.Log)
+		} else {
+			h = Development(h, ".", rt.Log)
+		}
+	}
 	return NoStoreOnErrors(compressHandler(h))
 }
 

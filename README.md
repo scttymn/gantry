@@ -19,7 +19,17 @@ bin/gantry test                # the app's tests, in a throwaway copy
 ```
 `bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release the script pins, for this machine, into `.gantry/bin`. Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
 
+`bin/gantry dev` first prints development warnings with file and line numbers, then starts Houston. `bin/gantry check` runs those checks alone; `--strict` makes convention violations fail CI. See [development checks and the editor example](docs/development.md).
+
 `bin/gantry dev`, `test`, `console` and `deploy` are Houston's commands; `bin/gantry db` and `bin/gantry task` run the app's own.
+
+## Gantry Strict
+
+Strict helps apps adopt Gantry’s built-in performance and development patterns
+instead of rebuilding them. Its extensible rules are shared by the CLI and the
+development browser panel, injected automatically by the router in dev mode. Run `bin/gantry check --rules` for the installed
+catalog. See [the purpose and extension contract](docs/strict.md) and
+[contributing guidance](CONTRIBUTING.md).
 
 ## Packages
 | Package | What it does |

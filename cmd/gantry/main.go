@@ -19,6 +19,7 @@ import (
 func main() { os.Exit(run(os.Args[1:], ".", os.Stdout, os.Stderr)) }
 
 const usage = `usage:
+  gantry check [--strict|--rules]                                     development checks (no server needed)
   gantry new NAME [--db sqlite|postgres] [--module PATH] [--gantry PATH] [--in-module] [--skip-houston]
   gantry g resource [NAMESPACE/]TABLE FIELD:TYPE[:required]...
   gantry g migration NAME [FIELD:TYPE[:required]...]
@@ -46,6 +47,14 @@ func run(args []string, root string, out, errOut io.Writer) int {
 	}
 	var err error = errExit(2)
 	switch args[0] {
+	case "check":
+		err = developmentCheck(root, args[1:], out)
+	case "dev":
+		// Advice must never prevent the development server from starting.
+		if checkErr := developmentCheck(root, nil, errOut); checkErr != nil {
+			fmt.Fprintln(errOut, "gantry check:", checkErr)
+		}
+		err = houston(root, args, errOut)
 	case "new":
 		err = newApp(root, args[1:], out, errOut)
 	case "g", "generate":

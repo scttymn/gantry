@@ -5,9 +5,14 @@ A [gantry](https://github.com/scttymn/gantry) app, run and deployed with [Housto
 ```sh
 bin/gantry dev             # http://shop.localhost, rebuilt as you change it
 bin/gantry test            # its tests, in a throwaway copy
+bin/gantry check --strict  # Gantry defaults; violations fail CI
 bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
 bin/gantry console         # psql on the dev database
 ```
+
+## Development checks
+
+`dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
 
 ## Where things go
 - `app/routes.go`: every route, and the controllers behind them
