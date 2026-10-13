@@ -15,7 +15,13 @@ import (
 //   - busy_timeout, so a connection waits for a lock instead of failing
 //   - foreign keys enforced (SQLite leaves them off by default)
 //   - synchronous NORMAL: safe with WAL, and much faster than FULL
-var sqlitePragmas = []string{"busy_timeout(5000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(NORMAL)"}
+//   - temp_store MEMORY: what SQLite would keep in a temporary file (a
+//     statement's journal past 64 KB in a transaction, a large sort or
+//     CREATE INDEX, VACUUM's copy) is kept in memory. A production image
+//     is an empty one: with no /tmp in it SQLite has nowhere to name the
+//     file, and each of those failed there, and only there, with
+//     "disk I/O error (6410)".
+var sqlitePragmas = []string{"busy_timeout(5000)", "journal_mode(WAL)", "foreign_keys(1)", "synchronous(NORMAL)", "temp_store(MEMORY)"}
 
 func sqliteDSN(path string, readOnly bool) string {
 	q := url.Values{}
