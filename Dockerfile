@@ -14,13 +14,16 @@ WORKDIR /src
 # Release CLIs. bin/gantry downloads gantry-$os-$arch from the GitHub Release
 # and checks it against SHA256SUMS. The workflow exports this stage.
 FROM golang:1.27-bookworm AS release-build
+# The release's tag, which the binaries say they are (main.releaseVersion): gantry
+# new writes it into an app's go.mod, and bin/gantry downloads that release.
+ARG VERSION
 ENV CGO_ENABLED=0 GOFLAGS="-buildvcs=false"
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN mkdir -p /dist && for os in darwin linux; do for arch in arm64 amd64; do \
-      GOOS=$os GOARCH=$arch go build -trimpath \
+      GOOS=$os GOARCH=$arch go build -trimpath -ldflags "-X main.releaseVersion=$VERSION" \
         -o /dist/gantry-$os-$arch ./cmd/gantry || exit 1; \
     done; done
 

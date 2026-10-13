@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"text/template"
 )
@@ -40,8 +41,18 @@ type NewApp struct {
 }
 
 // latestRelease is what a new app requires when this gantry isn't a release
-// itself (built from a checkout): the newest tag when it was built.
-const latestRelease = "v0.11.3"
+// itself (built from a checkout): the newest tag when it was built. It's
+// raised to a release's tag before the tag is pushed, and the release's tests
+// check it was (TestLatestReleaseIsTheTag), so it can't fall behind.
+const latestRelease = "v0.14.2"
+
+// releaseVersion is the release's tag in the CLI binaries a release
+// publishes: the Dockerfile's release-build stage sets it (-X
+// main.releaseVersion). They're built from a checkout, so Go's build info
+// doesn't say which release they are.
+var releaseVersion string
+
+var releaseTag = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
 
 // houstonRelease is the Houston CLI bin/gantry downloads. It is a release
 // that published houston-$os-$arch and SHA256SUMS.
@@ -151,17 +162,23 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec templ generate, gantry exec go mod tidy, and bin/gantry dev.\n", name, name)
 		return nil
 	}
+	houston, err := houstonFor(dir, name, errOut)
+	if err != nil {
+		return err
+	}
 	steps := [][]string{
-		{"houston", "init", "--name", name},
+		{houston, "init", "--name", name},
 		// templ's code first, so tidy sees the imports it adds.
-		{"houston", "exec", "templ", "generate"},
-		{"houston", "exec", "go", "mod", "tidy"},
+		{houston, "exec", "templ", "generate"},
+		{houston, "exec", "go", "mod", "tidy"},
 	}
 	if !a.InModule {
 		steps = append(steps, []string{"git", "init", "-q"})
 	}
 	for _, step := range steps {
-		fmt.Fprintln(out, "  run", strings.Join(step, " "))
+		// The pinned Houston is a path: it's "houston" to people.
+		shown := strings.Join(append([]string{filepath.Base(step[0])}, step[1:]...), " ")
+		fmt.Fprintln(out, "  run", shown)
 		var err error
 		if step[1] == "init" {
 			// Its own "Next:" would be the wrong one here: its output is
@@ -174,7 +191,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 			err = runIn(dir, step[0], step[1:]...)
 		}
 		if err != nil {
-			return fmt.Errorf("%s failed (%v): the files are written; run it, and the steps after it, in %s/", strings.Join(step, " "), err, name)
+			return fmt.Errorf("%s failed (%v): the files are written; run it, and the steps after it, in %s/", shown, err, name)
 		}
 	}
 	fmt.Fprintf(out, "\nNext: cd %s && bin/gantry dev, and it's at http://%s.localhost\n", name, name)
@@ -305,9 +322,88 @@ func title(name string) string {
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// gantryRelease is this gantry's version when it was installed as a release
-// (go install .../cmd/gantry@v0.6.0), else "".
+// houstonFor is the houston gantry new runs in the app at dir: the one on
+// PATH when it's houstonRelease or newer (or says no version: one built from
+// a checkout), else the release the app pins, which its bin/gantry downloads.
+// An older one doesn't know what gantry new asks of it (init --name).
+func houstonFor(dir, name string, errOut io.Writer) (string, error) {
+	found := houstonVersion()
+	if found != "" && !older(found, houstonRelease) {
+		return "houston", nil
+	}
+	have := "there's no houston on PATH"
+	if found != "" {
+		have = "the houston on PATH is " + found
+	}
+	path, err := pinnedHouston(dir)
+	if err != nil {
+		return "", fmt.Errorf("gantry new needs Houston %s or newer, %s, and downloading it failed (%v): the files are written; install it (https://github.com/scttymn/houston#install), then in %s/ run houston init --name %s, gantry exec templ generate and gantry exec go mod tidy", houstonRelease, have, err, name, name)
+	}
+	fmt.Fprintf(errOut, "note: gantry new needs Houston %s or newer and %s, so it's using the release the app pins (%s/.gantry/bin/houston, as bin/gantry does)\n", houstonRelease, have, name)
+	return path, nil
+}
+
+// houstonVersion is the version of the houston on PATH ("v0.5.4", or
+// whatever one built from a checkout says), and "" when there's none.
+// Tests replace it.
+var houstonVersion = func() string {
+	out, err := exec.Command("houston", "--version").Output()
+	fields := strings.Fields(string(out)) // "houston version v0.5.4"
+	if err != nil || len(fields) == 0 {
+		return ""
+	}
+	return fields[len(fields)-1]
+}
+
+// pinnedHouston has the app's bin/gantry download the Houston release it
+// pins, and is where that is. GANTRY_BIN keeps bin/gantry from downloading
+// a gantry as well: this one is running. Tests replace it.
+var pinnedHouston = func(dir string) (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	// Absolute: the steps run in the app's folder, where a path relative to
+	// this one isn't the same file.
+	if dir, err = filepath.Abs(dir); err != nil {
+		return "", err
+	}
+	cmd := exec.Command(filepath.Join(dir, "bin", "gantry"), "help")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GANTRY_BIN="+self)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		if said := strings.TrimSpace(string(out)); said != "" {
+			return "", errors.New(said)
+		}
+		return "", err
+	}
+	return filepath.Join(dir, ".gantry", "bin", "houston"), nil
+}
+
+// older reports whether release tag v is before min; a v that isn't a
+// release tag (a build from a checkout) is not.
+func older(v, min string) bool {
+	a, b := releaseTag.FindStringSubmatch(v), releaseTag.FindStringSubmatch(min)
+	if a == nil || b == nil {
+		return false
+	}
+	for i := 1; i <= 3; i++ {
+		x, _ := strconv.Atoi(a[i])
+		y, _ := strconv.Atoi(b[i])
+		if x != y {
+			return x < y
+		}
+	}
+	return false
+}
+
+// gantryRelease is this gantry's version when it is a release: one of a
+// release's binaries (releaseVersion), or installed as one (go install
+// .../cmd/gantry@v0.6.0); else "".
 func gantryRelease() string {
+	if releaseTag.MatchString(releaseVersion) {
+		return releaseVersion
+	}
 	info, ok := debug.ReadBuildInfo()
 	if !ok || !strings.HasPrefix(info.Main.Version, "v") || strings.Contains(info.Main.Version, "-0.") {
 		return ""
