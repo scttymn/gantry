@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 
-	_ "modernc.org/sqlite" // pure Go: the binary stays static
+	"modernc.org/sqlite" // pure Go: the binary stays static
 )
 
 // sqlitePragmas are set on every connection:
@@ -45,13 +45,23 @@ func sqliteDSN(path string, readOnly bool) string {
 	return "file:" + path + "?" + q.Encode()
 }
 
+// sqlitePool is a pool of connections to the database at path, each keeping
+// its compiled statements (stmtcache.go).
+func sqlitePool(path string, readOnly bool) (*sql.DB, error) {
+	c, err := sqlite.NewConnector(sqliteDSN(path, readOnly))
+	if err != nil {
+		return nil, err
+	}
+	return sql.OpenDB(cachingConnector{c}), nil
+}
+
 func openSQLite(path string) (*DB, error) {
 	if dir := filepath.Dir(path); dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return nil, err
 		}
 	}
-	write, err := sql.Open("sqlite", sqliteDSN(path, false))
+	write, err := sqlitePool(path, false)
 	if err != nil {
 		return nil, err
 	}
@@ -61,7 +71,7 @@ func openSQLite(path string) (*DB, error) {
 	write.SetMaxIdleConns(1)
 	write.SetConnMaxLifetime(0)
 	write.SetConnMaxIdleTime(0)
-	read, err := sql.Open("sqlite", sqliteDSN(path, true))
+	read, err := sqlitePool(path, true)
 	if err != nil {
 		write.Close()
 		return nil, err
