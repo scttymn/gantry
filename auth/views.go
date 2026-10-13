@@ -11,6 +11,33 @@ import (
 // show what each page needs, and nothing of any app's look.
 func DefaultViews() Views {
 	return Views{
+		Setup: func(w http.ResponseWriter, r *http.Request, p Page) error {
+			return plain(w, "Create your first account", p, `<p>Enter the setup code from your deployment terminal to finish installing this app.</p>
+<form id="first-user" method="post" action="`+html.EscapeString(p.Paths.Login+"/setup")+`">
+<label>Setup code <input type="password" name="setup_code" required autofocus autocomplete="off" maxlength="128"></label>
+<label>Email <input type="email" name="email_address" value="`+html.EscapeString(p.EmailAddress)+`" required autocomplete="username" maxlength="254"></label>
+<label>Password <input type="password" name="password" required autocomplete="new-password" maxlength="72"></label>
+<label>Confirm password <input type="password" name="password_confirmation" required autocomplete="new-password" maxlength="72"></label>
+<button type="submit">Create account</button></form>`)
+		},
+		RequestCode: func(w http.ResponseWriter, r *http.Request, p Page) error {
+			return plain(w, "Sign in", p, `<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
+<label>Email <input type="email" name="email_address" required autofocus autocomplete="email" maxlength="254"></label>
+<button type="submit">Email me a code</button>
+</form>`)
+		},
+		VerifyCode: func(w http.ResponseWriter, r *http.Request, p Page) error {
+			return plain(w, "Check your email", p, `<p>Enter the code sent to `+html.EscapeString(p.EmailAddress)+`.</p>
+<form method="post" action="`+html.EscapeString(p.Paths.Login+"/verify")+`">
+<label>Code <input type="text" name="code" required autofocus inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" minlength="6" maxlength="6"></label>
+<button type="submit">Continue</button>
+</form>
+<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
+<input type="hidden" name="email_address" value="`+html.EscapeString(p.EmailAddress)+`">
+<button type="submit">Send a new code</button>
+</form>
+<p><a href="`+html.EscapeString(p.Paths.Login)+`">Use a different email</a></p>`)
+		},
 		Login: func(w http.ResponseWriter, r *http.Request, p Page) error {
 			return plain(w, "Sign in", p, `<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
 <label>Email <input type="email" name="email_address" required autofocus autocomplete="username"></label>
@@ -53,6 +80,9 @@ func plain(w http.ResponseWriter, title string, p Page, form string) error {
 	}
 	if p.Alert != "" {
 		body += `<p role="alert">` + html.EscapeString(p.Alert) + `</p>`
+	}
+	if p.Status != 0 {
+		w.WriteHeader(p.Status)
 	}
 	_, err := io.WriteString(w, body+form+`</main></body></html>`)
 	return err

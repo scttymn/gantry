@@ -40,6 +40,16 @@ CREATE TABLE "sessions" (
 CREATE UNIQUE INDEX "index_sessions_on_token_digest" ON "sessions" ("token_digest");
 CREATE INDEX "index_sessions_on_user_id" ON "sessions" ("user_id");
 
+-- A fresh install alone starts pending. Never derive this flag from user count
+-- on later starts. Existing apps adopting setup must insert completed=true.
+CREATE TABLE auth_setup (
+ id integer PRIMARY KEY CHECK (id=1),
+ completed boolean NOT NULL,
+ code_digest text NOT NULL DEFAULT ''
+);
+INSERT INTO auth_setup(id,completed) VALUES(1,false);
+
 -- +goose Down
+DROP TABLE auth_setup;
 DROP TABLE "sessions";
 DROP TABLE "users";

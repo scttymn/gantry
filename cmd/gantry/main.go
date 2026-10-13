@@ -25,7 +25,7 @@ const usage = `usage:
   gantry g migration NAME [FIELD:TYPE[:required]...]
   gantry g error-pages [--force]
   gantry g api-tokens [--prefix PREFIX_]                      a recipe: named API tokens
-  gantry g auth                                               a recipe: sign-in, sessions, password reset
+  gantry g auth [--email-code [--signup]]                      a recipe: password or email-code sign-in
   gantry g storage                                            Active Storage's tables, for attached files
   gantry g fonts FAMILY[:400,600,400i]... [--subsets latin,latin-ext] [--force]
                                                               Google Fonts, served from the app

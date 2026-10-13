@@ -1,0 +1,21 @@
+-- Email-code challenges and shared rate limits. The app owns these tables.
+-- No plaintext codes or challenge tokens are stored. Expiry is Unix seconds.
+-- +goose Up
+CREATE TABLE auth_login_codes (
+  challenge_digest text PRIMARY KEY,
+  email_address text NOT NULL UNIQUE,
+  code_digest text NOT NULL,
+  expires_at bigint NOT NULL,
+  attempts integer NOT NULL DEFAULT 0
+);
+CREATE INDEX auth_login_codes_expiry ON auth_login_codes (expires_at);
+CREATE TABLE auth_code_limits (
+  bucket text PRIMARY KEY,
+  count integer NOT NULL,
+  expires_at bigint NOT NULL
+);
+CREATE INDEX auth_code_limits_expiry ON auth_code_limits (expires_at);
+
+-- +goose Down
+DROP TABLE auth_code_limits;
+DROP TABLE auth_login_codes;

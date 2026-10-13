@@ -1,0 +1,31 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
+
+	"example.com/shop/config"
+	"github.com/scttymn/gantry/auth"
+)
+
+func init() {
+	Tasks = append(Tasks, Task{Name: "auth:setup-code", Help: "Show the pending first-install code (--rotate replaces a lost code)", Run: setupCode})
+}
+
+// setupCode runs only in the operator's terminal. Never expose it as an HTTP
+// route or call it in a release hook: its output is a one-time credential.
+func setupCode(ctx context.Context, env TaskEnv, args []string) error {
+	rotate := len(args) == 1 && args[0] == "--rotate"
+	if len(args) > 0 && !rotate {
+		return errors.New("usage: task auth:setup-code [--rotate]")
+	}
+	a := &auth.Auth{DB: env.DB, FirstUser: &auth.FirstUser{CodeFile: filepath.Join(config.FromEnv().DataDir, "initial-account-code")}}
+	code, err := a.FirstUserCode(ctx, rotate)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintln(env.Out, code)
+	return err
+}

@@ -10,12 +10,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"text/template"
+	"time"
 )
 
 // Recipe is what a recipe's templates are filled with.
 type Recipe struct {
 	Module   string // the app's import path: "example.com/shop", or a module's folder
 	Postgres bool
+	Signup   bool   // email-code auth: allow signup after verification
 	Prefix   string // api-tokens: what every token starts with
 }
 
@@ -111,14 +113,24 @@ func relTo(root, path string) string {
 	return path
 }
 
-// generateAuth is `gantry g auth`: sign-in with email and password, written
-// into the app (Rails 8's authentication generator): the users and sessions
-// tables, their queries, the auth package (sessions with Idle and Lifetime,
-// the Fetch and Require filters, sign in and out, password reset by email),
-// its pages in the app's layout, and its tests.
+// generateAuth writes app-owned schema and views around shared Gantry Auth,
+// including a one-time first-install setup flow for password authentication.
 func generateAuth(root string, args []string, out io.Writer) error {
-	if len(args) > 0 {
-		return fmt.Errorf("g auth takes no arguments (%q)", args[0])
+	fs := flag.NewFlagSet("auth", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	emailCode := fs.Bool("email-code", false, "passwordless email-code login")
+	signup := fs.Bool("signup", false, "create accounts after verifying email (with --email-code)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("g auth takes no arguments (%q)", fs.Arg(0))
+	}
+	if *signup && !*emailCode {
+		return errors.New("--signup requires --email-code")
+	}
+	if *emailCode {
+		return generateEmailCodeAuth(root, *signup, out)
 	}
 	mod, err := appModule(root)
 	if err != nil {
@@ -133,7 +145,7 @@ func generateAuth(root string, args []string, out io.Writer) error {
 		filepath.Join("app", "models", "users.sql"):                                                              "users.sql.tmpl",
 		filepath.Join("app", "models", "sessions.sql"):                                                           "sessions.sql.tmpl",
 		filepath.Join("app", "auth", "auth.go"):                                                                  "auth.go.tmpl",
-		filepath.Join("app", "auth", "controller.go"):                                                            "controller.go.tmpl",
+		filepath.Join("app", "auth_setup.go"):                                                                    "setup_task.go.tmpl",
 		filepath.Join("app", "auth", "pages.templ"):                                                              "pages.templ.tmpl",
 		filepath.Join("app", "auth", "auth_test.go"):                                                             "auth_test.go.tmpl",
 	}
@@ -143,14 +155,26 @@ func generateAuth(root string, args []string, out io.Writer) error {
 	fmt.Fprintf(out, `
 Next:
   1. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
-     and gantry exec go mod tidy (it uses bcrypt).
-  2. In app/routes.go, give App an Auth and mount it:
-       a.Auth = &auth.Auth{DB: a.DB, Signer: a.Signer, Mail: mail.Log{Logger: a.Log},
-           From: "app@example.com", URL: func(p string) string { return "https://example.com" + p },
-           Limits: &web.Limits{}, Log: a.Log}  // Idle, Lifetime: when sessions end
+     and gantry exec go mod tidy.
+  2. In app/routes.go, give App an Auth and mount it (import config and filepath):
+       a.Auth = auth.New(a.DB, a.Signer, a.Mail, a.Mail.From,
+           filepath.Join(config.FromEnv().DataDir, "initial-account-code"))
+       a.Auth.URL = func(p string) string { return "https://example.com" + p }
        a.Auth.Routes(rt)
-       rt.Scope("/admin", web.Pipeline{a.Auth.Require}, func(s *web.Scope) { ... })
-  3. The first user, from a task in app/tasks.go: a.Auth.CreateUser(ctx, email, password).
+       rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
+     Set Idle/Lifetime for session expiry and FirstUser.CreateUser for app-specific roles.
+  3. Open /login to finish first-install setup. In your terminal, retrieve its code:
+       gantry task auth:setup-code
+     On production, using a Houston CLI with exec --server and authorized SSH:
+       houston exec --server /app task auth:setup-code
+     With an older CLI, run /app task auth:setup-code inside the deployed container.
+     Never put this command in deployment hooks or logs. --rotate replaces a lost
+     pending code; completed setup never reopens. A seeded user also closes setup.
+  4. gantry check --strict, then gantry test.
+
+Password login: /login and /logout. Reset links: /passwords.
+Existing apps: adopt shared Auth deliberately; never regenerate over custom auth.
+Documentation: https://github.com/scttymn/gantry/blob/main/docs/auth.md
 `)
 	return nil
 }
@@ -194,6 +218,48 @@ Next:
        f, ok := storage.FileFrom(r, "clip[thumbnail]")
        a.Storage.Attach(ctx, storage.Ref{RecordType: "Clip", RecordID: id, Name: "thumbnail"}, f)
        @a.Storage.Img(blob, images.Img{Alt: "…", Sizes: "240px"})
+`)
+	return nil
+}
+
+// generateEmailCodeAuth writes the app's schema and views, keeping sensitive
+// authentication operations in the shared, tested gantry/auth implementation.
+func generateEmailCodeAuth(root string, signup bool, out io.Writer) error {
+	mod, err := appModule(root)
+	if err != nil {
+		return err
+	}
+	if existing, _ := filepath.Glob(filepath.Join(root, "db", "migrations", "*_create_users_and_sessions.sql")); len(existing) > 0 {
+		return fmt.Errorf("%s is there already: the recipe was applied; see docs/auth.md to add email codes to existing auth", relTo(root, existing[0]))
+	}
+	stamp := now().UTC().Format("20060102150405")
+	files := map[string]string{
+		filepath.Join("db", "migrations", stamp+"_create_users_and_sessions.sql"):                                          "users.sql.tmpl",
+		filepath.Join("db", "migrations", now().UTC().Add(time.Second).Format("20060102150405")+"_create_login_codes.sql"): "codes.sql.tmpl",
+		filepath.Join("app", "auth", "auth.go"):                                                                            "auth.go.tmpl",
+		filepath.Join("app", "auth", "pages.templ"):                                                                        "pages.templ.tmpl",
+		filepath.Join("app", "auth", "auth_test.go"):                                                                       "auth_test.go.tmpl",
+	}
+	if err := writeRecipe(root, "emailcodes", files, Recipe{Module: mod, Postgres: sqlcEngine(root) == "postgresql", Signup: signup}, out); err != nil {
+		return err
+	}
+	fmt.Fprint(out, `
+Next:
+  1. gantry exec templ generate, gantry exec go mod tidy, gantry db migrate.
+  2. Use the app-wide a.Mail (inbox in development, SMTP in production).
+     Configure MAIL_FROM/SMTP settings and AUTH_CODE_KEY: a random secret of at least 32 bytes, outside the database.
+     Supply the same secret to every app instance. Never use mail.Log for codes.
+  3. In app/routes.go, give App an Auth and mount it:
+       a.Auth = auth.New(a.DB, a.Signer, a.Mail, a.Mail.From, []byte(authCodeKey))
+       a.Auth.Routes(rt)
+       rt.Scope("/account", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
+     Routes validates the mail and key configuration at startup.
+  4. Set session Idle/Lifetime and optional EmailCodes.DailyLimit for your app.
+     Schedule a.Auth.PruneLoginCodes(ctx), e.g. hourly, using Gantry jobs.
+  5. gantry check --strict, then gantry test.
+
+Email-code login: /login, /login/verify and /logout.
+Documentation: https://github.com/scttymn/gantry/blob/main/docs/auth.md
 `)
 	return nil
 }

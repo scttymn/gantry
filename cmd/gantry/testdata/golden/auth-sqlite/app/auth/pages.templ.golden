@@ -2,43 +2,44 @@ package auth
 
 import (
 	"net/url"
+ gantryauth "github.com/scttymn/gantry/auth"
 
 	"example.com/shop/app/shared/layout"
 )
 
-// flashes is a page's message: a notice, or an alert.
-type flashes struct{ Notice, Alert string }
 
-templ messages(f flashes) {
-	if f.Notice != "" {
-		<p role="status">{ f.Notice }</p>
+templ messages(p gantryauth.Page) {
+	if p.Notice != "" {
+		<p role="status">{ p.Notice }</p>
 	}
-	if f.Alert != "" {
-		<p role="alert">{ f.Alert }</p>
+	if p.Alert != "" {
+		<p role="alert">{ p.Alert }</p>
 	}
 }
 
-templ signIn(f flashes) {
+templ signIn(p gantryauth.Page) {
 	@layout.Layout(layout.Page{Title: "Sign in"}) {
 		<main class="auth">
 			<h1>Sign in</h1>
-			@messages(f)
-			<form method="post" action={ templ.URL(SessionPath) }>
+			@messages(p)
+			<form method="post" action={ templ.URL(p.Paths.Login) }>
 				<label>Email <input type="email" name="email_address" required autofocus autocomplete="username"/></label>
 				<label>Password <input type="password" name="password" required autocomplete="current-password" maxlength="72"/></label>
 				<button type="submit">Sign in</button>
 			</form>
-			<p><a href={ templ.URL(PasswordsPath + "/new") }>Forgot password?</a></p>
+			if p.Paths.Passwords != "" {
+ <p><a href={ templ.URL(p.Paths.Passwords + "/new") }>Forgot password?</a></p>
+ }
 		</main>
 	}
 }
 
-templ forgotPassword(f flashes) {
+templ forgotPassword(p gantryauth.Page) {
 	@layout.Layout(layout.Page{Title: "Forgot your password?"}) {
 		<main class="auth">
 			<h1>Forgot your password?</h1>
-			@messages(f)
-			<form method="post" action={ templ.URL(PasswordsPath) }>
+			@messages(p)
+			<form method="post" action={ templ.URL(p.Paths.Passwords) }>
 				<label>Email <input type="email" name="email_address" required autofocus autocomplete="username"/></label>
 				<button type="submit">Email reset instructions</button>
 			</form>
@@ -46,12 +47,12 @@ templ forgotPassword(f flashes) {
 	}
 }
 
-templ editPassword(f flashes, token string) {
+templ editPassword(p gantryauth.Page, token string) {
 	@layout.Layout(layout.Page{Title: "Update your password"}) {
 		<main class="auth">
 			<h1>Update your password</h1>
-			@messages(f)
-			<form method="post" action={ templ.URL(PasswordsPath + "/" + url.PathEscape(token)) }>
+			@messages(p)
+			<form method="post" action={ templ.URL(p.Paths.Passwords + "/" + url.PathEscape(token)) }>
 				<input type="hidden" name="_method" value="patch"/>
 				<label>New password <input type="password" name="password" required autocomplete="new-password" maxlength="72"/></label>
 				<label>Confirm it <input type="password" name="password_confirmation" required autocomplete="new-password" maxlength="72"/></label>
@@ -61,10 +62,24 @@ templ editPassword(f flashes, token string) {
 	}
 }
 
-// SignOut is a sign-out button, for a signed-in page's layout.
+templ setup(p gantryauth.Page) {
+ @layout.Layout(layout.Page{Title:"Create your first account"}) {
+  <main class="auth">
+   <h1>Create your first account</h1>
+   <p>Enter the setup code from your deployment terminal to finish installing this app.</p>
+   @messages(p)
+   <form id="first-user" method="post" action={templ.URL(p.Paths.Login+"/setup")}>
+    <label>Setup code <input type="password" name="setup_code" required autofocus autocomplete="off" maxlength="128"/></label>
+    <label>Email <input type="email" name="email_address" value={p.EmailAddress} required autocomplete="username" maxlength="254"/></label>
+    <label>Password <input type="password" name="password" required autocomplete="new-password" maxlength="72"/></label>
+    <label>Confirm password <input type="password" name="password_confirmation" required autocomplete="new-password" maxlength="72"/></label>
+    <button type="submit">Create account</button>
+   </form>
+  </main>
+ }
+}
+
+// SignOut uses the shared default logout path; change it with Paths.Logout.
 templ SignOut() {
-	<form method="post" action={ templ.URL(SessionPath) }>
-		<input type="hidden" name="_method" value="delete"/>
-		<button type="submit">Sign out</button>
-	</form>
+ <form id="sign-out" method="post" action="/logout"><button type="submit">Sign out</button></form>
 }

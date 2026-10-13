@@ -11,7 +11,9 @@ import (
 	"testing"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/devcheck"
 	"github.com/scttymn/gantry/storage"
+	"github.com/scttymn/gantry/testkit"
 )
 
 // shopApp is a new app, written without Houston, on engine.
@@ -33,10 +35,12 @@ func TestRecipesGolden(t *testing.T) {
 	}{
 		{"api-tokens", []string{"--prefix", "shop_"}, 4},
 		{"auth", nil, 7},
+		{"auth", []string{"--email-code"}, 5},
+		{"auth", []string{"--email-code", "--signup"}, 5},
 		{"storage", nil, 1},
 	} {
 		for _, engine := range []string{"sqlite", "postgres"} {
-			t.Run(tc.recipe+"/"+engine, func(t *testing.T) {
+			t.Run(tc.recipe+strings.Join(tc.args, "")+"/"+engine, func(t *testing.T) {
 				recipeGolden(t, tc.recipe, tc.args, tc.files, engine)
 			})
 		}
@@ -59,7 +63,14 @@ func recipeGolden(t *testing.T, recipe string, args []string, files int, engine 
 	if !strings.Contains(out, "rt.Scope(") && !strings.Contains(out, "rt.Mount(") {
 		t.Errorf("no route to add:\n%s", out)
 	}
-	golden := filepath.Join("testdata", "golden", recipe+"-"+engine)
+	label := recipe
+	if recipe == "auth" && len(args) > 0 {
+		label += "-email-code"
+		if len(args) > 1 {
+			label += "-signup"
+		}
+	}
+	golden := filepath.Join("testdata", "golden", label+"-"+engine)
 	if *update {
 		os.RemoveAll(golden)
 	}
@@ -276,5 +287,100 @@ func TestStorageRules(t *testing.T) {
 	gantry(t, dir, "g", "storage")
 	if code, _, stderr := gantry(t, dir, "g", "storage"); code != 1 || !strings.Contains(stderr, "the recipe was applied") {
 		t.Errorf("twice: %d %s", code, stderr)
+	}
+}
+
+// Email-code recipes use the shared Auth implementation and preserve password
+// recipes. Build the real generated apps, including their authentication tests.
+func TestEmailCodeRecipe(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		for _, mode := range []string{"password", "email-code", "signup"} {
+			signup := mode == "signup"
+			name := engine + "-" + mode
+			if signup {
+				name += "-signup"
+			}
+			t.Run(name, func(t *testing.T) {
+				dir := shopApp(t, engine)
+				args := []string{"g", "auth"}
+				if mode != "password" {
+					args = append(args, "--email-code")
+				}
+				if signup {
+					args = append(args, "--signup")
+				}
+				if code, _, stderr := gantry(t, dir, args...); code != 0 {
+					t.Fatal(stderr)
+				}
+				if mode == "password" {
+					path := filepath.Join(dir, "app", "routes.go")
+					source, _ := os.ReadFile(path)
+					wired := strings.Replace(string(source), `"net/http"`, `"net/http"
+ "path/filepath"
+ "example.com/shop/config"
+ "example.com/shop/app/auth"`, 1)
+					wired = strings.Replace(wired, "homePage :=", `login := auth.New(a.DB,a.Signer,a.Mail,a.Mail.From,filepath.Join(config.FromEnv().DataDir,"initial-account-code"))
+                    login.Routes(rt)
+                    homePage :=`, 1)
+					if err := os.WriteFile(path, []byte(wired), 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				warnings, err := devcheck.Scan(dir)
+				if err != nil || len(warnings) != 0 {
+					t.Fatalf("Strict: %+v %v", warnings, err)
+				}
+				for _, name := range []string{"auth.go", "auth_test.go"} {
+					b, _ := os.ReadFile(filepath.Join(dir, "app", "auth", name))
+					gofmted(t, name, b)
+				}
+				if code, _, stderr := gantry(t, dir, args...); code != 1 || !strings.Contains(stderr, "recipe was applied") {
+					t.Fatalf("reapplied: %s", stderr)
+				}
+				if testing.Short() {
+					return
+				}
+				for _, tool := range []string{"templ", "sqlc"} {
+					if _, err := exec.LookPath(tool); err != nil {
+						t.Skip("run in the toolchain")
+					}
+				}
+				if engine == "postgres" && os.Getenv("GANTRY_TEST_POSTGRES_URL") == "" {
+					t.Skip("GANTRY_TEST_POSTGRES_URL not set")
+				}
+				repo, _ := filepath.Abs("../..")
+				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+				os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+				migrate := func(ctx context.Context, d *db.DB) error {
+					return d.Migrate(ctx, os.DirFS(filepath.Join(dir, "db", "migrations")), "app_migrations")
+				}
+				var baseline *db.DB
+				if engine == "postgres" {
+					t.Setenv("TEST_DATABASE_URL", os.Getenv("GANTRY_TEST_POSTGRES_URL"))
+					baseline = testkit.Postgres(t, migrate)
+				} else {
+					baseline = testkit.DB(t, migrate)
+				}
+				schema, err := baseline.Schema(t.Context(), "app_migrations")
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				env := append(os.Environ(), "TEST_DATABASE_URL="+os.Getenv("GANTRY_TEST_POSTGRES_URL"))
+				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+					cmd := exec.Command(step[0], step[1:]...)
+					cmd.Dir, cmd.Env = dir, env
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("%v: %v\n%s", step, err, out)
+					}
+				}
+			})
+		}
+	}
+	dir := shopApp(t, "sqlite")
+	if code, _, stderr := gantry(t, dir, "g", "auth", "--signup"); code != 1 || !strings.Contains(stderr, "requires --email-code") {
+		t.Fatalf("signup without email codes: %s", stderr)
 	}
 }
