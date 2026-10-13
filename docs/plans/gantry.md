@@ -128,6 +128,7 @@ gantry/
 - **The URL chooses the engine:** `DATABASE_URL=sqlite:///data/app.sqlite3` or `postgres://…`.
 - **SQLite is set up for concurrency:**
   - WAL, `busy_timeout`, `synchronous=NORMAL` and foreign keys on.
+  - `temp_store=MEMORY`: SQLite never needs a temporary directory, which a `scratch` image may not have.
   - Two pools: one connection that writes (`_txlock=immediate`), and a read pool of `GOMAXPROCS` connections.
   - `db.Write` and `db.Read` name which pool a query goes to. On Postgres both are the same pool.
 - **Postgres:** a `database/sql` pool through pgx, with limits sized for small hosts.
