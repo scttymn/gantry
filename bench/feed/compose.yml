@@ -1,0 +1,33 @@
+# Houston's project: gantry dev (houston dev) serves it at
+# http://feed.localhost, gantry test runs its tests, and houston deploy
+# puts it on the server.
+name: feed
+
+services:
+  app:
+    build: { context: ., target: dev }
+    expose: ["8080"]
+    environment:
+      GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true} # development panel; false hides it
+      MAIL_DRIVER: ${MAIL_DRIVER:-} # blank: local inbox in development, configured SMTP elsewhere
+      MAIL_FROM: ${MAIL_FROM:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+    volumes:
+      - .:/app                     # the code, rebuilt on change
+      # gantry beside it, for go.work (ignored by git): changes to both at once.
+      # Dev only; tests and deploys build against the gantry go.mod pins.
+      - ../..:/
+      - data:/data                 # the SQLite database and uploads
+
+volumes:
+  data:
+
+x-houston:
+  health: /up
+  commands:
+    test: sh -c "go vet ./... && go test ./..."
+    console: { dev: go run ./cmd/feed db console, server: /app db console }

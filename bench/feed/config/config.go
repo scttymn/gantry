@@ -1,0 +1,52 @@
+// Package config is the app's settings, from the environment: each has a
+// default, so a blank one falls back.
+package config
+
+import (
+	"os"
+
+	"github.com/scttymn/gantry/mail"
+)
+
+// Config is what the environment sets.
+type Config struct {
+	Mail        mail.Config // app-wide delivery: development inbox or configured SMTP
+	Env         string      // GANTRY_ENV: development, test or production (the default)
+	Addr        string      // ADDR, default :8080
+	DataDir     string      // DATA_DIR: the database and uploads; default /data
+	DatabaseURL string      // DATABASE_URL; default sqlite://DATA_DIR/feed.sqlite3
+	SecretKey   string      // SECRET_KEY: signs cookies and forms; blank: a key kept in the database
+	JWTSecret   string      // JWT_SECRET: what the API's bearer tokens are signed with (HS256)
+	// JobsInServer runs the background jobs in the server's process (Rails 8's
+	// Solid Queue in Puma). JOBS_IN_SERVER=false leaves them to a process of
+	// their own, `feed jobs`.
+	JobsInServer bool
+}
+
+// Development is true where the code is mounted and changes as you work:
+// db migrate rewrites db/schema.sql there, and db reset is allowed.
+func (c Config) Development() bool { return c.Env == "development" }
+
+// Load reads the environment through getenv (os.Getenv, or a test's).
+func Load(getenv func(string) string) Config {
+	or := func(name, fallback string) string {
+		if v := getenv(name); v != "" {
+			return v
+		}
+		return fallback
+	}
+	c := Config{
+		Mail:         mail.LoadConfig(getenv),
+		Env:          or("GANTRY_ENV", "production"),
+		Addr:         or("ADDR", ":8080"),
+		DataDir:      or("DATA_DIR", "/data"),
+		SecretKey:    getenv("SECRET_KEY"),
+		JWTSecret:    or("JWT_SECRET", "twelve-dollar-challenge"),
+		JobsInServer: getenv("JOBS_IN_SERVER") != "false",
+	}
+	c.DatabaseURL = or("DATABASE_URL", "sqlite://"+c.DataDir+"/feed.sqlite3")
+	return c
+}
+
+// FromEnv is the process's settings.
+func FromEnv() Config { return Load(os.Getenv) }

@@ -93,8 +93,99 @@ Evidence, not a gate: `BenchmarkRepeatedQuery` (cached against the plain driver,
 ## Deploy notes
 No migration and no setting. Release note: SQLite connections keep their compiled statements; nothing for an app to do.
 
+## Batch 2: the standing benchmark, run by hand
+`bin/bench` answers two questions about the checkout it's run in: what a request costs, layer by layer, and how many users one core carries. On this machine; the 100,000-user line is the challenge's box, which Batch 4 runs on.
+
+### Design
+- **`bench/feed`**, its own module, made with `gantry new feed --gantry ../..` and built against the checkout (a `replace` in its `go.mod`): the challenge's feed API (five endpoints, its schema, its errors) in a generated app with nothing taken out, so the jobs, mail and live a new app starts with are running, as they would be. Its seeds make the challenge's shape of data (50,000 users, 500,000 posts, about 2 million likes), the same rows every time.
+- A build with the `bench` tag also listens on a second port for the bench alone: Go's profiler, and the process's CPU time and memory. An ordinary build has none of it.
+- **`bench/`**, a module of its own for the tools, so what they need (the profile format) isn't something gantry requires, and so neither is in the module an app downloads:
+  - `load`: requests of the challenge's mix (100 feed : 100 post : 15 like : 2 create) on a set number of connections, due at a set rate whether or not the server keeps up. A request's time runs from when it was due, so waiting for a free connection counts.
+  - `report`: the pass line (p95 under 500 ms, p99 under 1 s, under 1% failed), the search for the highest rate that passes, users for a rate (the challenge's loop: 2.17 requests every 20.5 s), and a CPU profile's samples divided among layers.
+  - `cmd/bench`: waits for the app, finds the limit, then runs at nine tenths of it while profiling, and prints the report (and writes it as JSON for Batch 3, with the profile beside it).
+- **`bin/bench`**: Docker's part. Builds both in the toolchain image, runs the app on one core with 2 GB and a new database, runs `cmd/bench` on other cores.
+
+A sample belongs to the layer of the innermost frame that isn't the Go runtime's or a syscall's: SQLite compiling (under the driver's prepare), SQLite running, `database/sql` and gantry's `db`, the network (`net/http`, `net`), JSON, gantry's `web`, the app, the runtime by itself (GC, the scheduler), and other.
+
+### Contract pin
+- `bin/bench [-quick]`, and `BENCH_CPUS` (0.1 to 1: the app's share of its core; anything else is refused): no other input. Output: the report on stdout, `bench/out/report.json`, and the measured run's CPU profile, `bench/out/report.cpu.prof`. Exit 1 when the app doesn't come up, no rate passes, or a request fails at the measured rate.
+- `load.Run(ctx, Options{URL, Rate, Connections, Duration, Secret, Users})` → `Result{Due, Done, Failed, Latencies}`. Every request due is in `Done` or `Failed`; none is dropped.
+- The bench port (`BENCH_ADDR`, bench builds only): `/debug/pprof/…`, `/debug/usage` → `{"cpu_us":…,"rss_bytes":…}`. No auth: it isn't in a build an app deploys, and `bin/bench` doesn't publish it.
+
+### AC ↔ test map (Batch 2)
+| AC | Test | Lens |
+| --- | --- | --- |
+| Load arrives at the asked rate, in the challenge's mix, on no more than the asked connections | `load.TestRunHoldsRateAndMix` | Contract |
+| A request that waited for a free connection is as late as it was: time runs from when it was due | `load.TestRunCountsTheWait` | Signals |
+| A wrong status and a failed connection are counted failed; due = done + failed | `load.TestRunCountsFailures` | Contract (unhappy), Signals |
+| A profile's samples divide among the layers by their stacks, compiling SQL apart from running it; a stack no layer claims is "other"; the shares are the whole | `report.TestLayers` | Contract, Signals |
+| The pass line: each of p95, p99 and failed just inside and just outside | `report.TestPasses` | Contract |
+| The search finds a known ceiling within 5% | `report.TestLimitFindsTheCeiling` | Contract |
+| A server that never passes has no limit, not a made-up one; one that passes at the top rate says "at least" | `report.TestLimitWithoutACeiling` | Contract (unhappy), Signals |
+| Users for a rate, and back, by the challenge's loop | `report.TestUsers` | Contract |
+| The feed API: every endpoint and every error in the challenge's table | `feed/app.TestPosts` | Contract, Authz |
+| The seeds: the counts, the same rows each time, nothing added by a second run, no like of a user or post that isn't there | `feed/db/seeds.TestSeed` | Contract, Re-entry |
+| An ordinary build serves nothing under `/debug` | `feed/app.TestNoDebugRoutes` | Authz |
+
+Evidence, not a gate: `bin/bench` run here, its report in this file.
+
+### Batch 2: what was found (2026-10-13)
+`bin/bench`, on one M5 core, the app built against the statement cache:
+
+```text
+At 21,600 req/s, nine tenths of the limit, a request cost 38.4 µs of CPU:
+  running queries                  21.3 µs   55%
+  compiling SQL                     0.0 µs    0%
+  database/sql and gantry's db      2.8 µs    7%
+  the network                       8.8 µs   23%
+  JSON                              1.7 µs    4%
+  gantry's web                      0.5 µs    1%
+  the rest of gantry                0.0 µs    0%
+  the app                           0.6 µs    1%
+  Go's runtime by itself            2.8 µs    7%
+  other                             0.0 µs    0%
+  p50 0.3 ms, p95 10.0 ms, p99 19.5 ms; 0 of 648,000 failed; most memory held 49 MB
+
+The limit: 24,000 req/s, which is about 227,000 of the challenge's users, on this machine
+  (p95 under 500 ms, p99 under 1 s, under 1% failed)
+100,000 users are 10,585 req/s: 44% of it
+```
+
+- Before and after the statement cache, by `bin/bench` itself (the same bench and app, on `main`'s gantry and on this):
+
+  | | `main` | with the cache |
+  | --- | --- | --- |
+  | The limit | 20,000 req/s (189,000 users) | 24,000 req/s (227,000 users) |
+  | A request's CPU | 46.9 µs | 38.4 µs |
+  | of it, compiling SQL | 6.7 µs | 0.0 µs |
+  | of it, running queries | 22.0 µs | 21.3 µs |
+  | 100,000 users, of the limit | 53% | 44% |
+
+- `BENCH_CPUS=0.5 bin/bench`, the app held to half its core: the limit 13,500 req/s (128,000 users), a request 41.0 µs, and 100,000 users 78% of the limit. A share of a core stands in for a slower one, to ask "what if"; what the challenge's box is a share of, only a run on it says.
+- The limit over four full runs: 24,000, 24,000, 25,000, 24,000 req/s (the search is good to 5%), and a request's cost over the last two: 37.5 and 38.4 µs. k6, flat out on the same app: 25,300. 100,000 users are 10,585 req/s: two fifths of this core. The challenge's box is slower by a factor nobody here has measured; under about 2.3 times, and it's past the line. Batch 4 measures it.
+- A request's cost is measured at nine tenths of the limit, not half. At half (12,000 req/s) it was 45.6 µs, three runs within a percent, but a fifth of that is the app sleeping and waking between requests, and it lands in the network's share one run (39%) and the runtime's the next (34%). At nine tenths: 38.08, 38.19 and 38.11 µs in three runs, and the layers within two points of each other. So an app with time to spare pays about 8 µs a request for the waiting: nothing to do with the limit, and something to know about a quiet server's CPU.
+- One run's layers, at half the limit, were unlike the five after it (queries 62%, JSON 12%, the network 11%), with the same total. Not explained, and not seen again; the profile is kept beside the report now, for the next one.
+- The app with everything a new app has (jobs, mail, live) serves 25,300 req/s where the one with them taken out served 26,100: 3%.
+- The database the seeds make serves as the challenge's own file does (25,400 and 25,100 req/s under k6), though it's never analysed or vacuumed and its write-ahead log is 245 MB from the seeding.
+- Timers wake late: a load generator that sleeps until each request is due adds a millisecond or two to every time it reports (p50 1.8 ms where the answer took 0.1). One goroutine keeps the time and spins through the last of each wait.
+- Random generators seeded 0, 1, 2 ... start out alike: eight connections seeded that way sent 49% feed reads where the mix has 46%. Seeds are spread.
+- `gantry check --strict` on the app: nothing.
+- Editing `bin/bench` while it runs breaks the run's last lines: bash reads a script as it goes.
+- Review of the first tip (b94dc7b), Codex's ten findings and my pass, all held and all closed, each with its test where one could be written:
+  - a feed with no posts in it left the load all feed reads, and still counted done: now it's a failed request, and posts are found however the JSON is laid out (`load.TestRunNeedsPostsInTheFeed`);
+  - the percentiles were of the answered requests alone, where the challenge's are of all of them: a failed request's time counts (`load.TestRunTimesFailures`);
+  - the profile was a second shorter than the run, and the CPU counted on either side of both: the profile is the run's seconds now, and the CPU from before both to after both;
+  - two `bin/bench` at once took each other's app down: the second is refused;
+  - the bench's own requests of the app (is it up, what has it used, its profile) had no time limit;
+  - the warm-up failed an app that couldn't serve 1,000 req/s, which the search would have measured: only one that answers nothing is given up on;
+  - the search gave up at 2 req/s without trying 1 (`report.TestLimitWithoutACeiling`);
+  - the app's token check ignored `nbf` (`feed/app.TestTokenNotYetGood`);
+  - nothing showed the bench's port needs the bench tag (`feed/cmd/feed.TestBenchPortNeedsTheTag`), or that the feed is right when it isn't empty, or what `/health` says (`feed/app.TestFeed`);
+  - a cancelled run waited out its duration (`load.TestRunStopsWhenCancelled`), two processes seeding one database at once collided (`feed/db/seeds.TestSeedTwiceAtOnce`), and `report.Rate` had no caller: the report's last line is its use.
+- Review of the second tip (907f402), Codex: four more, all held and closed. Two runs started at the same moment both got past the check for one running: making the Docker network is the lock now, and Docker makes a name once. At a rate of a request or less a connection, every request was a connection's first, and so a feed read: a feed is read before the run, and the mix is the mix from the first request (`load.TestRunMixesFromTheStart`). The profile ended before the last requests were answered: it runs a second longer. A cancelled run gave requests that were never due times below zero (`load.TestRunStopsWhenCancelled`).
+- Not closed, for Batch 3: on a machine with few cores the load generator may be what gives out first, and the limit would read low. It needs a check of its own (what it can send to a server that does nothing).
+
 ## Later batches
-2. The standing benchmark, run by hand: the feed app in the repo (`bench/feed`, built against the checkout), load on a few connections at a set arrival rate, and a report: CPU a request by layer, and users at the limit.
 3. The benchmark in CI: the change against its base in the same job, failing on a regression past the measured noise.
 4. The 100,000-user run: the deployed path, proxy in front, on the modest server.
 5. Database workers, and SQLite as pure Go, C and WASM measured inside them. This is where "not Go, if something else is better" is decided.

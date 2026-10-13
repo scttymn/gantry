@@ -7,6 +7,17 @@ Run the framework tests in Docker with `bin/go go test ./...` and static checks
 with `bin/go go vet ./...`. Generator changes must update the golden fixtures
 and keep generated apps passing tests and Gantry Strict.
 
+## Performance
+
+`bin/bench` measures the gantry in the checkout: it builds `bench/feed` (the
+$12 server challenge's feed API, as a generated app) against it, runs it on one
+core with 2 GB, and reports the highest rate of the challenge's requests that
+passes its line and what a request costs in CPU, layer by layer. Run it before
+and after a change to the request path; `bin/bench -quick` is a look, not a
+measurement. The app and the tools are modules of their own, so their tests are
+`GANTRY_DIR=bench bin/go go test ./...` and `GANTRY_DIR=bench/feed bin/go go test ./...`.
+The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plans/performance.md).
+
 ## Features and Gantry Strict
 
 When adding a feature that improves application performance or development,

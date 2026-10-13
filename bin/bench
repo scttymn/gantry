@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# The standing benchmark of the gantry in this checkout: bin/bench [-quick]
+#
+#   BENCH_CPUS=0.5 bin/bench    the app held to half of its core
+#
+# A fraction of a core stands in for a slower one: the app gets that share
+# of every 10 ms. It's the same code taking the same CPU, with less of it to
+# be had: a way to ask "what if the core were half as fast", not a model of
+# another machine's caches or syscalls.
+#
+# It builds bench/feed (the $12 server challenge's feed API as a generated
+# app) against the checkout, runs it on one core with 2 GB on a new, seeded
+# database, and sends it the challenge's requests on 64 connections from
+# the other cores. It prints the highest rate that passes the challenge's
+# line, and what a request costs in CPU, layer by layer. The same as JSON:
+# bench/out/report.json. See docs/plans/performance.md.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+app=gantry-bench-feed net=gantry-bench
+# One at a time: two would share the core, and take each other's app down.
+# Making the network is the lock: Docker makes a name once.
+if ! docker network create "$net" >/dev/null 2>&1; then
+	echo "bin/bench: one is running here already (the network $net is there). If it isn't: docker rm -f $app; docker network rm $net" >&2
+	exit 1
+fi
+cleanup() { docker rm -f "$app" >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
+mkdir -p .cache bench/out && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
+docker build -q --target toolchain -t gantry-toolchain . >/dev/null
+toolchain() { # toolchain DIR COMMAND...
+	local dir=$1; shift
+	docker run --rm -v "$PWD:/src" -w "/src/$dir" \
+		-e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache gantry-toolchain "$@"
+}
+echo "building the app and the bench" >&2
+toolchain bench/feed go build -trimpath -tags bench,nodynamic,timetzdata -o /src/bench/out/feed ./cmd/feed
+toolchain bench go build -trimpath -o /src/bench/out/bench ./cmd/bench
+
+
+# The app has core 0 to itself; the load has the rest.
+cores=$(docker info --format '{{.NCPU}}')
+others=()
+if [ "$cores" -gt 1 ]; then
+	others=(--cpuset-cpus="1-$((cores - 1))")
+else
+	echo "bin/bench: Docker has one core here, so the load shares it with the app" >&2
+fi
+machine=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo 2>/dev/null || true)
+commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
+[ -z "$(git status --porcelain 2>/dev/null)" ] || commit="$commit, with changes"
+
+core=(--cpuset-cpus=0)
+if [ -n "${BENCH_CPUS:-}" ]; then
+	quota=$(awk -v c="$BENCH_CPUS" 'BEGIN { q = int(c * 10000 + 0.5); if (c ~ /^[0-9]*\.?[0-9]+$/ && q >= 1000 && q <= 10000) print q }')
+	[ -n "$quota" ] || { echo "bin/bench: BENCH_CPUS=$BENCH_CPUS: a share of one core, from 0.1 to 1" >&2; exit 1; }
+	core+=(--cpu-period=10000 --cpu-quota="$quota")
+	machine="${machine:-$(uname -m)}, the app held to $BENCH_CPUS of a core"
+fi
+
+docker run -d --name "$app" --network "$net" "${core[@]}" --memory=2g --memory-swap=2g \
+	-v "$PWD/bench/out:/bench:ro" -w /tmp \
+	-e GANTRY_ENV=production -e ADDR=:8080 -e DATA_DIR=/data -e BENCH_ADDR=:6060 \
+	-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets \
+	gantry-toolchain /bench/feed >/dev/null
+
+status=0
+docker run --rm --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
+	/bench/bench -url "http://$app:8080" -bench-url "http://$app:6060" -o /bench/report.json \
+	-commit "$commit" -machine "${machine:-$(uname -m)}, $(uname -s)" "$@" || status=$?
+if [ "$status" != 0 ]; then
+	echo "--- the app's log" >&2
+	docker logs --tail 20 "$app" >&2 || true
+fi
+exit "$status"

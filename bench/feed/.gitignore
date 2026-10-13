@@ -1,0 +1,11 @@
+.cache/
+.gantry/
+# What the build makes (`feed assets`): the scripts minified, the
+# pictures' copies.
+assets/built/*
+!assets/built/.gitkeep
+.env
+.houston/
+compose.local.yml
+go.work
+go.work.sum
