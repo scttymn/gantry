@@ -1,7 +1,8 @@
 # A release: pushing a tag like v0.12.0 tests gantry, then publishes a GitHub
 # Release with the CLI binaries (gantry-$os-$arch) and SHA256SUMS over them.
 # An app's bin/gantry downloads the asset for its go.mod version and checks
-# that file. Nothing is published unless the tests pass.
+# that file. Nothing is published unless the tests pass, and they check that
+# latestRelease (cmd/gantry/new.go) was raised to the tag before it was pushed.
 # Actions are pinned by commit, and no checkout keeps the token in .git/config.
 name: release
 
@@ -41,6 +42,7 @@ jobs:
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            -e GANTRY_RELEASE_TAG="$GITHUB_REF_NAME" \
             gantry-toolchain go test ./...
       - name: gofmt
         run: |
@@ -58,9 +60,15 @@ jobs:
           persist-credentials: false
       - name: CLI binaries and SHA256SUMS
         run: |
-          docker build --target release --output type=local,dest=dist .
+          docker build --build-arg VERSION="$GITHUB_REF_NAME" --target release --output type=local,dest=dist .
           (cd dist && sha256sum gantry-* > SHA256SUMS)
           cat dist/SHA256SUMS
+      - name: The binary's new app requires this release
+        run: |
+          probe=$(mktemp -d)
+          (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
+          grep -qx "	github.com/scttymn/gantry $GITHUB_REF_NAME" "$probe/probe/go.mod" \
+            || { echo "a new app's go.mod doesn't require $GITHUB_REF_NAME:"; cat "$probe/probe/go.mod"; exit 1; }
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

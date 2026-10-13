@@ -17,7 +17,7 @@ import (
 func steps(t *testing.T, fail string) *[][]string {
 	t.Helper()
 	var got [][]string
-	was, wasQuiet, wasLook := runIn, runQuietlyIn, lookPath
+	was, wasQuiet, wasLook, wasVersion, wasPinned := runIn, runQuietlyIn, lookPath, houstonVersion, pinnedHouston
 	runIn = func(dir, name string, args ...string) error {
 		got = append(got, append([]string{filepath.Base(dir), name}, args...))
 		if fail != "" && strings.Join(append([]string{name}, args...), " ") == fail {
@@ -29,7 +29,13 @@ func steps(t *testing.T, fail string) *[][]string {
 		return []byte(name + " said this\n"), runIn(dir, name, args...)
 	}
 	lookPath = func(string) (string, error) { return "/usr/local/bin/houston", nil }
-	t.Cleanup(func() { runIn, runQuietlyIn, lookPath = was, wasQuiet, wasLook })
+	houstonVersion = func() string { return houstonRelease }
+	pinnedHouston = func(dir string) (string, error) {
+		return filepath.Join(dir, ".gantry", "bin", "houston"), nil
+	}
+	t.Cleanup(func() {
+		runIn, runQuietlyIn, lookPath, houstonVersion, pinnedHouston = was, wasQuiet, wasLook, wasVersion, wasPinned
+	})
 	return &got
 }
 
@@ -204,6 +210,111 @@ func TestNewSteps(t *testing.T) {
 	code, _, stderr = gantry(t, root, "new", "shop")
 	if code != 1 || len(*got) != 2 || !strings.Contains(stderr, "run it, and the steps after it, in shop/") {
 		t.Errorf("exit %d, ran %q, %s", code, *got, stderr)
+	}
+}
+
+// The houston on PATH runs gantry new's steps when it's new enough for
+// them; an older one, or none, and the app's pinned release does, which its
+// bin/gantry downloads.
+func TestNewHouston(t *testing.T) {
+	pinned := [][]string{
+		{"shop", "shop/.gantry/bin/houston", "init", "--name", "shop"},
+		{"shop", "shop/.gantry/bin/houston", "exec", "templ", "generate"},
+		{"shop", "shop/.gantry/bin/houston", "exec", "go", "mod", "tidy"},
+		{"shop", "git", "init", "-q"},
+	}
+	onPath := [][]string{
+		{"shop", "houston", "init", "--name", "shop"},
+		{"shop", "houston", "exec", "templ", "generate"},
+		{"shop", "houston", "exec", "go", "mod", "tidy"},
+		{"shop", "git", "init", "-q"},
+	}
+	for _, c := range []struct {
+		found string
+		want  [][]string
+		note  string
+	}{
+		{houstonRelease, onPath, ""},
+		{"v9.0.0", onPath, ""},
+		{"dev", onPath, ""}, // built from a checkout: trusted
+		{"v0.4.9", pinned, "the houston on PATH is v0.4.9"},
+		{"", pinned, "there's no houston on PATH"},
+	} {
+		root := t.TempDir()
+		got := steps(t, "")
+		houstonVersion = func() string { return c.found }
+		pinnedHouston = func(dir string) (string, error) {
+			return filepath.Join(filepath.Base(dir), ".gantry", "bin", "houston"), nil
+		}
+		code, out, stderr := gantry(t, root, "new", "shop")
+		if code != 0 || !reflect.DeepEqual(*got, c.want) {
+			t.Errorf("houston %q: exit %d, ran %q\n%s", c.found, code, *got, stderr)
+		}
+		if strings.Contains(stderr, "needs Houston") != (c.note != "") || !strings.Contains(stderr, c.note) {
+			t.Errorf("houston %q: %s", c.found, stderr)
+		}
+		// Whichever it is, it's "houston" to people.
+		if !strings.Contains(out, "  run houston init --name shop\n") {
+			t.Errorf("houston %q: %s", c.found, out)
+		}
+	}
+
+	// The pinned release can't be downloaded: what's left to do, by hand.
+	root := t.TempDir()
+	got := steps(t, "")
+	houstonVersion = func() string { return "v0.4.9" }
+	pinnedHouston = func(string) (string, error) { return "", errors.New("no network") }
+	code, _, stderr := gantry(t, root, "new", "shop")
+	if code != 1 || len(*got) != 0 || !strings.Contains(stderr, "no network") || !strings.Contains(stderr, "in shop/ run houston init --name shop") {
+		t.Errorf("exit %d, ran %q: %s", code, *got, stderr)
+	}
+}
+
+// A release's binary says which release it is (the Dockerfile stamps
+// releaseVersion), and the app it makes requires that one. A build from a
+// checkout requires the newest release, and says so.
+func TestNewRequiresThisRelease(t *testing.T) {
+	requires := func(t *testing.T) (string, string) {
+		t.Helper()
+		root := t.TempDir()
+		code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston")
+		if code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		mod, _ := os.ReadFile(filepath.Join(root, "shop", "go.mod"))
+		for _, line := range strings.Split(string(mod), "\n") {
+			if f := strings.Fields(line); len(f) == 2 && f[0] == "github.com/scttymn/gantry" {
+				return f[1], stderr
+			}
+		}
+		t.Fatalf("go.mod requires no gantry:\n%s", mod)
+		return "", ""
+	}
+	was := releaseVersion
+	t.Cleanup(func() { releaseVersion = was })
+
+	releaseVersion = "v9.8.7"
+	if got, stderr := requires(t); got != "v9.8.7" || strings.Contains(stderr, "isn't a release") {
+		t.Errorf("a release's binary: requires %s; %s", got, stderr)
+	}
+	for _, v := range []string{"", "dev", "v9.8.7-rc1"} {
+		releaseVersion = v
+		if got, stderr := requires(t); got != latestRelease || !strings.Contains(stderr, "isn't a release") {
+			t.Errorf("version %q: requires %s; %s", v, got, stderr)
+		}
+	}
+}
+
+// A release is tagged with latestRelease raised to its tag: the release
+// workflow gives the tag, so nothing is published with it behind, and an
+// app made from a checkout never requires a release older than the newest.
+func TestLatestReleaseIsTheTag(t *testing.T) {
+	tag := os.Getenv("GANTRY_RELEASE_TAG")
+	if tag == "" {
+		t.Skip("not a release: GANTRY_RELEASE_TAG isn't set")
+	}
+	if latestRelease != tag {
+		t.Fatalf("latestRelease is %s, and this is %s: raise it in cmd/gantry/new.go (and the golden go.mod files: go test ./cmd/gantry -update), then tag that commit", latestRelease, tag)
 	}
 }
 
