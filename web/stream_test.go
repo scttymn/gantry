@@ -12,16 +12,38 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
+// logBuffer is the server's log, read by the test: the server writes it
+// from its own goroutines, so it takes a lock. (The test reads it after the
+// client has seen what follows the write, over the network, which orders
+// them, but isn't anything the race detector can see.)
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.String()
+}
+
 // streamApp serves a stream that says its first part, then waits for
 // next before ending.
-func streamApp(t *testing.T, contentType string, next chan struct{}) (*httptest.Server, *bytes.Buffer) {
+func streamApp(t *testing.T, contentType string, next chan struct{}) (*httptest.Server, *logBuffer) {
 	t.Helper()
-	var logs bytes.Buffer
-	rt := NewRouter(slog.New(slog.NewTextHandler(&logs, nil)), nil)
+	logs := &logBuffer{}
+	rt := NewRouter(slog.New(slog.NewTextHandler(logs, nil)), nil)
 	rt.Handle("GET /stream", func(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Content-Type", contentType)
 		rc := http.NewResponseController(w)
@@ -47,7 +69,7 @@ func streamApp(t *testing.T, contentType string, next chan struct{}) (*httptest.
 	})
 	srv := httptest.NewServer(rt.Handler())
 	t.Cleanup(srv.Close)
-	return srv, &logs
+	return srv, logs
 }
 
 func TestStreams(t *testing.T) {
