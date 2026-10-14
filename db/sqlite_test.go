@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -157,5 +159,88 @@ func TestSQLiteErrorCode(t *testing.T) {
 	var coded interface{ Code() int }
 	if !errors.As(err, &coded) || coded.Code() != sqliteConstraintUnique {
 		t.Errorf("a second 'a': %v; want an error with Code() %d", err, sqliteConstraintUnique)
+	}
+}
+
+// logSize is the size of the database's write-ahead log: 0 when there's none.
+func logSize(t *testing.T, path string) int64 {
+	t.Helper()
+	fi, err := os.Stat(path + "-wal")
+	if errors.Is(err, os.ErrNotExist) {
+		return 0
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi.Size()
+}
+
+// The write-ahead log grows to hold a transaction, however big (a seed of
+// the whole database, a migration that rewrites a table), and SQLite
+// reuses it after, but never gives the space back. Gantry has it cut back,
+// at the next write, to what SQLite's own checkpoints need of it.
+func TestSQLiteLogShrinksAfterABigWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite3")
+	d, err := Open(context.Background(), "sqlite://"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	mustExec(t, d.Write, `CREATE TABLE blobs (b blob)`)
+	mustExec(t, d.Write, `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 4000) INSERT INTO blobs SELECT randomblob(4000) FROM n`)
+	if size := logSize(t, path); size < 10<<20 {
+		t.Fatalf("the log after 16 MB written in one transaction: %d bytes; the test needs it big", size)
+	}
+	mustExec(t, d.Write, `INSERT INTO blobs VALUES (x'00')`)
+	if size, limit := logSize(t, path), int64(32+1000*(4096+24)); size > limit {
+		t.Errorf("the log after the next write: %d bytes; want no more than %d, what 1,000 pages take", size, limit)
+	}
+}
+
+// The log's limit is what SQLite's own checkpoints need: as many pages as
+// it checkpoints at (wal_autocheckpoint), each with its frame's header, of
+// the database's own page size.
+func TestSQLiteLogLimitFollowsThePageSize(t *testing.T) {
+	for _, pageSize := range []int64{4096, 8192} {
+		path := filepath.Join(t.TempDir(), "test.sqlite3")
+		// A database made elsewhere, with its own page size.
+		raw, err := sqlitePool(path, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustExec(t, raw, fmt.Sprintf(`PRAGMA journal_mode = DELETE; PRAGMA page_size = %d; VACUUM`, pageSize))
+		raw.Close()
+		d, err := Open(context.Background(), "sqlite://"+path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, pool := range []*sql.DB{d.Write, d.Read} {
+			var limit, size int64
+			if err := pool.QueryRow(`PRAGMA journal_size_limit`).Scan(&limit); err != nil {
+				t.Fatal(err)
+			}
+			pool.QueryRow(`PRAGMA page_size`).Scan(&size)
+			if want := 32 + 1000*(pageSize+24); size != pageSize || limit != want {
+				t.Errorf("page size %d (want %d): journal_size_limit %d; want %d", size, pageSize, limit, want)
+			}
+		}
+		d.Close()
+	}
+}
+
+// Migrations are gantry's own big writes: when they're done, the log is
+// emptied, whether or not the app writes again.
+func TestMigrateLeavesNoLog(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "test.sqlite3")
+	d, err := Open(context.Background(), "sqlite://"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if err := d.Migrate(context.Background(), postsMigrations, "app_migrations"); err != nil {
+		t.Fatal(err)
+	}
+	if size := logSize(t, path); size != 0 {
+		t.Errorf("the log after migrating: %d bytes; want none", size)
 	}
 }

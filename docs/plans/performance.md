@@ -403,6 +403,18 @@ A failed commit now rolls back, as the translated driver's does, so database/sql
 
 Evidence, each a short run: `bin/bench against` the commit before 5f; the challenge's own script at 55,000 and 64,000 with nothing set by hand.
 
+## Batch 6: the write-ahead log, cut back
+The deployed app's disk was 515 MB: 299 MB of database and 246 MB of write-ahead log. Seeding wrote the whole database in one transaction, the log grew to hold it, and SQLite reuses a log from its start but never gives back what it grew to.
+
+Every connection gantry opens now sets `journal_size_limit` to what SQLite's own checkpoints fill: `wal_autocheckpoint` pages, each a frame of the database's own page size and its 24-byte header, after the log's 32-byte header (4,120,032 bytes for 4 KB pages). SQLite cuts the log back to that when it starts it again, at the next write after a checkpoint: after a seed, a bulk import, a migration rewriting a table. No app sets a number. And `db.Migrate`, gantry's own big writes, empties the log when it's done (`wal_checkpoint(TRUNCATE)`), whether or not the app writes again soon.
+
+| AC | Test | Lens |
+| --- | --- | --- |
+| After 16 MB written in one transaction, the next write leaves the log at no more than the limit | `db.TestSQLiteLogShrinksAfterABigWrite` (both builds) | Scale |
+| The limit follows the database's page size (4 KB and 8 KB), on the writer and the readers | `db.TestSQLiteLogLimitFollowsThePageSize` (both builds) | Contract |
+| Migrations leave no log | `db.TestMigrateLeavesNoLog` (both builds) | Contract |
+| An app's statements still go through the statement cache: what a connection runs setting itself up isn't the app's | `db.TestStatementCachePreparesOnce` (counts from the connection's opening) | Parity |
+
 ## Later batches
 6. Generated JSON for generated row types.
 7. Results kept until the database changes (`DB.Version`), switched off by itself when writes are frequent.

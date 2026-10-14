@@ -46,7 +46,52 @@ func (c cachingConnector) Connect(ctx context.Context) (driver.Conn, error) {
 		conn.Close()
 		return nil, unknownDriver("connection", conn)
 	}
+	if err := limitLog(ctx, sc); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	return &cachingConn{sqliteConn: sc, stmts: map[string]*list.Element{}, recent: list.New()}, nil
+}
+
+// limitLog caps the write-ahead log at what SQLite's checkpoints need of
+// it. The log grows to hold a transaction, however big (a seed of the
+// whole database, a migration rewriting a table), and SQLite reuses it
+// from the start after, but keeps the file as big as it got. With
+// journal_size_limit it cuts the file back when it starts it again, at the
+// next write. The cap is what SQLite fills before it checkpoints by itself
+// (wal_autocheckpoint pages, each a frame of the database's page size and
+// its 24-byte header, after the log's 32-byte one), so the log is cut to
+// what it's about to use anyway, and an app has no number of its own to
+// choose.
+func limitLog(ctx context.Context, c sqliteConn) error {
+	pageSize, err := pragmaInt(ctx, c, "page_size")
+	if err != nil {
+		return err
+	}
+	pages, err := pragmaInt(ctx, c, "wal_autocheckpoint")
+	if err != nil {
+		return err
+	}
+	_, err = c.ExecContext(ctx, fmt.Sprintf("PRAGMA journal_size_limit = %d", 32+max(pages, 1)*(pageSize+24)), nil)
+	return err
+}
+
+// pragmaInt is a pragma's value, asked of the driver's connection itself.
+func pragmaInt(ctx context.Context, c sqliteConn, name string) (int64, error) {
+	rows, err := c.QueryContext(ctx, "PRAGMA "+name, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	v := make([]driver.Value, 1)
+	if err := rows.Next(v); err != nil {
+		return 0, fmt.Errorf("db: PRAGMA %s: %w", name, err)
+	}
+	n, ok := v[0].(int64)
+	if !ok {
+		return 0, fmt.Errorf("db: PRAGMA %s is %T, not an integer", name, v[0])
+	}
+	return n, nil
 }
 
 // unknownDriver is the error for a driver that isn't the one this was

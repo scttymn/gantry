@@ -138,6 +138,9 @@ func TestStatementCachePreparesOnce(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
 	mustExec(t, pool, things)
+	// The connection is open: what it ran setting itself up (limitLog) is
+	// counted by now.
+	direct := n.direct.Load()
 	mustExec(t, pool, `INSERT INTO things (id, name) VALUES (1, 'one')`)
 	before := n.prepared.Load()
 	for i := range 100 {
@@ -149,7 +152,7 @@ func TestStatementCachePreparesOnce(t *testing.T) {
 	if got := n.prepared.Load() - before; got != 1 {
 		t.Errorf("100 runs compiled the statement %d times, not once", got)
 	}
-	if got := n.direct.Load(); got != 0 {
+	if got := n.direct.Load() - direct; got != 0 {
 		t.Errorf("%d statements went to the driver uncached", got)
 	}
 }

@@ -37,6 +37,16 @@ func (d *DB) Migrate(ctx context.Context, fsys fs.FS, table string) error {
 	if _, err := p.Up(ctx); err != nil {
 		return fmt.Errorf("migrations (%s): %w", table, err)
 	}
+	if d.Engine == SQLite {
+		// Migrations are writes as big as an app makes: what they left in
+		// the write-ahead log is moved into the database, and the log
+		// emptied, whether or not the app writes again soon (when it
+		// would be cut back anyway: limitLog). A reader in the log keeps
+		// it from being emptied; that's no error.
+		if _, err := d.Write.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
+			return fmt.Errorf("migrations (%s): the log after them: %w", table, err)
+		}
+	}
 	return nil
 }
 
