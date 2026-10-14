@@ -34,6 +34,9 @@ type Options struct {
 	Duration    time.Duration // requests are due for this long
 	Secret      string        // signs the tokens likes and posts carry
 	Users       int           // the tokens are users 1 to Users'
+	// Gzip asks for compressed answers, as a browser does: for an app
+	// reached across the internet, where the bytes are what there's least of.
+	Gzip bool
 }
 
 // Result is what became of every request that was due.
@@ -68,7 +71,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if o.URL == "" || o.Rate <= 0 || o.Connections <= 0 || o.Duration <= 0 || o.Users <= 0 {
 		return Result{}, fmt.Errorf("load: a run needs a URL, a rate, connections, a duration and users: %+v", o)
 	}
-	transport := &http.Transport{MaxConnsPerHost: o.Connections, MaxIdleConnsPerHost: o.Connections, MaxIdleConns: o.Connections, DisableCompression: true}
+	transport := &http.Transport{MaxConnsPerHost: o.Connections, MaxIdleConnsPerHost: o.Connections, MaxIdleConns: o.Connections, DisableCompression: !o.Gzip}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport}
 	tokens := tokens(o.Secret, o.Users)

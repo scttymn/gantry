@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,7 +35,9 @@ import (
 func main() {
 	var (
 		url     = flag.String("url", "http://127.0.0.1:8080", "the app")
-		side    = flag.String("bench-url", "http://127.0.0.1:6060", "the app's bench port (BENCH_ADDR)")
+		side    = flag.String("bench-url", "http://127.0.0.1:6060", "the app's bench port (BENCH_ADDR); empty for an app that has none (a deployed one): its limit and its times, and no CPU")
+		start   = flag.Float64("start", 4000, "the first rate tried, looking for the limit")
+		gzip    = flag.Bool("gzip", false, "ask for compressed answers, as a browser does")
 		out     = flag.String("o", "report.json", "write the report as JSON here, and the measured run's CPU profile beside it")
 		quick   = flag.Bool("quick", false, "shorter runs: a look, not a measurement")
 		trial   = flag.Duration("trial", 20*time.Second, "how long each rate is tried for, looking for the limit")
@@ -43,7 +46,7 @@ func main() {
 		cpus    = flag.Float64("cpus", 1, "the app's share of its core (BENCH_CPUS), to tell an app that left its core unused")
 		conns   = flag.Int("connections", 64, "connections, as a proxy holds to an app")
 		users   = flag.Int("users", 50000, "the users the app was seeded with")
-		secret  = flag.String("secret", "twelve-dollar-challenge", "the app's JWT_SECRET")
+		secret  = flag.String("secret", cmp.Or(os.Getenv("BENCH_SECRET"), "twelve-dollar-challenge"), "the app's JWT_SECRET (or BENCH_SECRET in the environment, to keep it off the command line)")
 		commit  = flag.String("commit", "", "the gantry measured, for the report")
 		machine = flag.String("machine", "", "what it ran on, for the report")
 	)
@@ -57,7 +60,7 @@ func main() {
 	measured := *length
 	ctx := context.Background()
 	run := func(rate float64, d time.Duration) (load.Result, error) {
-		return load.Run(ctx, load.Options{URL: *url, Rate: rate, Connections: *conns, Duration: d, Secret: *secret, Users: *users})
+		return load.Run(ctx, load.Options{URL: *url, Rate: rate, Connections: *conns, Duration: d, Secret: *secret, Users: *users, Gzip: *gzip})
 	}
 	fail := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "bench: "+format+"\n", args...)
@@ -70,7 +73,7 @@ func main() {
 	}
 	// A warm-up, and a look: an app that answers none of it isn't one to
 	// spend the search's minutes on. One that answers some is the search's.
-	if res, err := run(1000, 2*time.Second); err != nil || res.Done == 0 {
+	if res, err := run(min(1000, *start), 2*time.Second); err != nil || res.Done == 0 {
 		fail("warming up, the app answered none of %d requests: %v", res.Due, err)
 	}
 
@@ -86,7 +89,7 @@ func main() {
 			ok := report.Passes(p95, p99, res.Due, res.Failed)
 			fmt.Fprintf(os.Stderr, "  %7s req/s: p95 %s, p99 %s, %d failed: %s\n", thousands(rate), ms(p95), ms(p99), res.Failed, map[bool]string{true: "passes", false: "doesn't"}[ok])
 			return ok, nil
-		}, 4000, 400000)
+		}, *start, 400000)
 		if err != nil {
 			fail("%v", err)
 		}
@@ -97,6 +100,21 @@ func main() {
 	}
 
 	fmt.Fprintf(os.Stderr, "measuring at %s req/s\n", thousands(r.Rate))
+	if *side == "" {
+		// From outside, there's the limit and the times, and no more.
+		res, err := run(r.Rate, measured)
+		if err != nil {
+			fail("%v", err)
+		}
+		r.Due, r.Failed = res.Due, res.Failed
+		r.P50, r.P95, r.P99 = millis(res.Percentile(0.5)), millis(res.Percentile(0.95)), millis(res.Percentile(0.99))
+		write(os.Stdout, r)
+		b, _ := json.MarshalIndent(r, "", "  ")
+		if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
+			fail("%v", err)
+		}
+		return
+	}
 	before, err := usage(*side)
 	if err != nil {
 		fail("%v", err)
@@ -164,13 +182,13 @@ func write(w io.Writer, r report.Report) {
 	if r.LimitRate > 0 {
 		at = ", nine tenths of the limit"
 	}
-	fmt.Fprintf(w, "At %s req/s%s, a request cost %.1f µs of CPU:\n", thousands(r.Rate), at, r.CPUMicros)
-	for _, layer := range report.LayerOrder {
-		share := 0.0
-		if r.CPUMicros > 0 {
-			share = 100 * r.Layers[layer] / r.CPUMicros
+	if r.CPUMicros > 0 {
+		fmt.Fprintf(w, "At %s req/s%s, a request cost %.1f µs of CPU:\n", thousands(r.Rate), at, r.CPUMicros)
+		for _, layer := range report.LayerOrder {
+			fmt.Fprintf(w, "  %-30s %6.1f µs  %3.0f%%\n", layer, r.Layers[layer], 100*r.Layers[layer]/r.CPUMicros)
 		}
-		fmt.Fprintf(w, "  %-30s %6.1f µs  %3.0f%%\n", layer, r.Layers[layer], share)
+	} else {
+		fmt.Fprintf(w, "At %s req/s%s (from outside the app: its times, and not its CPU):\n", thousands(r.Rate), at)
 	}
 	fmt.Fprintf(w, "  p50 %.1f ms, p95 %.1f ms, p99 %.1f ms; %d of %s failed; most memory held %d MB\n", r.P50, r.P95, r.P99, r.Failed, thousands(float64(r.Due)), r.RSSPeak>>20)
 	if r.LimitRate == 0 {
