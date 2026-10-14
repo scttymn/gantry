@@ -231,6 +231,16 @@ Evidence, each run here and its output kept in this file: the checkout against i
 - Both sides run at one rate, nine tenths of the lower limit, so the faster side is further from its own limit there and has more of its core to spare: against `main` the cost reads 13% less where each at its own nine tenths reads 18% less. The limits' row has the whole gain. The summary says so.
 - Two apps on one core, one of them idle, measure as one does alone: the base's and the head's numbers here are the ones `bin/bench` alone gave.
 
+- **The job's first run, on GitHub's runner** (an AMD EPYC 7763, four cores; the job took seven minutes): this branch against `benchmark`, which is the same gantry.
+
+  | | `benchmark` | this branch |
+  | --- | --- | --- |
+  | The limit | 5,750 req/s (54,000 users) | 5,750 req/s (54,000 users) |
+  | A request's CPU, at 5,175 req/s | 186.0 µs | 186.1 µs |
+
+  "The same: a request's CPU differs by +0.1%, inside the 3.0% that can be told here." The six runs differ by 1.6%: a shared runner is steady enough that the 3% floor decides there too.
+- **That's the first measure on a cloud's core, and it's the one that bears on the goal.** A request costs 186 µs there where it costs 38 µs here: 4.9 times. One of those cores carries 54,000 of the challenge's users, with the statement cache: 100,000 are 184% of its limit. The earlier guess, that the challenge's box might be within 2.3 times of this laptop's core, was wrong by half. To carry 100,000 on a core like that, a request has to cost under about 95 µs there: half of what it does.
+- Where it goes there: running queries 79 µs (43%), the network 60 µs (33%), JSON 11 µs (6%), the runtime 10 µs (5%), gantry's web 4 µs (2%). The network's share is a third on a cloud's core, where it's under a quarter here: syscalls cost more in a virtual machine. Queries and the network are the two things between here and 100,000.
 - Review of the first tip (312aefb), Codex's ten findings, all held and closed:
   - the job passed whatever the bench found: a step's default shell has no `pipefail`, so `tee` had the last word. The step says `shell: bash`, which has;
   - the head could still be seeding, on the base's core, while the base's limit was looked for: both are up before either is measured, and the one not being measured is paused;
