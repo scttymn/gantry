@@ -1,0 +1,19 @@
+package home
+
+import "twelve-dollar/app/shared/layout"
+
+templ index() {
+	@layout.Layout(layout.Page{Title: "Twelve dollar"}) {
+		<main class="welcome">
+			<p class="eyebrow">gantry</p>
+			<h1>Twelve dollar is running.</h1>
+			<p>The $12 server challenge's feed API, on gantry.</p>
+			<ul>
+				<li><a href="/feed"><code>GET /feed</code></a> — the 20 newest posts</li>
+				<li><a href="/posts/1"><code>GET /posts/1</code></a> — one post</li>
+				<li><a href="/health"><code>GET /health</code></a></li>
+				<li><code>POST /posts</code>, <code>POST /posts/:id/like</code> — with a bearer token</li>
+			</ul>
+		</main>
+	}
+}

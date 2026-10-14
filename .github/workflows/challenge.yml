@@ -1,0 +1,37 @@
+# The $12 server challenge's scoring of gantry's entry (challenge/submission:
+# the feed API on gantry v0.15.1, SQLite compiled from C), on a public repo's
+# 4-core runner. challenge/score.sh follows the challenge's README: its own
+# load.js under k6, every user its own connection, straight to the server on
+# one core with 2 GB, warm-up, doubling, narrowing, and a 5-minute hold, up
+# to 64,000 users (the challenge's descriptor limit makes that its ceiling).
+# A push to challenge-run runs it; nothing else does.
+name: challenge
+
+on:
+  push:
+    branches: [challenge-run]
+
+permissions:
+  contents: read
+
+jobs:
+  score:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The challenge, its seed, and the entry in it
+        run: |
+          git clone --depth 1 https://github.com/arjaythedev/twelve-dollar-server-challenge challenge-repo
+          git -C challenge-repo rev-parse HEAD
+          sudo apt-get update -qq && sudo apt-get install -y -qq sqlite3 jq
+          bash challenge-repo/seed/make-seed.sh
+          cp -R challenge/submission challenge-repo/submissions/go-gantry-scttymn
+      - name: Its score
+        shell: bash
+        run: |
+          { echo "## go-gantry-scttymn, gantry v0.15.1"; echo; echo "On $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2 | xargs), $(nproc) cores, $(free -g | awk 'NR==2 {print $2}') GB: the server on one core with 2 GB, k6 on the others."; echo; } | tee -a "$GITHUB_STEP_SUMMARY"
+          OUT="$PWD/score" bash challenge/score.sh challenge-repo go-gantry-scttymn 64000 | tee -a "$GITHUB_STEP_SUMMARY"
+          { echo; cat score/runs.md; } | tee -a "$GITHUB_STEP_SUMMARY"

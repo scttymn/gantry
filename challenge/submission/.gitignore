@@ -1,0 +1,13 @@
+.cache/
+.gantry/
+# What the build makes (`twelve-dollar assets`): the scripts minified, the
+# pictures' copies.
+assets/built/*
+!assets/built/.gitkeep
+.env
+.houston/
+compose.local.yml
+go.work
+go.work.sum
+db/seeds/feed.db*
+out/
