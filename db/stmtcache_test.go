@@ -11,8 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"modernc.org/sqlite"
 )
 
 // counts is what reached the driver: statements compiled and closed through
@@ -63,6 +61,9 @@ type countingStmt struct {
 	n *counts
 }
 
+// Unwrap is the driver's statement it counts for: keepable reads it.
+func (s *countingStmt) Unwrap() driver.Stmt { return s.sqliteStmt }
+
 func (s *countingStmt) Close() error {
 	s.n.closed.Add(1)
 	return s.sqliteStmt.Close()
@@ -77,7 +78,7 @@ func countedPool(t *testing.T) (*sql.DB, *counts) {
 
 func countedPoolAt(t *testing.T, path string) (*sql.DB, *counts) {
 	t.Helper()
-	base, err := sqlite.NewConnector(sqliteDSN(path, false))
+	base, err := sqliteConnector(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,10 +93,11 @@ func countedPoolAt(t *testing.T, path string) (*sql.DB, *counts) {
 // compared with.
 func plainPool(t *testing.T) *sql.DB {
 	t.Helper()
-	pool, err := sql.Open("sqlite", sqliteDSN(filepath.Join(t.TempDir(), "test.sqlite3"), false))
+	c, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
+	pool := sql.OpenDB(c)
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() { pool.Close() })
 	return pool
@@ -286,7 +288,7 @@ func TestStatementCacheMatchesDriver(t *testing.T) {
 // that gains one shows here.
 func TestStatementCacheKeepsDriverInterfaces(t *testing.T) {
 	ctx := context.Background()
-	base, err := sqlite.NewConnector(sqliteDSN(filepath.Join(t.TempDir(), "test.sqlite3"), false))
+	base, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -740,7 +742,7 @@ func (c bareStmtConn) PrepareContext(ctx context.Context, query string) (driver.
 // at the first use, and doesn't quietly run with nothing kept.
 func TestStatementCacheUnknownDriver(t *testing.T) {
 	ctx := context.Background()
-	base, err := sqlite.NewConnector(sqliteDSN(filepath.Join(t.TempDir(), "test.sqlite3"), false))
+	base, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -801,10 +803,11 @@ func BenchmarkRepeatedQuery(b *testing.B) {
 		}
 	}
 	b.Run("driver", func(b *testing.B) {
-		pool, err := sql.Open("sqlite", sqliteDSN(filepath.Join(b.TempDir(), "test.sqlite3"), false))
+		c, err := sqliteConnector(filepath.Join(b.TempDir(), "test.sqlite3"), false)
 		if err != nil {
 			b.Fatal(err)
 		}
+		pool := sql.OpenDB(c)
 		run(b, pool)
 	})
 	b.Run("cached", func(b *testing.B) {

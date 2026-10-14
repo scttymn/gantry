@@ -273,10 +273,140 @@ The bench's app on its own (`scttymn/twelve-dollar`, private), built against the
 - At a rate well under its limit a request costs the app much more than at it: 122 µs at 6,000 req/s straight to the app, 78 µs at 13,000. An app with time to spare sleeps and wakes, and under a CPU quota in a virtual machine that's dear. It's why the app's CPU at a middling rate (85% of its core at 6,000 through the front) doesn't say where it gives out.
 - A release hook can't seed or migrate a gantry app: Houston runs it with `sh`, which the production image doesn't have. And a bench that asks a proxy for an app by name has to ask for `/up` by that name as well: the first run through the proxy waited, sending nothing, for a 404 to turn into a 200.
 
+## Batch 5: database workers, and SQLite three ways
+In the challenge's own test (every user its own connection, straight to the app) gantry is stopped by memory, not CPU: about 45 KB an open connection, 2 GB at some 44,000 of them. 8 KB of that is `net/http`'s buffers, measured. The rest is taken to be the connection's goroutine stack, grown by SQLite's deep calls and kept: taken to be, from the totals and from stacks being copied in the CPU profile, and not yet measured. And "running queries" is half of a request's CPU, on an SQLite that's C translated to Go.
+
+Three steps, each short, each reported as it lands.
+
+### 5a. What a connection costs, measured
+A test in the bench's app opens idle keep-alive connections to the real handler, each having made one request, and reads the runtime's own account: stack and heap, a connection. It's the instrument for 5c, and it settles what the 45 KB is.
+
+### 5b. SQLite three ways
+The app's own queries (the feed, a post, a like, a new post), on the seeds' data, each run from one goroutine as a worker would run them, with the statement kept: on `modernc.org/sqlite` (C translated to Go: today's), on SQLite compiled from C (`mattn/go-sqlite3`, cgo), and on SQLite compiled to WebAssembly (`ncruces/go-sqlite3`, on the wazero gantry already has). Time a query, memory, and how deep each leaves the goroutine's stack. An experiment in the bench's module: it changes nothing in gantry, and its numbers decide what does.
+
+### What 5a and 5b found
+Measured on the M5, in the toolchain's container (linux/arm64).
+
+**5a: the stack isn't it.** `feed/app.TestMemoryPerConnection`, 2,000 idle connections of each kind:
+
+| A connection that | Stack | Heap |
+| --- | ---: | ---: |
+| has asked for nothing | 4.1 KB | 10.1 KB |
+| has had an answer with no query | 6.7 KB | 9.6 KB |
+| has read the feed and a post | 8.3 KB (7.6 KB once collected) | 9.5 KB |
+
+So the guess this batch started from is wrong: SQLite's calls leave a connection's goroutine at 8 KB, not 35, and a worker for them would save 2 to 4 KB of some 40. What a connection holds is 18 KB, and 10 of it is `net/http`'s, taken before the connection has asked for anything (its two 4 KB buffers, and the connection's own). The container's 40 to 45 KB a connection is, most likely, that 18 KB with the collector's headroom over it (by default the heap may grow to twice what's live before it's collected) and the kernel's socket: to be confirmed by a run with the memory limit set.
+
+**5b: compiled C is the fastest, by a lot on the feed.** `bench/sqlite3way`, each through database/sql on one connection with its statement kept, on the challenge's database, all three SQLite 3.53.4:
+
+| Query | Translated to Go (today) | WebAssembly | Compiled C |
+| --- | ---: | ---: | ---: |
+| The feed, 20 rows | 28.9 µs | 22.1 µs | 14.0 µs |
+| A post | 4.95 µs | 4.6 µs | 3.7 µs |
+| A like, committed | 80 µs | 78 µs | 73 µs |
+| A new post, committed | 44.5 µs | 43.7 µs | 38 µs |
+| A request of the challenge's mix | 21.5 µs | 18.1 µs | 13.6 µs |
+
+"WebAssembly" is `ncruces/go-sqlite3` v0.35.6, which no longer runs on wazero: its WebAssembly is translated to Go ahead of time. "Compiled C" is `mattn/go-sqlite3` v1.14.52, which crosses from Go to C twice a row (a step, then every column at once: read in its source), some 45 times for the feed: under 2 µs of its 14, so a binding of gantry's own that crossed once a query would gain little over it. A request costs 38 µs here today, so compiled C as it stands is about a fifth off a request.
+
+**The headroom is confirmed, and it's most of it.** The challenge's own `load.js`, every user a connection of its own, the entry on one M5 core with 2 GB, 30 s up and a 60 s hold (not the 5 minutes the score is):
+
+| Users | Go's memory limit | | p95 | p99 | Failed | Memory |
+| ---: | --- | --- | ---: | ---: | ---: | ---: |
+| 50,000 | none (today) | fails: out of memory | | | 27.85% | 2 GB |
+| 55,000 | 1,500 MiB | passes | 3.1 ms | 14 ms | 0 of 570,213 | 1.42 GB |
+| 64,000 | 1,640 MiB | passes | 186 ms | 717 ms | 0 of 648,470 | 1.54 GB |
+
+With the limit set the collector keeps the heap under it, where by default it lets it reach twice what's live: 40 KB a connection becomes 24 to 26. At 64,000 it passes, but its p99 is near the line (1 s) where at 55,000 it's 14 ms, on 48% of the core: the slowest request took 7.1 s, which is what three lost connection attempts take (1 + 2 + 4 s), so the queue of connections waiting to be accepted is the first suspect, and the collector working against the limit the second. Not yet told apart.
+
+The challenge gives an entry 65,535 descriptors, so 64,000 users (the chart's top two) is as many as anything can hold: that's the ceiling, and the question for gantry is how near it comes.
+
+### 5c. Workers: not built
+The design was a goroutine for each database connection, so a request's goroutine kept a shallow stack. 5a measured what it would save: 2 to 4 KB of a connection's 40. It isn't built. What 5a and 5b point at instead is 5d to 5f.
+
+### 5d. The memory limit, from what the process may have
+At start (`web`'s `init`: every app has it, and none has to change), gantry finds the least the process may have (its cgroup's `memory.max` and `memory.high`, every cgroup's above it, cgroup v1's `memory.limit_in_bytes`, and the machine's memory, which is the limit for a server of its own, as the challenge's is) and tells the runtime four fifths of it (`debug.SetMemoryLimit`). The fifth is for what the runtime doesn't count: the kernel's side of every connection, and SQLite's own memory. It's a ceiling the collector works to stay under, not a reservation: a heap far below it is collected as it always was. `GOMEMLIMIT`, when set, is left as it is. The router says what was set, once, when its handler is built.
+
+Contract pin: `memoryLimit(memoryFiles) (limit, container int64)`: 0, 0 when nothing can be read, or nothing read is a number from 1 byte to 1 TiB (`max`, and v1's "none", 2^63 rounded to a page, aren't).
+
+### 5e. The slow tail at 64,000
+At 64,000 the p99 is 717 ms where at 55,000 it's 14 ms. One run with the kernel's counters of dropped connection attempts read before and after, the collector's trace on, and k6's own CPU watched, tells the three suspects apart: the accept queue, the collector, the load generator.
+
+### 5e found: it's the load, mostly
+At 64,000 users, with the kernel's counters read before and after, the collector traced, and a probe of its own (a new connection and `GET /feed` every 50 ms, on a core neither the app nor k6 has):
+
+| | k6 says | the probe says |
+| --- | ---: | ---: |
+| p95 | 216 ms | 16 ms |
+| p99 | 859 ms | 75 ms |
+| the slowest | 2.7 s | 276 ms |
+
+No connection attempt was dropped (`ListenOverflows`, `ListenDrops`: 0 before and after), the collector took 4% of the core (69 collections in two minutes, 630 MB live, 512 MB of it stacks), and k6 had 10 to 11 GB and spiked to 13 cores. So most of the tail is the load generator's, on this machine, holding 64,000 users; the app's own p99 at 64,000 is some 75 ms, against the challenge's 1 s.
+
+### 5f. SQLite compiled from C
+`db` has SQLite compiled from C when the build has cgo (`db/sqlite_c.go`), and translated to Go (`modernc.org/sqlite`, `db/sqlite_go.go`) when it hasn't. A build without cgo (the `gantry` CLI, cross-compiled; `bin/go`; an app whose Dockerfile still says `CGO_ENABLED=0`) is what it was. `gantry new`'s Dockerfile turns cgo on, keeps Go's build cache between deploys (SQLite's C is 16 s to compile), and links the binary statically, so the production image stays an empty one.
+
+The C build is gantry's own binding, about 600 lines, over the SQLite that `mattn/go-sqlite3` compiles (imported for its C alone). That driver was tried first, behind an adapter, and it answers differently in ways an app would meet: `$1, $2` bound by where they appear, not their number (gantry's own SQL is written so, for Postgres); a statement asked as a query not run until its rows are read; a script's statements before the last skipped when asked as a query; times written in their own zone; and a kept statement's columns stale after the schema changes. The adapter for all that was growing past the binding it would have saved. The binding answers as `modernc.org/sqlite` does, by construction (its rules were read from that driver's source and are written the same way), and by test: `db.TestSQLiteCMatchesTranslated` opens two databases made the same, one with each, asks both the same things (every type of value, times in each format either reads, `?`, `?NNN`, `$NNN` out of order, names, missing and extra arguments, scripts in each shape, empty SQL, a statement asked as a query and not read, results, and errors), and the answers must be equal. What it does that the driver it replaces can't: each connection is opened without SQLite's lock (database/sql has one goroutine at a time use a connection), SQLite doesn't count its allocations under a lock all connections share (`TestSQLiteCUncounted`), and a row is read in one call from Go to C.
+
+Measured with `bin/bench against` the commit before this batch (M5, the app on one core):
+
+| | before | `mattn/go-sqlite3`, behind the adapter | gantry's own binding |
+| --- | ---: | ---: | ---: |
+| The limit | 24,000 req/s | 30,000 req/s (+25%) | 31,000 req/s (+29%) |
+| A request's CPU, at 21,600 req/s | 38.1 µs | 32.7 µs (−14%) | 31.7 µs (−16%) |
+| of it, running queries | 20.6 µs | | 9.0 µs |
+
+The C build is compiled with the features the translated one has (full-text search, math functions, `dbstat`, `STAT4`): build tags, in the toolchain's `GOFLAGS` so dev, test and production builds all have them, and `db.TestSQLiteCCompileOptions` fails on any difference between the two builds that isn't listed there with its reason.
+
+Review (my pass and Codex's): seven findings, all fixed, each with a test on both builds where the two should agree.
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| A prepared statement run again while its last run's rows were open reset it under them: the old rows read freed memory | the old rows are cut off, and say so | `db.TestSQLiteCRunAgain` |
+| A query's context, done after the query answered, interrupted whatever the connection ran next | the context watches a query until its first row, as the translated driver's does; after, database/sql closes the rows | `db.TestSQLiteCancelAfterAnswer` |
+| Closing rows dropped what ending the statement came to (a RETURNING's write that fails at its end) | Close returns it | `db.TestSQLiteReturningFailsAtClose` |
+| The C build lacked FTS5, math functions, `dbstat`, `STAT4` | build tags | `db.TestSQLiteFeatures`, `db.TestSQLiteCCompileOptions` |
+| A NUL in SQL looped for ever | SQL ends at a NUL | `db.TestSQLiteNUL` |
+| A read-only transaction took the write lock | `BEGIN` for one | `db.TestSQLiteReadOnlyTxWhileWriting` |
+| The memory limit read only the root cgroup: a service's, a nested container's, a server's own memory missed | the process's cgroup and every one above it (v1 and v2), and the machine's memory | `web.TestMemoryLimit` |
+
+A second review (Codex's) confirmed five of those, and found the rest incomplete, and more. All fixed:
+
+| Finding | Fix | Test |
+| --- | --- | --- |
+| A statement closed while its rows were open freed what they read | its rows are cut off, and say so | `db.TestSQLiteCStmtClosedUnderRows` |
+| A run cut off by the next lost what ending it came to | the cut rows' Close returns it | `db.TestSQLiteCRunAgainKeepsItsError` |
+| A script dropped an earlier statement's failure at its end (the translated driver does too) | the script fails: the C build is the stricter | `db.TestSQLiteCScriptFailsOnAnEarlierStatement` |
+| A cgo build without the tags had the C build without its features | the C build is chosen by the tags; any other build has the translated SQLite | `go test` with cgo and no tags: `db.TestSQLiteFeatures` passes |
+| Differences an app's SQL would meet were allowed (`soundex()`, `LIKE` on a blob, `sqlite_offset()`, `sqlite_dbpage`, geopoly) | compiled in, by `CGO_CFLAGS`; the C build doesn't start without them | `db.TestSQLiteFeatures`; the start-up check, seen to refuse a build with the tags and not the flags |
+| An app's `interface{ Code() int }` found no code on the C build's errors | `Code()` | `db.TestSQLiteErrorCode` |
+| SQL of 2 GiB or more would overflow C's int | refused | none: by reading (a test would need 2 GiB) |
+| cgroup paths read as if every mount's root were the hierarchy's; v1's limits above the process's missed; a machine past 1 TiB taken for no limit | the process's cgroups mapped through `/proc/self/mountinfo`, limits walked up on v1 and v2 alike, only v1's "none" is none | `web.TestMemoryLimit`, `web.TestMemoryLimitNone` |
+
+A failed commit now rolls back, as the translated driver's does, so database/sql never takes back a connection still in a transaction. `web.TestFailureMidStream` races under `-race` on the commit before this batch too: not this batch's (spun off as a task of its own).
+
+### AC ↔ test map (Batch 5)
+| AC | Test | Lens |
+| --- | --- | --- |
+| A connection that has served a request costs what the test says it does, in stack and in heap | `feed/app.TestMemoryPerConnection` | Scale, Signals |
+| The least the process may have becomes four fifths of it: its cgroup's `memory.max` or `memory.high`, any above it, cgroup v1's, the machine's memory | `web.TestMemoryLimit` | Contract |
+| No limit (`max`, v1's 2^63, nothing to read), a file that isn't a number, a path out of the cgroup root: nothing set | `web.TestMemoryLimitNone` | Contract |
+| `GOMEMLIMIT` set is left alone | `web.TestMemoryLimitLeavesGOMEMLIMIT` | Config |
+| The router says what it set, once | `web.TestMemoryLimitLogged` | Signals |
+| Every gantry test passes on both builds, statically linked on the C one (as CI now runs them) | `go test ./...`; `CGO_ENABLED=1 go test -tags netgo,osusergo,sqlite_omit_load_extension -ldflags "-linkmode external -extldflags -static" ./...` | Parity |
+| The C build answers as the translated one: values, times, arguments, scripts, empties, results, errors | `db.TestSQLiteCMatchesTranslated` | Parity, Contract |
+| A script, or SQL that's only comments, isn't kept: each run compiles it, as the translated driver does | `db.TestStatementCacheScriptsAndErrors`, `db.TestStatementCacheCommentedSQL` (both builds) | Contract |
+| SQLite doesn't count allocations under its shared lock | `db.TestSQLiteCUncounted` | Scale |
+| `IsUnique` and `IsForeignKey` on both | `db.TestConstraintErrors` (both builds) | Parity |
+| The bench's report puts the C calls in running and compiling SQL | `report.TestLayersCompiledSQLite` | Signals |
+| A generated app builds with cgo, static, and runs on the empty image | `gantry new` goldens; the bench's app built that way and run `FROM scratch` as 65532 (it set its own memory limit, 1.6 GiB of 2, and served `/feed`, a post and `/health`) | Migrate & deploy |
+
+Evidence, each a short run: `bin/bench against` the commit before 5f; the challenge's own script at 55,000 and 64,000 with nothing set by hand.
+
 ## Later batches
-5. Database workers, and SQLite as pure Go, C and WASM measured inside them. This is where "not Go, if something else is better" is decided.
 6. Generated JSON for generated row types.
 7. Results kept until the database changes (`DB.Version`), switched off by itself when writes are frequent.
+8. The request as it arrives through a proxy and Cloudflare: its headers and its compressed answer, in the bench, and what they cost.
 
 ## Agent loop checkpoints
 - Red tests for every Batch 1 row, reported, then on (this plan's approval is the gate).

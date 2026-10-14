@@ -23,33 +23,13 @@ const (
 	stmtCacheMaxSQL = 16 << 10
 )
 
-// sqliteConn, sqliteStmt and sqliteRows are what the SQLite driver's
-// connections, statements and rows are, beyond the least database/sql asks:
-// what a cachingConn passes on, or runs.
-type sqliteConn interface {
-	driver.Conn
-	driver.ConnBeginTx
-	driver.ConnPrepareContext
-	driver.ExecerContext
-	driver.QueryerContext
-	driver.Pinger
-	driver.SessionResetter
-	driver.Validator
-}
-
+// sqliteStmt is what the SQLite driver's statements are, beyond the least
+// database/sql asks: what a cachingConn runs. (Its connections and rows:
+// sqliteConn and sqliteRows, in sqlite_c.go and sqlite_go.go.)
 type sqliteStmt interface {
 	driver.Stmt
 	driver.StmtExecContext
 	driver.StmtQueryContext
-}
-
-type sqliteRows interface {
-	driver.Rows
-	driver.RowsColumnTypeDatabaseTypeName
-	driver.RowsColumnTypeLength
-	driver.RowsColumnTypeNullable
-	driver.RowsColumnTypePrecisionScale
-	driver.RowsColumnTypeScanType
 }
 
 // cachingConnector opens the driver's connections, each to keep its
@@ -94,7 +74,9 @@ type cachedStmt struct {
 // stmt is the statement kept for query, compiled if it's new, and nil for a
 // run that goes to the driver as it is: SQL too long to keep, SQL whose
 // statement is busy (run again while its rows are being read, in one
-// transaction), or new SQL when the connection is full of busy ones.
+// transaction), new SQL when the connection is full of busy ones, or SQL
+// the driver's statement can't run as a whole (keepable): a script, or SQL
+// that's only comments.
 func (c *cachingConn) stmt(ctx context.Context, query string) (*cachedStmt, error) {
 	if len(query) > stmtCacheMaxSQL {
 		return nil, nil
@@ -118,6 +100,13 @@ func (c *cachingConn) stmt(ctx context.Context, query string) (*cachedStmt, erro
 	if !ok {
 		compiled.Close()
 		return nil, unknownDriver("statement", compiled)
+	}
+	if keep, ok := keepable(compiled); !ok {
+		compiled.Close()
+		return nil, unknownDriver("statement", compiled)
+	} else if !keep {
+		compiled.Close()
+		return nil, nil
 	}
 	s := &cachedStmt{sqliteStmt: ss, query: query}
 	c.stmts[query] = c.recent.PushFront(s)

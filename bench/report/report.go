@@ -120,6 +120,10 @@ var packages = []struct{ pkg, layer string }{
 	{"crypto/tls", Network},
 }
 
+// cSQLite begins the names of gantry's db's calls into SQLite compiled from
+// C (db/sqlite_c.go): the time in C is the call's.
+const cSQLite = "github.com/scttymn/gantry/db._Cfunc_"
+
 // in reports whether a function ("net/http.(*conn).serve") is in a package
 // or under it.
 func in(function, pkg string) bool {
@@ -131,7 +135,8 @@ func in(function, pkg string) bool {
 // stack: a syscall under net/http is the network's, one under SQLite is
 // SQLite's, and garbage made encoding JSON is JSON's. SQLite's time is
 // compiling when the driver's prepare is in the stack, and running
-// otherwise. A stack that's the runtime's alone (the collector, the
+// otherwise; compiled from C, it's the calls from gantry's db into it. A
+// stack that's the runtime's alone (the collector, the
 // scheduler) is the runtime's, and one no layer has a frame in is other:
 // the shares are the whole profile.
 func Layers(p *profile.Profile, app string) map[string]float64 {
@@ -157,7 +162,7 @@ func layerOf(s *profile.Sample, app string) string {
 	for _, loc := range s.Location {
 		for _, line := range loc.Line {
 			name := line.Function.Name
-			if name == "modernc.org/sqlite.(*conn).prepareV2" {
+			if name == "modernc.org/sqlite.(*conn).prepareV2" || name == cSQLite+"gantry_prepare" {
 				compiling = true
 			}
 			if !in(name, "runtime") && !in(name, "internal/runtime") {
@@ -168,6 +173,9 @@ func layerOf(s *profile.Sample, app string) string {
 			}
 			if in(name, app) {
 				layer = App
+			}
+			if strings.HasPrefix(name, cSQLite) {
+				layer = RunningSQL
 			}
 			for _, p := range packages {
 				if layer == "" && in(name, p.pkg) {

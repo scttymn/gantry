@@ -43,7 +43,9 @@ jobs:
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
             -e GANTRY_RELEASE_TAG="$GITHUB_REF_NAME" \
-            gantry-toolchain go test ./...
+            gantry-toolchain sh -c 'go test ./... &&
+              echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically" &&
+              CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
       - name: gofmt
         run: |
           unformatted=$(docker run --rm -v "$PWD:/src" -w /src gantry-toolchain sh -c 'gofmt -l $(find . -name "*.go" -not -path "./.cache/*")')

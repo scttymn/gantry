@@ -7,6 +7,17 @@ Run the framework tests in Docker with `bin/go go test ./...` and static checks
 with `bin/go go vet ./...`. Generator changes must update the golden fixtures
 and keep generated apps passing tests and Gantry Strict.
 
+`db` has SQLite two ways: compiled from C (`db/sqlite_c.go`, gantry's own
+binding) when the build has cgo, as an app's does, and translated to Go
+(`modernc.org/sqlite`) when it hasn't, as `bin/go` and the `gantry` CLI do. They
+answer the same (`TestSQLiteCMatchesTranslated` holds the C build to the
+other), and a change to `db` passes both: `bin/go go test ./...`, then
+`bin/go sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'`
+(statically linked, as production is: one test runs the binary in an empty
+root). The tags and C flags are an app's Dockerfile's: without the tags a cgo
+build has the translated SQLite, without the flags the C one doesn't start, and
+`TestSQLiteCCompileOptions` fails on any other difference between the two.
+
 ## Performance
 
 `bin/bench` measures the gantry in the checkout: it builds `bench/feed` (the

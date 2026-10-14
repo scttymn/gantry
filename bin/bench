@@ -57,11 +57,14 @@ rm -f bench/out/*.json bench/out/*.prof
 docker build -q --target toolchain -t gantry-toolchain . >/dev/null
 toolchain() { # toolchain DIR COMMAND...: in the toolchain's image, on the checkout (and on REF's, at /base)
 	local dir=$1; shift
-	docker run --rm -v "$PWD:/src" ${base:+-v "$base:/base:ro"} -w "/src/$dir" \
+	# With cgo, as a gantry app's Dockerfile builds it: db has SQLite compiled
+	# from C then (db/sqlite.go).
+	docker run --rm -v "$PWD:/src" ${base:+-v "$base:/base:ro"} -w "/src/$dir" -e CGO_ENABLED=1 \
+		-e CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
 		-e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache gantry-toolchain "$@"
 }
 echo "building the app and the bench" >&2
-toolchain bench/feed go build -trimpath -tags bench,nodynamic,timetzdata -o /src/bench/out/feed ./cmd/feed
+toolchain bench/feed go build -trimpath -tags bench,nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -o /src/bench/out/feed ./cmd/feed
 toolchain bench sh -c 'go build -trimpath -o /src/bench/out/bench ./cmd/bench && go build -trimpath -o /src/bench/out/compare ./cmd/compare'
 if [ -n "$against" ]; then
 	# The same app, against REF's gantry: its go.mod, with gantry replaced by
@@ -71,7 +74,7 @@ if [ -n "$against" ]; then
 	git worktree add -q --detach "$base" "$against"
 	toolchain bench/feed sh -c 'cp go.mod /tmp/base.mod && cp go.sum /tmp/base.sum &&
 		go mod edit -modfile=/tmp/base.mod -replace github.com/scttymn/gantry=/base &&
-		go build -mod=mod -modfile=/tmp/base.mod -trimpath -tags bench,nodynamic,timetzdata -o /src/bench/out/feed-base ./cmd/feed'
+		go build -mod=mod -modfile=/tmp/base.mod -trimpath -tags bench,nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -o /src/bench/out/feed-base ./cmd/feed'
 fi
 
 # An app has core 0, or a share of it; the load has the rest.

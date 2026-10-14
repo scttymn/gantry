@@ -151,3 +151,24 @@ func TestLayers(t *testing.T) {
 		t.Errorf("an empty profile: %v", got)
 	}
 }
+
+// With SQLite compiled from C, its time is in the calls from gantry's db
+// into it: compiling when the call is the one that compiles, running for
+// any other. The Go around those calls is gantry's db, as before.
+func TestLayersCompiledSQLite(t *testing.T) {
+	db := func(frames ...string) *[]string {
+		s := append(frames, "database/sql.(*DB).queryDC", "feed/app/models.(*Queries).Feed", "net/http.(*conn).serve")
+		return &s
+	}
+	got := Layers(stacks(map[*[]string]int64{
+		db("runtime.cgocall", "github.com/scttymn/gantry/db._Cfunc_gantry_step", "github.com/scttymn/gantry/db.(*cRows).step", "github.com/scttymn/gantry/db.(*cStmt).first"): 6,
+		db("runtime.cgocall", "github.com/scttymn/gantry/db._Cfunc_sqlite3_reset", "github.com/scttymn/gantry/db.(*cStmt).reset"):                                             1,
+		db("runtime.cgocall", "github.com/scttymn/gantry/db._Cfunc_gantry_prepare", "github.com/scttymn/gantry/db.(*cConn).compile"):                                          2,
+		db("runtime.mallocgc", "github.com/scttymn/gantry/db.(*cRows).Next"):                                                                                                  1,
+	}), "feed")
+	for layer, want := range map[string]float64{RunningSQL: 0.7, CompilingSQL: 0.2, Database: 0.1} {
+		if math.Abs(got[layer]-want) > 1e-9 {
+			t.Errorf("%s: %.2f; want %.2f", layer, got[layer], want)
+		}
+	}
+}
