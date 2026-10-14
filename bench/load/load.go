@@ -34,6 +34,9 @@ type Options struct {
 	Duration    time.Duration // requests are due for this long
 	Secret      string        // signs the tokens likes and posts carry
 	Users       int           // the tokens are users 1 to Users'
+	// Host is the name the app is asked for, when it isn't the URL's: an app
+	// reached at a proxy's address, which serves it by name.
+	Host string
 	// Gzip asks for compressed answers, as a browser does: for an app
 	// reached across the internet, where the bytes are what there's least of.
 	Gzip bool
@@ -79,7 +82,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	// A feed is read before the run, for posts to read and like: the mix is
 	// the mix from the first request, at any rate. An app whose feed can't
 	// be read, or has nothing in it, has no run.
-	first := user{url: o.URL, client: client}
+	first := user{url: o.URL, host: o.Host, client: client}
 	early, stop := context.WithTimeout(ctx, 10*time.Second)
 	ok := first.feed(early)
 	stop()
@@ -131,7 +134,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			defer wg.Done()
 			// Seeds well apart: generators seeded 0, 1, 2 ... start out alike,
 			// and the mix across connections comes out skewed.
-			u := user{url: o.URL, client: client, tokens: tokens, ids: slices.Clone(first.ids), rng: rand.New(rand.NewPCG((uint64(w)+1)*0x9E3779B97F4A7C15, 2026))}
+			u := user{url: o.URL, host: o.Host, client: client, tokens: tokens, ids: slices.Clone(first.ids), rng: rand.New(rand.NewPCG((uint64(w)+1)*0x9E3779B97F4A7C15, 2026))}
 			for at := range moments {
 				if ctx.Err() != nil || !u.request(ctx) {
 					failed[w]++
@@ -157,6 +160,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 // feed, then reads and likes posts that feed had, and writes its own.
 type user struct {
 	url    string
+	host   string
 	client *http.Client
 	tokens []string
 	rng    *rand.Rand
@@ -215,6 +219,9 @@ func (u *user) do(ctx context.Context, method, path, token string, body []byte) 
 	req, err := http.NewRequestWithContext(ctx, method, u.url+path, reader)
 	if err != nil {
 		return nil, 0, err
+	}
+	if u.host != "" {
+		req.Host = u.host
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)

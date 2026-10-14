@@ -253,8 +253,24 @@ Evidence, each run here and its output kept in this file: the checkout against i
 - Review of the second tip (9b1d66e), Codex: five more, all held. The bench still ended on any failed request, so the comparison never saw the shares it was changed to compare: a run is given up on only when nothing was done (or, alone, when nine tenths of the limit doesn't pass the line). The load's timekeeper spins on purpose, and counting that would call a load on one core out of CPU when it wasn't: a run says how long it spun (`load.Result.Spun`), and that's left out. One in a thousand more failed, to the digit, was a regression by a float's hair. The failed row gave both sides the head's total. And the load's cores are whole ones, as `bin/bench` gives it: a share of cores would need more than `GOMAXPROCS` to judge.
 - After them, the branch against itself again: "The same: a request's CPU differs by −0.2%", limits 25,000 and 25,000.
 
+## Batch 4: on a real server, deployed (2026-10-13)
+The bench's app on its own (`scttymn/twelve-dollar`, private), built against the statement cache, deployed with Houston to `twelve-dollar.svnmns.com`: one CPU and 2 GB in its `compose.yml`, beside four live apps. The server is a virtual machine of 8 cores on an AMD Ryzen 9 7950X, 15 GB. Its seeds run once it's listening, as a deploy's health check doesn't wait for them (and a release hook can't run them: it's run with `sh`, which the production image doesn't have).
+
+| From | Through | The limit | The app's core |
+| --- | --- | --- | --- |
+| a laptop, on Starlink | Cloudflare, the tunnel, kamal-proxy | 1,150 req/s (11,000 users) | under a fifth used |
+| the laptop, on fibre | the same | 1,550 req/s (15,000 users); 1,600 is 3.8 s at p95 | a quarter used |
+| the server itself | nothing: the app's container | 14,500 req/s (137,000 users); nearer 13,000 sustained | all of it |
+| the server itself | kamal-proxy, by the app's name | 11,000 req/s (104,000 users) | all of it |
+
+- **On this server, one core carries the 100,000.** The app alone: a request costs 78 µs (three runs at 13,050 req/s: 77.8, 77.8, 74.5), where it's 38 µs on the M5 and 186 µs on GitHub's EPYC. 100,000 users are 10,585 req/s: 73% of the limit found, about 81% of what it holds (at nine tenths of the limit found the core was full, and one run of three went slow: 20 s trials read a little high against a quota).
+- **Behind the proxy the app does less: 11,000 req/s, not 14,500**, with its core as full. A request that comes through kamal-proxy costs the app about 91 µs, not 78: the headers a proxy adds, and what gantry does with them. That's 18%, and it's gantry's to look at. 100,000 users are 96% of that limit: at the line, not past it.
+- **kamal-proxy takes more CPU than the app does**: about a core and a half at 11,000 req/s, some 135 µs a request. It has the cores here, so it isn't what stops the app, but it's the larger half of what a request costs this server.
+- **What stops this server is in front of the proxy: about 1,600 req/s, from one client, through Cloudflare and the tunnel.** Neither the app nor, by the owner's own watching, the machine was busy. Whether it's Cloudflare's handling of one address or the tunnel isn't known; cloudflared's CPU didn't say it was the tunnel. It's Houston's to find, and it's a tenth of what the proxy and the app behind it can do.
+- A live app on the same server (`/up`, through Cloudflare, asked every few seconds) answered in 50 to 80 ms throughout, but for the odd answer of 1 to 8 s: with the server loaded, and with nothing running at all. So the load isn't what did it. What does is Houston's to find too.
+- A bench that asks a proxy for an app by name has to ask for `/up` by that name as well: the first run through the proxy waited, sending nothing, for a 404 to turn into a 200.
+
 ## Later batches
-4. The 100,000-user run: the deployed path, proxy in front, on the modest server.
 5. Database workers, and SQLite as pure Go, C and WASM measured inside them. This is where "not Go, if something else is better" is decided.
 6. Generated JSON for generated row types.
 7. Results kept until the database changes (`DB.Version`), switched off by itself when writes are frequent.

@@ -38,6 +38,7 @@ func main() {
 		side    = flag.String("bench-url", "http://127.0.0.1:6060", "the app's bench port (BENCH_ADDR); empty for an app that has none (a deployed one): its limit and its times, and no CPU")
 		start   = flag.Float64("start", 4000, "the first rate tried, looking for the limit")
 		gzip    = flag.Bool("gzip", false, "ask for compressed answers, as a browser does")
+		host    = flag.String("host", "", "the name to ask for, when the URL is a proxy's address")
 		out     = flag.String("o", "report.json", "write the report as JSON here, and the measured run's CPU profile beside it")
 		quick   = flag.Bool("quick", false, "shorter runs: a look, not a measurement")
 		trial   = flag.Duration("trial", 20*time.Second, "how long each rate is tried for, looking for the limit")
@@ -60,7 +61,7 @@ func main() {
 	measured := *length
 	ctx := context.Background()
 	run := func(rate float64, d time.Duration) (load.Result, error) {
-		return load.Run(ctx, load.Options{URL: *url, Rate: rate, Connections: *conns, Duration: d, Secret: *secret, Users: *users, Gzip: *gzip})
+		return load.Run(ctx, load.Options{URL: *url, Rate: rate, Connections: *conns, Duration: d, Secret: *secret, Users: *users, Gzip: *gzip, Host: *host})
 	}
 	fail := func(format string, args ...any) {
 		fmt.Fprintf(os.Stderr, "bench: "+format+"\n", args...)
@@ -68,7 +69,7 @@ func main() {
 	}
 
 	fmt.Fprintln(os.Stderr, "waiting for the app (a new database is seeded first)")
-	if err := waitFor(*url+"/up", 15*time.Minute); err != nil {
+	if err := waitFor(*url+"/up", *host, 15*time.Minute); err != nil {
 		fail("%v", err)
 	}
 	// A warm-up, and a look: an app that answers none of it isn't one to
@@ -262,9 +263,18 @@ func cpuProfile(side string, d time.Duration, path string) (*profile.Profile, er
 	return profile.Parse(bytes.NewReader(raw))
 }
 
-func waitFor(url string, d time.Duration) error {
+// waitFor waits for url to answer 200, asked for by host's name when the
+// URL is a proxy's address.
+func waitFor(url, host string, d time.Duration) error {
 	for end := time.Now().Add(d); ; time.Sleep(time.Second) {
-		res, err := control.Get(url)
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return err
+		}
+		if host != "" {
+			req.Host = host
+		}
+		res, err := control.Do(req)
 		if err == nil {
 			res.Body.Close()
 			if res.StatusCode == http.StatusOK {
