@@ -13,8 +13,8 @@
 # by layer. The same as JSON: bench/out/report.json.
 #
 # against REF builds the same app against REF's gantry as well, finds each
-# one's limit, then runs both at one rate, turn about, and writes the
-# comparison as Markdown. It exits 1 when the checkout is slower than REF by
+# one's limit, then runs both at one rate, turn about (the one not being
+# measured stopped where it stands), and writes the comparison as Markdown. It exits 1 when the checkout is slower than REF by
 # more than the runs themselves differ. It's what a pull request's job runs.
 #
 # A share of a core (BENCH_CPUS) stands in for a slower one: the app gets
@@ -37,11 +37,13 @@ net=gantry-bench base="" # base: REF's worktree, when there is one
 # One at a time: two would share the core, and take each other's app down.
 # Making the network is the lock: Docker makes a name once.
 if ! docker network create "$net" >/dev/null 2>&1; then
-	echo "bin/bench: one is running here already (the network $net is there). If it isn't: docker rm -f gantry-bench-head gantry-bench-base; docker network rm $net" >&2
+	echo "bin/bench: one is running here already (the network $net is there). If it isn't: docker ps -aq --filter name=^gantry-bench- | xargs docker rm -f; docker network rm $net" >&2
 	exit 1
 fi
 cleanup() {
-	docker rm -f gantry-bench-head gantry-bench-base >/dev/null 2>&1 || true
+	# Every container of the bench's, the load's too: one left on the network
+	# would keep it, and the next run would find the lock taken.
+	docker ps -aq --filter "name=^gantry-bench-" | xargs docker rm -f >/dev/null 2>&1 || true
 	docker network rm "$net" >/dev/null 2>&1 || true
 	if [ -n "$base" ]; then
 		git worktree remove --force "$base" >/dev/null 2>&1 || true
@@ -99,9 +101,11 @@ start() { # start SIDE BINARY: an app, as gantry-bench-SIDE
 		-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets \
 		gantry-toolchain "/bench/$2" >/dev/null
 }
+loads=0
 bench() { # bench SIDE ARGS...: the bench, of that app; on a failure, the app's log
 	local side=$1; shift
-	docker run --rm --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
+	loads=$((loads + 1))
+	docker run --rm --name "gantry-bench-load-$loads" --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
 		/bench/bench -url "http://gantry-bench-$side:8080" -bench-url "http://gantry-bench-$side:6060" \
 		-cpus "${BENCH_CPUS:-1}" -machine "$machine" "$@" && return
 	echo "--- the app's log" >&2
@@ -117,11 +121,24 @@ fi
 
 start base feed-base
 start head feed
+# Both up, their databases seeded, before either is measured: one still
+# seeding would be on the core the other is being measured on.
+docker run --rm --name gantry-bench-load-0 --network "$net" gantry-toolchain timeout 900 sh -c '
+	for side in base head; do until curl -sf -o /dev/null "http://gantry-bench-$side:8080/up"; do sleep 1; done; done' ||
+	{ echo "bin/bench: the apps didn't come up" >&2; docker logs --tail 20 gantry-bench-base >&2; docker logs --tail 20 gantry-bench-head >&2; exit 1; }
+measure() { # measure SIDE ARGS...: the bench of that app, with the other stopped where it stands
+	local side=$1 other=base status=0; shift
+	[ "$side" = base ] && other=head
+	docker pause "gantry-bench-$other" >/dev/null
+	bench "$side" "$@" || status=$?
+	docker unpause "gantry-bench-$other" >/dev/null
+	return "$status"
+}
 # Each one's limit, and its layers at nine tenths of it. The reports are for
 # the comparison: on stdout there's the Markdown alone.
 for side in base head; do
 	echo "== $side" >&2
-	bench "$side" -o "/bench/$side.json" -trial 10s -for 15s "$@" >&2
+	measure "$side" -o "/bench/$side.json" -trial 10s -for 15s "$@" >&2
 done
 # Then both at one rate, which both pass: nine tenths of the lower limit.
 limit() { awk -F'[:,]' '/"limit_rate"/ { print $2 + 0 }' "bench/out/$1.json"; }
@@ -129,8 +146,8 @@ rate=$(awk -v a="$(limit base)" -v b="$(limit head)" 'BEGIN { printf "%.0f", (a 
 for run in 1 2 3; do
 	for side in base head; do
 		echo "== $side at $rate req/s, run $run" >&2
-		bench "$side" -rate "$rate" -for 15s -o "/bench/$side.$run.json" "$@" >&2
+		measure "$side" -rate "$rate" -for 15s -o "/bench/$side.$run.json" "$@" >&2
 	done
 done
-docker run --rm -v "$PWD/bench/out:/bench:ro" gantry-toolchain /bench/compare -dir /bench \
+docker run --rm --name gantry-bench-load-compare -v "$PWD/bench/out:/bench:ro" gantry-toolchain /bench/compare -dir /bench \
 	-base "$against ($(git rev-parse --short "$against"))" -head "this change ($commit)"

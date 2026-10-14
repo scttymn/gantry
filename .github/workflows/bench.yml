@@ -26,6 +26,9 @@ jobs:
           persist-credentials: false
           fetch-depth: 0 # the base is built from its own commit
       - name: This change against its base
+        # bash, said: only then is it run with pipefail, and without it the
+        # step would pass on tee's word whatever the bench found.
+        shell: bash
         env:
           BASE: origin/${{ github.base_ref }}
         run: bin/bench against "$BASE" | tee -a "$GITHUB_STEP_SUMMARY"

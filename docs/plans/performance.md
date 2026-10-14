@@ -194,9 +194,9 @@ A pull request is measured against its base, in one job, on one machine: `bin/be
   2. Then both at one rate, nine tenths of the lower limit, turn about, three times each: a request's CPU.
   3. `bench/cmd/compare` reads the reports and writes the answer as Markdown (the job's summary): the limits, the cost, the layers, and the verdict. It exits 1 on a regression.
 - **The verdict** (`report.Compare`): each side's cost is the median of its runs, and the noise is the wider of the two sides' spreads (highest less lowest, over the median). A change within the noise, or within 3%, is "the same". Past it, slower fails and faster is said. A side with requests failed at a rate the other carried is slower, whatever its CPU. A limit a tenth below the base's fails too (each is found to 5%).
-- **The load giving out before the app** would make a limit that's the bench's, not the app's, and hide a faster gantry. At nine tenths of its limit an app is using most of its core; one using under six tenths of it wasn't what stopped the search. The report says so (`report.Starved`), in `bin/bench` alone too.
+- **The load giving out before the app** would make a limit that's the bench's, not the app's, and hide a faster gantry. It's told from the load's side: the bench used over eight tenths of the cores it had (`report.LoadBound`). Such a limit isn't compared. An app that left much of its own core unused at nine tenths of its limit (`report.Idle`) was stopped by something that isn't its CPU, the load or its own waiting, and the report says that too, as what it is.
 - **`.github/workflows/bench.yml`**: on a pull request that touches more than docs, `bin/bench against origin/<base>`, its Markdown to the job summary.
-- `cmd/bench` gains `-rate` (measure at this rate, no search), `-trial` and `-for` (how long), and `-cpus` (the app's share of its core, for Starved).
+- `cmd/bench` gains `-rate` (measure at this rate, no search), `-trial` and `-for` (how long), and `-cpus` (the app's share of its core, for Idle).
 
 ### Contract pin
 - `bin/bench against REF [-quick]`: REF is a commit of this repository. Output: Markdown on stdout, progress on stderr, the runs' reports in `bench/out/`. Exit 1: a regression, a side that doesn't come up or passes at no rate, or a REF that isn't a commit.
@@ -207,10 +207,13 @@ A pull request is measured against its base, in one job, on one machine: `bin/be
 | --- | --- | --- |
 | The same cost within the runs' spread, or within 3%, is the same; more is slower and fails; less is faster | `report.TestCompare` | Contract |
 | Runs that differ by more than the change does don't fail it: it's the same, and the noise is said | `report.TestCompare` | Signals |
-| Requests failed on one side at a rate the other carried: that side is slower, whatever its CPU | `report.TestCompare` | Contract (unhappy) |
+| A greater share of requests failed than the base's, by more than one in a thousand: slower, whatever its CPU, and whether or not the base failed some | `report.TestCompare` | Contract (unhappy) |
 | Fewer than three runs a side, or a run with nothing done, is an error, not a verdict | `report.TestCompareNeedsRuns` | Contract (unhappy), Signals |
 | A limit a tenth under the base's fails; within it doesn't; the top rate passing on both is "at least" | `report.TestCompareLimits` | Contract |
-| An app using under six tenths of its share of the core at nine tenths of its limit is starved; one using most of it isn't; a share of half a core is judged against the half | `report.TestStarved` | Signals |
+| The load used over eight tenths of its cores: its limit is the bench's own | `report.TestLoadBound` | Signals |
+| An app using under six tenths of its share of the core at nine tenths of its limit is idle; a share of half a core is judged against the half | `report.TestIdle` | Signals |
+| A limit the load gave out at, on either side, or one that's "at least", isn't a fall | `report.TestCompareLimits` | Contract |
+| A side's runs are its numbered reports and no other file, each at a rate, and all at one | `cmd/compare.TestSide` | Contract (invalid input) |
 | The Markdown has both sides' limits and users, the cost and its change, the layers, and the verdict's sentence | `report.TestMarkdown` | Contract |
 
 Evidence, each run here and its output kept in this file: the checkout against itself is the same; this branch against `main` (no statement cache) is faster; a gantry made slower on purpose fails. And the workflow's first run, on its own pull request.
@@ -227,6 +230,17 @@ Evidence, each run here and its output kept in this file: the checkout against i
 - The runs of one side differ by under a percent here (0.2%, 0.6%, 0.9%): the 3% floor is what decides, on this machine. A shared runner will be noisier, and says by how much each time.
 - Both sides run at one rate, nine tenths of the lower limit, so the faster side is further from its own limit there and has more of its core to spare: against `main` the cost reads 13% less where each at its own nine tenths reads 18% less. The limits' row has the whole gain. The summary says so.
 - Two apps on one core, one of them idle, measure as one does alone: the base's and the head's numbers here are the ones `bin/bench` alone gave.
+
+- Review of the first tip (312aefb), Codex's ten findings, all held and closed:
+  - the job passed whatever the bench found: a step's default shell has no `pipefail`, so `tee` had the last word. The step says `shell: bash`, which has;
+  - the head could still be seeding, on the base's core, while the base's limit was looked for: both are up before either is measured, and the one not being measured is paused;
+  - a base that failed any requests hid a head that failed many: it's the share failed that's compared, and one lost in hundreds of thousands isn't a verdict;
+  - "starved" took an app waiting on its disk for a load that gave out: the load's own CPU says whether it did, and an app that left its core unused is said to be that, no more;
+  - a limit the load gave out at, or one that's "at least", was compared as if it were the app's;
+  - a run killed while the load was on left the network, which is the lock, behind: every container of the bench's is removed first;
+  - a file such as `base.1.backup.json` was read as a run, and runs with no rate got past the check that both sides ran at one;
+  - 3% more, to the digit, failed where "within 3%" is the same.
+- After them, the branch against itself again: "The same: a request's CPU differs by −0.2%", limits 25,000 and 25,000.
 
 ## Later batches
 4. The 100,000-user run: the deployed path, proxy in front, on the modest server.

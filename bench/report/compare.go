@@ -18,7 +18,8 @@ type Report struct {
 	LimitRate  float64 `json:"limit_rate"`     // requests a second; 0 when the rate was given
 	LimitUsers int     `json:"limit_users"`    // the challenge's users that is
 	AtLeast    bool    `json:"limit_at_least"` // the top rate tried passed
-	Starved    bool    `json:"starved"`        // the load gave out before the app: the limit reads low
+	LoadBound  bool    `json:"load_bound"`     // the load generator ran out of CPU: the limit is its own, and reads low
+	Idle       bool    `json:"app_idle"`       // at nine tenths of its limit the app left much of its core unused
 
 	Rate      float64            `json:"rate"`               // the measured run's: nine tenths of the limit, or the one given
 	CPUMicros float64            `json:"cpu_us_per_request"` // the process's, its own and the kernel's for it
@@ -44,7 +45,8 @@ type Run struct {
 type Side struct {
 	Name      string // "main (c206c48)"
 	LimitRate float64
-	AtLeast   bool
+	AtLeast   bool               // the top rate tried passed: the limit is that or more
+	LoadBound bool               // the load gave out at it, not the app
 	Layers    map[string]float64 // µs a request
 	Runs      []Run
 }
@@ -59,25 +61,31 @@ type Comparison struct {
 	Verdict    string // a sentence
 }
 
-// A change in a request's CPU smaller than this can't be told from none,
-// however steady the runs; and a limit, found to 5% on each side, has
-// fallen when it's this much lower.
+// A change in a request's CPU of this or less can't be told from none,
+// however steady the runs; a limit, found to 5% on each side, has fallen
+// when it's this much lower or more; and a side has failed requests the
+// other carried when its share of them failed is this much more (one lost
+// in hundreds of thousands, to who knows what, isn't the change's).
 const (
 	leastChange = 0.03
 	limitFall   = 0.10
+	moreFailed  = 0.001
+	hair        = 1e-9 // 3% is 3%, however a float holds it
 )
 
 // Compare is the verdict on head against base. Each side's cost is the
 // median of its runs, and the noise is the wider of the two sides' spreads
 // (highest less lowest, over the median): a change within the noise, or
-// within 3%, is no change. Slower is a regression; so is failing requests
-// at a rate the base carried, whatever the CPU reads (requests not served
-// cost none); and so is a limit a tenth lower. It's an error, not a
-// verdict, with fewer than three runs a side or a run that did nothing.
+// within 3%, is no change. Slower is a regression; so is failing a greater
+// share of the requests than the base did, whatever the CPU reads
+// (requests not served cost none); and so is a limit a tenth lower, when
+// both limits are the apps' own (not where the load gave out, and not "at
+// least"). It's an error, not a verdict, with fewer than three runs a side
+// or a run that did nothing.
 func Compare(base, head Side) (Comparison, error) {
 	var c Comparison
 	var spread [2]float64
-	var failed [2]int
+	var failed, due [2]int
 	for i, s := range []Side{base, head} {
 		if len(s.Runs) < 3 {
 			return c, fmt.Errorf("%s has %d runs: three, at least, to tell a change from a run's own wander", s.Name, len(s.Runs))
@@ -89,6 +97,7 @@ func Compare(base, head Side) (Comparison, error) {
 			}
 			costs = append(costs, r.CPUMicros)
 			failed[i] += r.Failed
+			due[i] += r.Due
 		}
 		slices.Sort(costs)
 		median := costs[len(costs)/2]
@@ -106,30 +115,40 @@ func Compare(base, head Side) (Comparison, error) {
 	if base.LimitRate > 0 {
 		c.Limit = head.LimitRate/base.LimitRate - 1
 	}
-	told := max(leastChange, c.Noise)
+	told := max(leastChange, c.Noise) + hair
+	theirOwn := !base.LoadBound && !head.LoadBound && !head.AtLeast
 	switch {
-	case failed[1] > 0 && failed[0] == 0:
+	case float64(failed[1])/float64(due[1])-float64(failed[0])/float64(due[0]) > moreFailed:
 		c.Regressed = true
-		c.Verdict = fmt.Sprintf("Slower: this change failed %s requests at a rate the base carried.", Thousands(float64(failed[1])))
+		c.Verdict = fmt.Sprintf("Slower: this change failed %s of its %s requests at a rate the base failed %s at.", Thousands(float64(failed[1])), Thousands(float64(due[1])), Thousands(float64(failed[0])))
 	case c.Change > told:
 		c.Regressed = true
 		c.Verdict = fmt.Sprintf("Slower: a request costs %.1f%% more CPU (the runs themselves differ by %.1f%%).", 100*c.Change, 100*c.Noise)
-	case c.Limit < -limitFall:
+	case theirOwn && c.Limit < -limitFall+hair:
 		c.Regressed = true
 		c.Verdict = fmt.Sprintf("Slower: the limit is %.1f%% lower (each is found to 5%%).", -100*c.Limit)
 	case c.Change < -told:
 		c.Verdict = fmt.Sprintf("Faster: a request costs %.1f%% less CPU (the runs themselves differ by %.1f%%).", -100*c.Change, 100*c.Noise)
 	default:
-		c.Verdict = fmt.Sprintf("The same: a request's CPU differs by %s, inside the %.1f%% that can be told here.", signed(c.Change, 1), 100*told)
+		c.Verdict = fmt.Sprintf("The same: a request's CPU differs by %s, inside the %.1f%% that can be told here.", signed(c.Change, 1), 100*(told-hair))
 	}
 	return c, nil
 }
 
-// Starved reports whether the load, not the app, gave out. At nine tenths
-// of its limit an app is using most of its share of the core (cpu over
-// wall); one using under six tenths of it wasn't what stopped the search,
-// and its limit is the bench's own, reading low.
-func Starved(cpu, wall time.Duration, share float64) bool {
+// LoadBound reports whether the load generator ran out of CPU: it used
+// over eight tenths of the cores it had (cpu over wall, over cores). Then
+// the limit it found is its own, not the app's, and reads low: a faster
+// gantry would look no faster. It's told from the generator's side, the
+// only side it can be told from.
+func LoadBound(cpu, wall time.Duration, cores int) bool {
+	return wall > 0 && cores > 0 && float64(cpu)/float64(wall)/float64(cores) > 0.8
+}
+
+// Idle reports whether the app left much of its core unused: at nine
+// tenths of its limit, under six tenths of its share of it (cpu over
+// wall). Then what stopped it wasn't its CPU: it was waiting on something
+// (the disk, a lock), or the load gave out. Which, this doesn't say.
+func Idle(cpu, wall time.Duration, share float64) bool {
 	return wall > 0 && share > 0 && float64(cpu)/float64(wall) < 0.6*share
 }
 
@@ -143,7 +162,17 @@ func Markdown(base, head Side, rate float64, c Comparison) string {
 		if s.AtLeast {
 			atLeast = "at least "
 		}
-		return atLeast + Thousands(s.LimitRate) + " req/s"
+		bound := ""
+		if s.LoadBound {
+			bound = ", where the load gave out, not the app"
+		}
+		return atLeast + Thousands(s.LimitRate) + " req/s" + bound
+	}
+	failed := func(s Side) (failed, due int) {
+		for _, r := range s.Runs {
+			failed, due = failed+r.Failed, due+r.Due
+		}
+		return
 	}
 	users := func(s Side) string { return Thousands(math.Round(float64(Users(s.LimitRate))/1000) * 1000) }
 	fmt.Fprintf(&b, "## gantry bench: %s against %s\n\n**%s**\n\n", head.Name, base.Name, c.Verdict)
@@ -151,6 +180,10 @@ func Markdown(base, head Side, rate float64, c Comparison) string {
 	fmt.Fprintf(&b, "| The limit | %s | %s | %s |\n", limit(base), limit(head), signed(c.Limit, 0))
 	fmt.Fprintf(&b, "| in the challenge's users, about | %s | %s | |\n", users(base), users(head))
 	fmt.Fprintf(&b, "| A request's CPU, both at %s req/s | %.1f µs | %.1f µs | %s |\n", Thousands(rate), c.Base, c.Head, signed(c.Change, 0))
+	if bf, _ := failed(base); bf > 0 || func() bool { hf, _ := failed(head); return hf > 0 }() {
+		hf, due := failed(head)
+		fmt.Fprintf(&b, "| Requests failed, of %s a side | %s | %s | |\n", Thousands(float64(due)), Thousands(float64(bf)), Thousands(float64(hf)))
+	}
 	for _, layer := range LayerOrder {
 		if base.Layers[layer] >= 0.05 || head.Layers[layer] >= 0.05 {
 			fmt.Fprintf(&b, "| %s | %.1f µs | %.1f µs | |\n", layer, base.Layers[layer], head.Layers[layer])

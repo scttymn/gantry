@@ -20,7 +20,9 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/google/pprof/profile"
@@ -38,7 +40,7 @@ func main() {
 		trial   = flag.Duration("trial", 20*time.Second, "how long each rate is tried for, looking for the limit")
 		length  = flag.Duration("for", 30*time.Second, "how long the measured run is")
 		rate    = flag.Float64("rate", 0, "measure at this rate, and don't look for the limit (bin/bench against)")
-		cpus    = flag.Float64("cpus", 1, "the app's share of its core (BENCH_CPUS)")
+		cpus    = flag.Float64("cpus", 1, "the app's share of its core (BENCH_CPUS), to tell an app that left its core unused")
 		conns   = flag.Int("connections", 64, "connections, as a proxy holds to an app")
 		users   = flag.Int("users", 50000, "the users the app was seeded with")
 		secret  = flag.String("secret", "twelve-dollar-challenge", "the app's JWT_SECRET")
@@ -99,7 +101,7 @@ func main() {
 	if err != nil {
 		fail("%v", err)
 	}
-	began := time.Now()
+	began, mine := time.Now(), ownCPU()
 	// The profile is of the run's seconds and one more, for its last
 	// requests to be answered in, and the CPU counted is from before both
 	// to after both: the layers' shares are of the same time the total is.
@@ -126,8 +128,13 @@ func main() {
 	if res.Done > 0 {
 		r.CPUMicros = float64(after.CPU-before.CPU) / float64(res.Done)
 	}
-	// Was it the app that stopped the search, or the load?
-	r.Starved = r.LimitRate > 0 && report.Starved(time.Duration(after.CPU-before.CPU)*time.Microsecond, time.Since(began), *cpus)
+	// Was it the app's core that stopped the search? The load generator out
+	// of CPU makes the limit its own; an app that left its core unused was
+	// waiting on something else.
+	if wall := time.Since(began); r.LimitRate > 0 {
+		r.LoadBound = report.LoadBound(ownCPU()-mine, wall, runtime.GOMAXPROCS(0))
+		r.Idle = report.Idle(time.Duration(after.CPU-before.CPU)*time.Microsecond, wall, *cpus)
+	}
 	r.Layers = map[string]float64{}
 	for layer, share := range report.Layers(prof, "feed") {
 		r.Layers[layer] = share * r.CPUMicros
@@ -169,10 +176,21 @@ func write(w io.Writer, r report.Report) {
 	fmt.Fprintf(w, "\nThe limit: %s%s req/s, which is about %s of the challenge's users, on this machine\n", atLeast, thousands(r.LimitRate), thousands(math.Round(float64(r.LimitUsers)/1000)*1000))
 	fmt.Fprintln(w, "  (p95 under 500 ms, p99 under 1 s, under 1% failed)")
 	fmt.Fprintf(w, "100,000 users are %s req/s: %.0f%% of it\n", thousands(report.Rate(100000)), 100*report.Rate(100000)/r.LimitRate)
-	if r.Starved {
-		fmt.Fprintln(w, "\nBut the load gave out before the app did: at this rate the app left much of its core unused.")
-		fmt.Fprintln(w, "The limit is the bench's here, and reads low: give the load more cores.")
+	switch {
+	case r.LoadBound:
+		fmt.Fprintln(w, "\nBut the load gave out, not the app: the bench used nearly all the CPU it had.")
+		fmt.Fprintln(w, "The limit is the bench's own here, and reads low: give it more cores.")
+	case r.Idle:
+		fmt.Fprintln(w, "\nAt that rate the app left much of its core unused: what stopped it wasn't its CPU")
+		fmt.Fprintln(w, "(the disk, perhaps, or a lock). The layers above are where its CPU went, not its time.")
 	}
+}
+
+// ownCPU is the CPU time this process, the load, has had.
+func ownCPU() time.Duration {
+	var ru syscall.Rusage
+	syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
+	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano())
 }
 
 // used is what the app's process has used (its bench port's /debug/usage).

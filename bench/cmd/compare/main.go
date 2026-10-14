@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 
 	"github.com/scttymn/gantry/bench/report"
 )
@@ -26,27 +27,14 @@ func main() {
 		os.Exit(1)
 	}
 	var rate float64
-	side := func(file, name string) report.Side {
-		whole, err := read(filepath.Join(*dir, file+".json"))
-		if err != nil {
-			fail("%v", err)
-		}
-		s := report.Side{Name: name, LimitRate: whole.LimitRate, AtLeast: whole.AtLeast, Layers: whole.Layers}
-		runs, _ := filepath.Glob(filepath.Join(*dir, file+".[0-9]*.json"))
-		for _, path := range runs {
-			r, err := read(path)
-			if err != nil {
-				fail("%v", err)
-			}
-			if rate != 0 && r.Rate != rate {
-				fail("%s was run at %.0f req/s, and others at %.0f: the sides are compared at one rate", path, r.Rate, rate)
-			}
-			rate = r.Rate
-			s.Runs = append(s.Runs, report.Run{CPUMicros: r.CPUMicros, Due: r.Due, Failed: r.Failed})
-		}
-		return s
+	b, err := side(*dir, "base", *base, &rate)
+	if err != nil {
+		fail("%v", err)
 	}
-	b, h := side("base", *base), side("head", *head)
+	h, err := side(*dir, "head", *head, &rate)
+	if err != nil {
+		fail("%v", err)
+	}
 	c, err := report.Compare(b, h)
 	if err != nil {
 		fail("%v", err)
@@ -55,6 +43,41 @@ func main() {
 	if c.Regressed {
 		os.Exit(1)
 	}
+}
+
+// side is one side's reports in dir: file.json, its limit and layers, and
+// its runs, file.1.json and on (those, and no other file that starts the
+// same). Every run was at one rate, and at the other side's: rate is that
+// rate, set by the first run read.
+func side(dir, file, name string, rate *float64) (report.Side, error) {
+	whole, err := read(filepath.Join(dir, file+".json"))
+	if err != nil {
+		return report.Side{}, err
+	}
+	s := report.Side{Name: name, LimitRate: whole.LimitRate, AtLeast: whole.AtLeast, LoadBound: whole.LoadBound, Layers: whole.Layers}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return s, err
+	}
+	numbered := regexp.MustCompile(`\A` + regexp.QuoteMeta(file) + `\.[0-9]+\.json\z`)
+	for _, e := range entries {
+		if !numbered.MatchString(e.Name()) {
+			continue
+		}
+		r, err := read(filepath.Join(dir, e.Name()))
+		if err != nil {
+			return s, err
+		}
+		if r.Rate <= 0 {
+			return s, fmt.Errorf("%s has no rate: a run is at one", e.Name())
+		}
+		if *rate != 0 && r.Rate != *rate {
+			return s, fmt.Errorf("%s was run at a rate of %.0f req/s, and others at %.0f: the sides are compared at one", e.Name(), r.Rate, *rate)
+		}
+		*rate = r.Rate
+		s.Runs = append(s.Runs, report.Run{CPUMicros: r.CPUMicros, Due: r.Due, Failed: r.Failed})
+	}
+	return s, nil
 }
 
 func read(path string) (r report.Report, err error) {
