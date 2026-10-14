@@ -44,7 +44,7 @@ type NewApp struct {
 // itself (built from a checkout): the newest tag when it was built. It's
 // raised to a release's tag before the tag is pushed, and the release's tests
 // check it was (TestLatestReleaseIsTheTag), so it can't fall behind.
-const latestRelease = "v0.14.2"
+const latestRelease = "v0.15.0"
 
 // releaseVersion is the release's tag in the CLI binaries a release
 // publishes: the Dockerfile's release-build stage sets it (-X
