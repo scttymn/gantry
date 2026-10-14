@@ -174,6 +174,7 @@ func WantsHTML(r *http.Request) bool {
 //     is refused with 422
 //   - MethodOverride: HTML forms can PUT, PATCH and DELETE, with bodies capped
 func (rt *Router) Handler() http.Handler {
+	memory.say(rt.Log)
 	rt.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusNotFound) })
 	var h http.Handler = http.HandlerFunc(rt.route)
 	h = MethodOverride(h, DefaultBodyLimits)

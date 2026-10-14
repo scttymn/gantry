@@ -1,0 +1,223 @@
+// feed: it serves by default, and its other commands are `feed db
+// ...`, `feed jobs` and `feed task NAME` (in development, `gantry db
+// migrate` runs them in the app's container).
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"syscall"
+	"time"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/images"
+	"github.com/scttymn/gantry/jobs"
+	"github.com/scttymn/gantry/live"
+	"github.com/scttymn/gantry/mail"
+	"github.com/scttymn/gantry/sign"
+
+	"feed/app"
+	"feed/assets"
+	"feed/config"
+	"feed/db/migrations"
+	"feed/db/seeds"
+)
+
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	os.Exit(command(ctx, config.FromEnv(), logger, os.Args[1:], os.Stdin, os.Stdout, os.Stderr))
+}
+
+const usage = `usage:
+  feed                        serve (the default), and run the jobs unless JOBS_IN_SERVER=false
+  feed jobs                   run the background jobs alone
+  feed assets [DIR]           the assets precompiled, into DIR (assets/built; the build runs it)
+  feed db migrate|rollback [N]|status|seed|reset|console
+  feed tasks                  the app's own tasks (app/tasks.go)
+  feed task NAME [ARGS...]    run one
+`
+
+// command runs the command args name, and is its exit code.
+func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, in io.Reader, out, errOut io.Writer) int {
+	name := "serve"
+	if len(args) > 0 {
+		name, args = args[0], args[1:]
+	}
+	var err error
+	switch name {
+	case "serve":
+		err = serve(ctx, cfg, logger, nil)
+	case "jobs":
+		err = runJobs(ctx, cfg, logger)
+	case "assets":
+		// Rails' assets:precompile: the Dockerfile runs it before go build,
+		// which embeds what it makes (the scripts minified, the pictures'
+		// copies).
+		dir := filepath.Join("assets", "built")
+		if len(args) > 0 {
+			dir = args[0]
+		}
+		if why := images.AVIFSlow(); why != "" {
+			fmt.Fprintf(errOut, "assets: no AVIF copies, as %s: the encoder would take minutes a copy here; the pictures are WebP alone\n", why)
+		}
+		var made int
+		made, err = assets.All.Precompile(ctx, dir)
+		if err == nil {
+			fmt.Fprintf(out, "assets: precompiled into %s (%d picture copies made)\n", dir, made)
+		}
+	case "db":
+		return dbCommand(ctx, cfg, args, in, out, errOut)
+	case "tasks":
+		for _, t := range app.Tasks {
+			fmt.Fprintf(out, "%-20s %s\n", t.Name, t.Help)
+		}
+		return 0
+	case "task":
+		err = task(ctx, cfg, logger, args, out)
+	default:
+		fmt.Fprint(errOut, usage)
+		return 2
+	}
+	if err != nil {
+		fmt.Fprintln(errOut, "feed:", err)
+		return 1
+	}
+	return 0
+}
+
+// build opens the database, brings it up to date, and is the app on it,
+// its jobs defined. close closes the database.
+func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.App, close func(), err error) {
+	database, err := db.Open(ctx, cfg.DatabaseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			database.Close()
+		}
+	}()
+	if err := migrations.Up(ctx, database); err != nil {
+		return nil, nil, err
+	}
+	if err := seeds.Run(ctx, database); err != nil {
+		return nil, nil, err
+	}
+	key, err := sign.Key(ctx, database, cfg.SecretKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	queue, err := jobs.New(ctx, database, jobs.Options{Log: logger})
+	if err != nil {
+		return nil, nil, err
+	}
+	mailer, err := mail.Open(ctx, cfg.Env, cfg.DataDir, cfg.Mail, logger)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer func() {
+		if err != nil {
+			mailer.Close()
+		}
+	}()
+	signer := sign.Signer{Key: key}
+	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
+		Secret: []byte(cfg.JWTSecret), Started: time.Now()}
+	if err := a.DefineJobs(); err != nil {
+		return nil, nil, err
+	}
+	return a, func() {
+		mailer.Close()
+		database.Close()
+	}, nil
+}
+
+// serve builds the app, then serves until ctx ends, running its jobs
+// alongside when cfg says to. Anything that fails before listening is
+// returned, so the process exits non-zero and its health check never
+// passes. listening, when set, gets the address.
+func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listening chan<- string) error {
+	a, closeDB, err := build(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	server.RegisterOnShutdown(a.Live.Close) // live streams end, so shutting down doesn't wait on them
+
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return err
+	}
+	logger.Info("listening", "addr", ln.Addr().String(), "env", cfg.Env)
+	if listening != nil {
+		listening <- ln.Addr().String()
+	}
+	// The jobs stop with the server: running ones get their grace, then go
+	// back to the queue.
+	jobsCtx, stopJobs := context.WithCancel(ctx)
+	jobsDone := make(chan error, 1)
+	if cfg.JobsInServer {
+		go func() { jobsDone <- a.Jobs.Run(jobsCtx) }()
+	} else {
+		jobsDone <- nil
+	}
+	defer func() { stopJobs(); <-jobsDone }()
+	errs := make(chan error, 1)
+	go func() { errs <- server.Serve(ln) }()
+	select {
+	case err := <-errs:
+		return err
+	case <-ctx.Done():
+	}
+	shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// runJobs builds the app and runs its jobs until ctx ends: a process of
+// jobs alone, beside servers started with JOBS_IN_SERVER=false.
+func runJobs(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	a, closeDB, err := build(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+	logger.Info("running jobs", "env", cfg.Env)
+	return a.Jobs.Run(ctx)
+}
+
+// task runs one of app.Tasks, on the migrated database.
+func task(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
+	if len(args) == 0 {
+		return errors.New("which task? `feed tasks` lists them")
+	}
+	for _, t := range app.Tasks {
+		if t.Name != args[0] {
+			continue
+		}
+		database, err := db.Open(ctx, cfg.DatabaseURL)
+		if err != nil {
+			return err
+		}
+		defer database.Close()
+		if err := migrations.Up(ctx, database); err != nil {
+			return err
+		}
+		return t.Run(ctx, app.TaskEnv{DB: database, Log: logger, Out: out}, args[1:])
+	}
+	return fmt.Errorf("no task %q: `feed tasks` lists them", args[0])
+}

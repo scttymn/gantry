@@ -7,8 +7,16 @@ FROM golang:1.27-bookworm AS toolchain
 COPY --from=sqlc/sqlc:1.31.1 /workspace/sqlc /usr/local/bin/sqlc
 # sqlite3, for db console.
 RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 && rm -rf /var/lib/apt/lists/*
-# nodynamic: gantry's image codecs run as WASM, so the binary stays static.
-ENV CGO_ENABLED=0 GOFLAGS="-buildvcs=false -tags=nodynamic"
+# cgo: gantry's db has SQLite compiled from C (the production build links
+# it statically, so the binary still runs on an empty image). The sqlite_
+# tags and CGO_CFLAGS are what that C is compiled with: full-text search,
+# math functions and the rest SQLite translated to Go has, so an app's SQL
+# means the same either way (gantry's db won't start without them).
+# nodynamic: gantry's image codecs run as WASM. netgo, osusergo and
+# timetzdata: Go's own name lookups and time zones, not the C library's, as
+# a static binary on an empty image needs.
+ENV CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
+    GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4"
 RUN go install github.com/a-h/templ/cmd/templ@v0.3.1020
 WORKDIR /app
 
@@ -37,10 +45,13 @@ RUN go mod download
 COPY . .
 # The assets precompiled first (Rails' assets:precompile: the scripts
 # minified, the pictures' copies), for go build to embed. They're kept in a
-# build cache between deploys, so only a new or changed picture is resized.
+# build cache between deploys, so only a new or changed picture is resized;
+# and so is Go's, so SQLite's C is compiled once, not on every deploy. The
+# binary is linked statically, for the empty image it runs on.
 RUN --mount=type=cache,id=shop-assets,target=/cache/assets,sharing=locked \
+    --mount=type=cache,id=shop-go,target=/root/.cache/go-build \
     templ generate -path /app && go run ./cmd/shop assets /cache/assets && cp -a /cache/assets/. assets/built/ \
- && go build -trimpath -ldflags "-s -w" -tags timetzdata,nodynamic -o /out/app ./cmd/shop
+ && go build -trimpath -ldflags "-s -w -linkmode external -extldflags -static" -o /out/app ./cmd/shop
 RUN mkdir -p /out/data
 
 FROM scratch AS production

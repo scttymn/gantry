@@ -1,0 +1,8 @@
+.git
+.cache
+.env
+.houston
+.gantry
+compose.local.yml
+go.work
+go.work.sum

@@ -11,6 +11,7 @@ require (
 	github.com/gen2brain/webp v0.6.4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.19.2
+	github.com/mattn/go-sqlite3 v1.14.52
 	github.com/pressly/goose/v3 v3.28.0
 	github.com/tdewolff/minify/v2 v2.24.17
 	github.com/wneessen/go-mail v0.8.1

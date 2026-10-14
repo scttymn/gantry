@@ -4,31 +4,34 @@ import (
 	"errors"
 
 	"github.com/jackc/pgx/v5/pgconn"
-	"modernc.org/sqlite"
-	sqlite3 "modernc.org/sqlite/lib"
+)
+
+// SQLite's extended result codes for a refused write (sqlite3.h): the same
+// numbers from either build's driver.
+const (
+	sqliteConstraintForeignKey = 787
+	sqliteConstraintPrimaryKey = 1555
+	sqliteConstraintUnique     = 2067
 )
 
 // IsUnique reports whether err is a write refused by a unique index or
 // primary key, on either engine (Rails' RecordNotUnique): a name that's
 // taken, or a partial unique index used as a lock that someone else holds.
 func IsUnique(err error) bool {
-	return sqliteCode(err, sqlite3.SQLITE_CONSTRAINT_UNIQUE, sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY) || pgCode(err, "23505")
+	return sqliteIs(err, sqliteConstraintUnique, sqliteConstraintPrimaryKey) || pgCode(err, "23505")
 }
 
 // IsForeignKey reports whether err is a write refused by a foreign key
 // (Rails' InvalidForeignKey): a row that points at one that isn't there, or
 // a delete of one others point at.
 func IsForeignKey(err error) bool {
-	return sqliteCode(err, sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY) || pgCode(err, "23503")
+	return sqliteIs(err, sqliteConstraintForeignKey) || pgCode(err, "23503")
 }
 
-func sqliteCode(err error, codes ...int) bool {
-	var e *sqlite.Error
-	if !errors.As(err, &e) {
-		return false
-	}
+func sqliteIs(err error, codes ...int) bool {
+	code, ok := sqliteCode(err)
 	for _, c := range codes {
-		if e.Code() == c {
+		if ok && code == c {
 			return true
 		}
 	}

@@ -1,0 +1,49 @@
+> This is gantry's benchmark app: the $12 server challenge's feed API, as `gantry new`
+> made it, built against the gantry it's in. `bin/bench`, at the repository's root,
+> builds and measures it; `docs/plans/performance.md` is the plan. The rest of this
+> page is the README every new app starts with.
+
+# Feed
+
+A [gantry](https://github.com/scttymn/gantry) app, run and deployed with [Houston](https://github.com/scttymn/houston).
+
+```sh
+bin/gantry dev             # http://feed.localhost, rebuilt as you change it
+bin/gantry test            # its tests, in a throwaway copy
+bin/gantry check --strict  # Gantry defaults; violations fail CI
+bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
+bin/gantry console         # sqlite3 on the dev database
+```
+
+## Guide for agents
+
+Start with Gantry's [application guide for agents](https://github.com/scttymn/gantry/blob/main/docs/agents.md) for framework defaults, Strict checks and verification. Use this app's pinned version and its `bin/gantry` commands; the guide on `main` may describe newer features.
+
+## Development checks
+
+`dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
+
+## Mail
+
+All email uses `App.Mail`: controllers, jobs and authentication share one delivery configuration. In development, visit `http://feed.localhost/dev/inbox` to see captured messages. The inbox keeps the latest 200 messages across reloads. Configure `MAIL_FROM` and `SMTP_*` through Houston for production; `MAIL_DRIVER=disabled` disables delivery. See [Gantry mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md).
+
+## Where things go
+- `app/routes.go`: every route, and the controllers behind them
+- `app/<name>/`: a controller and its views (`.templ`), one folder per resource
+- `app/models/`: each table's queries (`<table>.sql`, turned into Go by sqlc) and rules (`<table>.go`)
+- `app/jobs.go`: background jobs, run by the server (or `feed jobs`, with `JOBS_IN_SERVER=false`)
+- `app/tasks.go`: the app's own commands, run with `bin/gantry task NAME`
+- `db/migrations/`: schema changes, written by `gantry g migration`; `db/schema.sql` is what they leave
+- `db/seeds/`: what a fresh database starts with
+- `assets/`: stylesheets, scripts, fonts and images; `assets/public/` is served at the root (robots.txt, the error pages)
+- `assets/js/`: JavaScript, through an import map with no build step: Turbo and Stimulus, the app's Stimulus controllers in `js/controllers/`, and packages from `gantry importmap pin NAME` in `js/vendor/`
+- `config/config.go`: settings, from the environment
+- `test/`: what the tests share
+
+## Generators
+```sh
+bin/gantry g resource admin/posts title:string:required body:text
+bin/gantry g migration add_email_to_users email:string
+bin/gantry g error-pages
+bin/gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app
+```
