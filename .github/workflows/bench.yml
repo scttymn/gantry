@@ -1,0 +1,31 @@
+# A pull request's change, measured against its base: bin/bench against it,
+# in one job on one machine, its verdict the job's summary. It fails when the
+# change makes a request cost more, past what the runs themselves differ by.
+# No number is the line: the base is. See docs/plans/performance.md.
+# Actions are pinned by commit, and no checkout keeps the token in .git/config.
+name: bench
+
+on:
+  pull_request:
+    paths-ignore: ["docs/**", "**.md"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the base is built from its own commit
+      - name: This change against its base
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: bin/bench against "$BASE" | tee -a "$GITHUB_STEP_SUMMARY"

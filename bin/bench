@@ -1,45 +1,78 @@
 #!/usr/bin/env bash
-# The standing benchmark of the gantry in this checkout: bin/bench [-quick]
+# The standing benchmark of the gantry in this checkout.
 #
-#   BENCH_CPUS=0.5 bin/bench    the app held to half of its core
-#
-# A fraction of a core stands in for a slower one: the app gets that share
-# of every 10 ms. It's the same code taking the same CPU, with less of it to
-# be had: a way to ask "what if the core were half as fast", not a model of
-# another machine's caches or syscalls.
+#   bin/bench [-quick]                 what it does: its limit, and a request's cost
+#   bin/bench against REF [-quick]     the same of REF's gantry too, and the verdict
+#   BENCH_CPUS=0.5 bin/bench           the app held to half of its core
 #
 # It builds bench/feed (the $12 server challenge's feed API as a generated
 # app) against the checkout, runs it on one core with 2 GB on a new, seeded
 # database, and sends it the challenge's requests on 64 connections from
 # the other cores. It prints the highest rate that passes the challenge's
-# line, and what a request costs in CPU, layer by layer. The same as JSON:
-# bench/out/report.json. See docs/plans/performance.md.
+# line (nothing caps it but the app), and what a request costs in CPU, layer
+# by layer. The same as JSON: bench/out/report.json.
+#
+# against REF builds the same app against REF's gantry as well, finds each
+# one's limit, then runs both at one rate, turn about, and writes the
+# comparison as Markdown. It exits 1 when the checkout is slower than REF by
+# more than the runs themselves differ. It's what a pull request's job runs.
+#
+# A share of a core (BENCH_CPUS) stands in for a slower one: the app gets
+# that share of every 10 ms. It's the same code taking the same CPU, with
+# less of it to be had: a way to ask "what if the core were half as fast",
+# not a model of another machine's caches or syscalls.
+#
+# See docs/plans/performance.md.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-app=gantry-bench-feed net=gantry-bench
+against=""
+if [ "${1:-}" = against ]; then
+	against=${2:?bin/bench against REF: a commit of this repository}
+	shift 2
+	git rev-parse -q --verify "$against^{commit}" >/dev/null || { echo "bin/bench: $against isn't a commit here" >&2; exit 1; }
+fi
+
+net=gantry-bench base="" # base: REF's worktree, when there is one
 # One at a time: two would share the core, and take each other's app down.
 # Making the network is the lock: Docker makes a name once.
 if ! docker network create "$net" >/dev/null 2>&1; then
-	echo "bin/bench: one is running here already (the network $net is there). If it isn't: docker rm -f $app; docker network rm $net" >&2
+	echo "bin/bench: one is running here already (the network $net is there). If it isn't: docker rm -f gantry-bench-head gantry-bench-base; docker network rm $net" >&2
 	exit 1
 fi
-cleanup() { docker rm -f "$app" >/dev/null 2>&1 || true; docker network rm "$net" >/dev/null 2>&1 || true; }
+cleanup() {
+	docker rm -f gantry-bench-head gantry-bench-base >/dev/null 2>&1 || true
+	docker network rm "$net" >/dev/null 2>&1 || true
+	if [ -n "$base" ]; then
+		git worktree remove --force "$base" >/dev/null 2>&1 || true
+		rmdir "$(dirname "$base")" 2>/dev/null || true
+	fi
+}
 trap cleanup EXIT
 
 mkdir -p .cache bench/out && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
+rm -f bench/out/*.json bench/out/*.prof
 docker build -q --target toolchain -t gantry-toolchain . >/dev/null
-toolchain() { # toolchain DIR COMMAND...
+toolchain() { # toolchain DIR COMMAND...: in the toolchain's image, on the checkout (and on REF's, at /base)
 	local dir=$1; shift
-	docker run --rm -v "$PWD:/src" -w "/src/$dir" \
+	docker run --rm -v "$PWD:/src" ${base:+-v "$base:/base:ro"} -w "/src/$dir" \
 		-e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache gantry-toolchain "$@"
 }
 echo "building the app and the bench" >&2
 toolchain bench/feed go build -trimpath -tags bench,nodynamic,timetzdata -o /src/bench/out/feed ./cmd/feed
-toolchain bench go build -trimpath -o /src/bench/out/bench ./cmd/bench
+toolchain bench sh -c 'go build -trimpath -o /src/bench/out/bench ./cmd/bench && go build -trimpath -o /src/bench/out/compare ./cmd/compare'
+if [ -n "$against" ]; then
+	# The same app, against REF's gantry: its go.mod, with gantry replaced by
+	# REF's worktree where the checkout's go.mod has the checkout.
+	echo "building the app against $against" >&2
+	base=$(mktemp -d)/base
+	git worktree add -q --detach "$base" "$against"
+	toolchain bench/feed sh -c 'cp go.mod /tmp/base.mod && cp go.sum /tmp/base.sum &&
+		go mod edit -modfile=/tmp/base.mod -replace github.com/scttymn/gantry=/base &&
+		go build -mod=mod -modfile=/tmp/base.mod -trimpath -tags bench,nodynamic,timetzdata -o /src/bench/out/feed-base ./cmd/feed'
+fi
 
-
-# The app has core 0 to itself; the load has the rest.
+# An app has core 0, or a share of it; the load has the rest.
 cores=$(docker info --format '{{.NCPU}}')
 others=()
 if [ "$cores" -gt 1 ]; then
@@ -48,29 +81,56 @@ else
 	echo "bin/bench: Docker has one core here, so the load shares it with the app" >&2
 fi
 machine=$(sysctl -n machdep.cpu.brand_string 2>/dev/null || awk -F': ' '/model name/ {print $2; exit}' /proc/cpuinfo 2>/dev/null || true)
+machine="${machine:-$(uname -m)}, $(uname -s)"
 commit=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)
 [ -z "$(git status --porcelain 2>/dev/null)" ] || commit="$commit, with changes"
-
 core=(--cpuset-cpus=0)
 if [ -n "${BENCH_CPUS:-}" ]; then
 	quota=$(awk -v c="$BENCH_CPUS" 'BEGIN { q = int(c * 10000 + 0.5); if (c ~ /^[0-9]*\.?[0-9]+$/ && q >= 1000 && q <= 10000) print q }')
 	[ -n "$quota" ] || { echo "bin/bench: BENCH_CPUS=$BENCH_CPUS: a share of one core, from 0.1 to 1" >&2; exit 1; }
 	core+=(--cpu-period=10000 --cpu-quota="$quota")
-	machine="${machine:-$(uname -m)}, the app held to $BENCH_CPUS of a core"
+	machine="$machine, the app held to $BENCH_CPUS of a core"
 fi
 
-docker run -d --name "$app" --network "$net" "${core[@]}" --memory=2g --memory-swap=2g \
-	-v "$PWD/bench/out:/bench:ro" -w /tmp \
-	-e GANTRY_ENV=production -e ADDR=:8080 -e DATA_DIR=/data -e BENCH_ADDR=:6060 \
-	-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets \
-	gantry-toolchain /bench/feed >/dev/null
-
-status=0
-docker run --rm --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
-	/bench/bench -url "http://$app:8080" -bench-url "http://$app:6060" -o /bench/report.json \
-	-commit "$commit" -machine "${machine:-$(uname -m)}, $(uname -s)" "$@" || status=$?
-if [ "$status" != 0 ]; then
+start() { # start SIDE BINARY: an app, as gantry-bench-SIDE
+	docker run -d --name "gantry-bench-$1" --network "$net" "${core[@]}" --memory=2g --memory-swap=2g \
+		-v "$PWD/bench/out:/bench:ro" -w /tmp \
+		-e GANTRY_ENV=production -e ADDR=:8080 -e DATA_DIR=/data -e BENCH_ADDR=:6060 \
+		-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets \
+		gantry-toolchain "/bench/$2" >/dev/null
+}
+bench() { # bench SIDE ARGS...: the bench, of that app; on a failure, the app's log
+	local side=$1; shift
+	docker run --rm --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
+		/bench/bench -url "http://gantry-bench-$side:8080" -bench-url "http://gantry-bench-$side:6060" \
+		-cpus "${BENCH_CPUS:-1}" -machine "$machine" "$@" && return
 	echo "--- the app's log" >&2
-	docker logs --tail 20 "$app" >&2 || true
+	docker logs --tail 20 "gantry-bench-$side" >&2 || true
+	return 1
+}
+
+if [ -z "$against" ]; then
+	start head feed
+	bench head -o /bench/report.json -commit "$commit" "$@"
+	exit
 fi
-exit "$status"
+
+start base feed-base
+start head feed
+# Each one's limit, and its layers at nine tenths of it. The reports are for
+# the comparison: on stdout there's the Markdown alone.
+for side in base head; do
+	echo "== $side" >&2
+	bench "$side" -o "/bench/$side.json" -trial 10s -for 15s "$@" >&2
+done
+# Then both at one rate, which both pass: nine tenths of the lower limit.
+limit() { awk -F'[:,]' '/"limit_rate"/ { print $2 + 0 }' "bench/out/$1.json"; }
+rate=$(awk -v a="$(limit base)" -v b="$(limit head)" 'BEGIN { printf "%.0f", (a < b ? a : b) * 0.9 }')
+for run in 1 2 3; do
+	for side in base head; do
+		echo "== $side at $rate req/s, run $run" >&2
+		bench "$side" -rate "$rate" -for 15s -o "/bench/$side.$run.json" "$@" >&2
+	done
+done
+docker run --rm -v "$PWD/bench/out:/bench:ro" gantry-toolchain /bench/compare -dir /bench \
+	-base "$against ($(git rev-parse --short "$against"))" -head "this change ($commit)"

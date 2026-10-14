@@ -29,33 +29,16 @@ import (
 	"github.com/scttymn/gantry/bench/report"
 )
 
-// Report is the bench's answer, as bench/out/report.json has it.
-type Report struct {
-	Commit      string `json:"commit"`
-	Machine     string `json:"machine"`
-	Connections int    `json:"connections"`
-
-	LimitRate  float64 `json:"limit_rate"`     // requests a second
-	LimitUsers int     `json:"limit_users"`    // the challenge's users that is
-	AtLeast    bool    `json:"limit_at_least"` // the top rate tried passed
-
-	Rate      float64            `json:"rate"`               // the measured run's: nine tenths of the limit
-	CPUMicros float64            `json:"cpu_us_per_request"` // the process's, its own and the kernel's for it
-	Layers    map[string]float64 `json:"cpu_us_by_layer"`
-	P50       float64            `json:"p50_ms"`
-	P95       float64            `json:"p95_ms"`
-	P99       float64            `json:"p99_ms"`
-	Due       int                `json:"due"`
-	Failed    int                `json:"failed"`
-	RSSPeak   int64              `json:"rss_peak_bytes"`
-}
-
 func main() {
 	var (
 		url     = flag.String("url", "http://127.0.0.1:8080", "the app")
 		side    = flag.String("bench-url", "http://127.0.0.1:6060", "the app's bench port (BENCH_ADDR)")
 		out     = flag.String("o", "report.json", "write the report as JSON here, and the measured run's CPU profile beside it")
 		quick   = flag.Bool("quick", false, "shorter runs: a look, not a measurement")
+		trial   = flag.Duration("trial", 20*time.Second, "how long each rate is tried for, looking for the limit")
+		length  = flag.Duration("for", 30*time.Second, "how long the measured run is")
+		rate    = flag.Float64("rate", 0, "measure at this rate, and don't look for the limit (bin/bench against)")
+		cpus    = flag.Float64("cpus", 1, "the app's share of its core (BENCH_CPUS)")
 		conns   = flag.Int("connections", 64, "connections, as a proxy holds to an app")
 		users   = flag.Int("users", 50000, "the users the app was seeded with")
 		secret  = flag.String("secret", "twelve-dollar-challenge", "the app's JWT_SECRET")
@@ -66,10 +49,10 @@ func main() {
 	// A rate past what the app can hold still passes a short run, while its
 	// queue is short: half a second of queue in 20 s is 2.5% past, which is
 	// inside the 5% the search is good to. A quick run's limit reads high.
-	trial, measured := 20*time.Second, 30*time.Second
 	if *quick {
-		trial, measured = 3*time.Second, 6*time.Second
+		*trial, *length = 3*time.Second, 6*time.Second
 	}
+	measured := *length
 	ctx := context.Background()
 	run := func(rate float64, d time.Duration) (load.Result, error) {
 		return load.Run(ctx, load.Options{URL: *url, Rate: rate, Connections: *conns, Duration: d, Secret: *secret, Users: *users})
@@ -89,30 +72,34 @@ func main() {
 		fail("warming up, the app answered none of %d requests: %v", res.Due, err)
 	}
 
-	fmt.Fprintln(os.Stderr, "looking for the limit")
-	limit, atLeast, err := report.Limit(func(rate float64) (bool, error) {
-		res, err := run(rate, trial)
+	r := report.Report{Commit: *commit, Machine: *machine, Connections: *conns, Rate: *rate}
+	if *rate == 0 {
+		fmt.Fprintln(os.Stderr, "looking for the limit")
+		limit, atLeast, err := report.Limit(func(rate float64) (bool, error) {
+			res, err := run(rate, *trial)
+			if err != nil {
+				return false, err
+			}
+			p95, p99 := res.Percentile(0.95), res.Percentile(0.99)
+			ok := report.Passes(p95, p99, res.Due, res.Failed)
+			fmt.Fprintf(os.Stderr, "  %7s req/s: p95 %s, p99 %s, %d failed: %s\n", thousands(rate), ms(p95), ms(p99), res.Failed, map[bool]string{true: "passes", false: "doesn't"}[ok])
+			return ok, nil
+		}, 4000, 400000)
 		if err != nil {
-			return false, err
+			fail("%v", err)
 		}
-		p95, p99 := res.Percentile(0.95), res.Percentile(0.99)
-		ok := report.Passes(p95, p99, res.Due, res.Failed)
-		fmt.Fprintf(os.Stderr, "  %7s req/s: p95 %s, p99 %s, %d failed: %s\n", thousands(rate), ms(p95), ms(p99), res.Failed, map[bool]string{true: "passes", false: "doesn't"}[ok])
-		return ok, nil
-	}, 4000, 400000)
-	if err != nil {
-		fail("%v", err)
-	}
-	if limit == 0 {
-		fail("no rate passes the line, down to one request a second")
+		if limit == 0 {
+			fail("no rate passes the line, down to one request a second")
+		}
+		r.LimitRate, r.LimitUsers, r.AtLeast, r.Rate = limit, report.Users(limit), atLeast, limit*0.9
 	}
 
-	r := Report{Commit: *commit, Machine: *machine, Connections: *conns, LimitRate: limit, LimitUsers: report.Users(limit), AtLeast: atLeast, Rate: limit * 0.9}
 	fmt.Fprintf(os.Stderr, "measuring at %s req/s\n", thousands(r.Rate))
 	before, err := usage(*side)
 	if err != nil {
 		fail("%v", err)
 	}
+	began := time.Now()
 	// The profile is of the run's seconds and one more, for its last
 	// requests to be answered in, and the CPU counted is from before both
 	// to after both: the layers' shares are of the same time the total is.
@@ -139,6 +126,8 @@ func main() {
 	if res.Done > 0 {
 		r.CPUMicros = float64(after.CPU-before.CPU) / float64(res.Done)
 	}
+	// Was it the app that stopped the search, or the load?
+	r.Starved = r.LimitRate > 0 && report.Starved(time.Duration(after.CPU-before.CPU)*time.Microsecond, time.Since(began), *cpus)
 	r.Layers = map[string]float64{}
 	for layer, share := range report.Layers(prof, "feed") {
 		r.Layers[layer] = share * r.CPUMicros
@@ -150,14 +139,18 @@ func main() {
 		fail("%v", err)
 	}
 	if r.Failed > 0 {
-		fail("%d of %d requests failed at nine tenths of the limit", r.Failed, r.Due)
+		fail("%d of %d requests failed at %s req/s", r.Failed, r.Due, thousands(r.Rate))
 	}
 }
 
-func write(w io.Writer, r Report) {
+func write(w io.Writer, r report.Report) {
 	fmt.Fprintf(w, "\ngantry bench: the feed app on one core with 2 GB, %d connections\n", r.Connections)
 	fmt.Fprintf(w, "  gantry %s, on %s\n\n", r.Commit, r.Machine)
-	fmt.Fprintf(w, "At %s req/s, nine tenths of the limit, a request cost %.1f µs of CPU:\n", thousands(r.Rate), r.CPUMicros)
+	at := ""
+	if r.LimitRate > 0 {
+		at = ", nine tenths of the limit"
+	}
+	fmt.Fprintf(w, "At %s req/s%s, a request cost %.1f µs of CPU:\n", thousands(r.Rate), at, r.CPUMicros)
 	for _, layer := range report.LayerOrder {
 		share := 0.0
 		if r.CPUMicros > 0 {
@@ -165,15 +158,20 @@ func write(w io.Writer, r Report) {
 		}
 		fmt.Fprintf(w, "  %-30s %6.1f µs  %3.0f%%\n", layer, r.Layers[layer], share)
 	}
-	fmt.Fprintf(w, "  p50 %.1f ms, p95 %.1f ms, p99 %.1f ms; %d of %s failed; most memory held %d MB\n\n", r.P50, r.P95, r.P99, r.Failed, thousands(float64(r.Due)), r.RSSPeak>>20)
+	fmt.Fprintf(w, "  p50 %.1f ms, p95 %.1f ms, p99 %.1f ms; %d of %s failed; most memory held %d MB\n", r.P50, r.P95, r.P99, r.Failed, thousands(float64(r.Due)), r.RSSPeak>>20)
+	if r.LimitRate == 0 {
+		return
+	}
 	atLeast := ""
 	if r.AtLeast {
 		atLeast = "at least "
 	}
-	fmt.Fprintf(w, "The limit: %s%s req/s, which is about %s of the challenge's users, on this machine\n", atLeast, thousands(r.LimitRate), thousands(math.Round(float64(r.LimitUsers)/1000)*1000))
+	fmt.Fprintf(w, "\nThe limit: %s%s req/s, which is about %s of the challenge's users, on this machine\n", atLeast, thousands(r.LimitRate), thousands(math.Round(float64(r.LimitUsers)/1000)*1000))
 	fmt.Fprintln(w, "  (p95 under 500 ms, p99 under 1 s, under 1% failed)")
-	if target := report.Rate(100000); r.LimitRate > 0 {
-		fmt.Fprintf(w, "100,000 users are %s req/s: %.0f%% of it\n", thousands(target), 100*target/r.LimitRate)
+	fmt.Fprintf(w, "100,000 users are %s req/s: %.0f%% of it\n", thousands(report.Rate(100000)), 100*report.Rate(100000)/r.LimitRate)
+	if r.Starved {
+		fmt.Fprintln(w, "\nBut the load gave out before the app did: at this rate the app left much of its core unused.")
+		fmt.Fprintln(w, "The limit is the bench's here, and reads low: give the load more cores.")
 	}
 }
 
@@ -239,15 +237,4 @@ func waitFor(url string, d time.Duration) error {
 func millis(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
 func ms(d time.Duration) string      { return fmt.Sprintf("%.1f ms", millis(d)) }
 
-// thousands is a whole number with its commas: 26,150.
-func thousands(n float64) string {
-	s := fmt.Sprintf("%.0f", n)
-	var b strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			b.WriteByte(',')
-		}
-		b.WriteRune(c)
-	}
-	return b.String()
-}
+var thousands = report.Thousands

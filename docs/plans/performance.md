@@ -185,8 +185,50 @@ The limit: 24,000 req/s, which is about 227,000 of the challenge's users, on thi
 - Review of the second tip (907f402), Codex: four more, all held and closed. Two runs started at the same moment both got past the check for one running: making the Docker network is the lock now, and Docker makes a name once. At a rate of a request or less a connection, every request was a connection's first, and so a feed read: a feed is read before the run, and the mix is the mix from the first request (`load.TestRunMixesFromTheStart`). The profile ended before the last requests were answered: it runs a second longer. A cancelled run gave requests that were never due times below zero (`load.TestRunStopsWhenCancelled`).
 - Not closed, for Batch 3: on a machine with few cores the load generator may be what gives out first, and the limit would read low. It needs a check of its own (what it can send to a server that does nothing).
 
+## Batch 3: the benchmark on every change
+A pull request is measured against its base, in one job, on one machine: `bin/bench against REF`. No number is the line: the base is. It fails when the change makes a request cost more, past what the runs themselves differ by, and it says how high each side goes.
+
+### Design
+- **`bin/bench against REF [-quick]`** builds the bench's app twice, against the checkout and against REF's gantry (a worktree of it; the app and the bench are the checkout's), and runs both on core 0, each with its own seeded database. An app nobody is asking anything of takes next to none of the core.
+  1. Each side's limit, and its layers at nine tenths of it, as `bin/bench` alone finds them (shorter trials: 10 s).
+  2. Then both at one rate, nine tenths of the lower limit, turn about, three times each: a request's CPU.
+  3. `bench/cmd/compare` reads the reports and writes the answer as Markdown (the job's summary): the limits, the cost, the layers, and the verdict. It exits 1 on a regression.
+- **The verdict** (`report.Compare`): each side's cost is the median of its runs, and the noise is the wider of the two sides' spreads (highest less lowest, over the median). A change within the noise, or within 3%, is "the same". Past it, slower fails and faster is said. A side with requests failed at a rate the other carried is slower, whatever its CPU. A limit a tenth below the base's fails too (each is found to 5%).
+- **The load giving out before the app** would make a limit that's the bench's, not the app's, and hide a faster gantry. At nine tenths of its limit an app is using most of its core; one using under six tenths of it wasn't what stopped the search. The report says so (`report.Starved`), in `bin/bench` alone too.
+- **`.github/workflows/bench.yml`**: on a pull request that touches more than docs, `bin/bench against origin/<base>`, its Markdown to the job summary.
+- `cmd/bench` gains `-rate` (measure at this rate, no search), `-trial` and `-for` (how long), and `-cpus` (the app's share of its core, for Starved).
+
+### Contract pin
+- `bin/bench against REF [-quick]`: REF is a commit of this repository. Output: Markdown on stdout, progress on stderr, the runs' reports in `bench/out/`. Exit 1: a regression, a side that doesn't come up or passes at no rate, or a REF that isn't a commit.
+- `report.Compare(base, head []Run) (Comparison, error)`: an error with fewer than three runs a side, or a run with no requests done: never a verdict from nothing.
+
+### AC ↔ test map (Batch 3)
+| AC | Test | Lens |
+| --- | --- | --- |
+| The same cost within the runs' spread, or within 3%, is the same; more is slower and fails; less is faster | `report.TestCompare` | Contract |
+| Runs that differ by more than the change does don't fail it: it's the same, and the noise is said | `report.TestCompare` | Signals |
+| Requests failed on one side at a rate the other carried: that side is slower, whatever its CPU | `report.TestCompare` | Contract (unhappy) |
+| Fewer than three runs a side, or a run with nothing done, is an error, not a verdict | `report.TestCompareNeedsRuns` | Contract (unhappy), Signals |
+| A limit a tenth under the base's fails; within it doesn't; the top rate passing on both is "at least" | `report.TestCompareLimits` | Contract |
+| An app using under six tenths of its share of the core at nine tenths of its limit is starved; one using most of it isn't; a share of half a core is judged against the half | `report.TestStarved` | Signals |
+| The Markdown has both sides' limits and users, the cost and its change, the layers, and the verdict's sentence | `report.TestMarkdown` | Contract |
+
+Evidence, each run here and its output kept in this file: the checkout against itself is the same; this branch against `main` (no statement cache) is faster; a gantry made slower on purpose fails. And the workflow's first run, on its own pull request.
+
+### Batch 3: what was found (2026-10-13)
+`bin/bench against REF`, on one M5 core, three times, each about seven minutes:
+
+| The checkout | against | Verdict | Exit |
+| --- | --- | --- | --- |
+| this branch | itself | "The same: a request's CPU differs by −0.6%, inside the 3.0% that can be told here." Limits 24,000 and 25,000 req/s. | 0 |
+| this branch | `main`, which has no statement cache | "Faster: a request costs 12.9% less CPU (the runs themselves differ by 0.9%)." 46.8 and 40.8 µs at 18,000 req/s; limits 20,000 and 24,000, +20%. | 0 |
+| this branch with the cache keeping nothing, on purpose | this branch | "Slower: a request costs 16.3% more CPU (the runs themselves differ by 0.2%)." Limits 25,000 and 20,000, −20%. | 1 |
+
+- The runs of one side differ by under a percent here (0.2%, 0.6%, 0.9%): the 3% floor is what decides, on this machine. A shared runner will be noisier, and says by how much each time.
+- Both sides run at one rate, nine tenths of the lower limit, so the faster side is further from its own limit there and has more of its core to spare: against `main` the cost reads 13% less where each at its own nine tenths reads 18% less. The limits' row has the whole gain. The summary says so.
+- Two apps on one core, one of them idle, measure as one does alone: the base's and the head's numbers here are the ones `bin/bench` alone gave.
+
 ## Later batches
-3. The benchmark in CI: the change against its base in the same job, failing on a regression past the measured noise.
 4. The 100,000-user run: the deployed path, proxy in front, on the modest server.
 5. Database workers, and SQLite as pure Go, C and WASM measured inside them. This is where "not Go, if something else is better" is decided.
 6. Generated JSON for generated row types.
