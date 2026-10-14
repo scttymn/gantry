@@ -1,0 +1,58 @@
+# Lighthouse 13.5.0, as PageSpeed Insights runs it (mobile: an emulated Moto G
+# Power on slow 4G, simulated), from a cloud datacenter, on a gantry app's
+# home page (valleybuiltcrossfit's): its font preloads against font-display:
+# optional. The site is mirrored from localhost (fonts, photos and scripts
+# from the page's own origin, as live). Three runners, two rounds each, and a
+# second visit with the cache kept. A push to lighthouse runs it.
+name: lighthouse
+
+on:
+  push:
+    branches: [lighthouse]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        runner: [a, b, c]
+    env:
+      SITE: https://valleybuiltcrossfit.svnmns.com/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Audits
+        shell: bash
+        run: |
+          mkdir -p out pages
+          curl -s "$SITE" -o page.html
+          python3 .github/lighthouse/variants.py | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 .github/lighthouse/mirror.py "$SITE" pages &
+          sleep 1
+          audit() { # audit NAME URL [lighthouse flags]
+            local name=$1 url=$2; shift 2
+            npx -y lighthouse@13.5.0 "$url" --only-categories=performance --form-factor=mobile \
+              --chrome-flags="--headless=new --no-sandbox --user-data-dir=/tmp/chrome-profile" --output=json --output-path="out/$name.json" --quiet "$@" || true
+            node -e '
+              const r = require("./out/" + process.argv[1] + ".json"), a = r.audits, m = a.metrics.details.items[0];
+              const fonts = a["network-requests"].details.items.filter(i => i.resourceType === "Font");
+              console.log(process.env.RUNNER, process.argv[1].padEnd(20), "first paint", String(m.observedFirstPaint).padStart(5), "ms | FCP", a["first-contentful-paint"].displayValue,
+                "| LCP", a["largest-contentful-paint"].displayValue, "| SI", a["speed-index"].displayValue, "| CLS", a["cumulative-layout-shift"].displayValue,
+                "| fonts", fonts.length, "(" + fonts.filter(f => f.transferSize < 1000).length + " from cache) | benchmark", r.environment.benchmarkIndex);
+            ' "$name" | tee -a "$GITHUB_STEP_SUMMARY"
+          }
+          export RUNNER=${{ matrix.runner }}
+          for round in 1 2; do
+            rm -rf /tmp/chrome-profile
+            audit "live-$round" "$SITE"
+            for v in as-is no-preload optional-preload optional; do rm -rf /tmp/chrome-profile; audit "$v-$round" "http://127.0.0.1:8080/$v.html"; done
+          done
+          # A second visit: the profile from a first, its cache kept.
+          rm -rf /tmp/chrome-profile
+          audit optional-first "http://127.0.0.1:8080/optional.html"
+          audit optional-again "http://127.0.0.1:8080/optional.html" --disable-storage-reset
