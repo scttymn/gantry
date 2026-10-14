@@ -25,6 +25,7 @@ type cached struct {
 	now     time.Time
 	cache   *PageCache
 	gate    chan struct{} // when set, /slow waits for it
+	steady  atomic.Value  // what /steady says: the same every render until changed
 }
 
 func newCached(t *testing.T) *cached {
@@ -58,6 +59,13 @@ func newCached(t *testing.T) *cached {
 			<-c.gate
 		}
 		return page(w, r)
+	})
+	c.steady.Store("the schedule")
+	rt.Cached("GET /steady", func(w http.ResponseWriter, r *http.Request) error {
+		c.renders.Add(1)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		io.WriteString(w, "<p>"+c.steady.Load().(string)+"</p>")
+		return nil
 	})
 	rt.Cached("POST /page", page)
 	c.h = rt.Handler()
@@ -249,6 +257,103 @@ func TestPageCache(t *testing.T) {
 		do(h, "GET", "/p", nil)
 		if n != 2 {
 			t.Fatal("cached with no cache")
+		}
+	})
+}
+
+// A kept page says when it last changed: its first render after a start (a
+// deploy), or the first render whose content differed from the one before
+// (an edit in the admin, a class that's begun). Rendered again the same, it
+// keeps its date. If-Modified-Since gets a 304 then, as If-None-Match does:
+// a proxy in front that drops ETags (Cloudflare does, when it may rewrite
+// HTML) passes Last-Modified on.
+func TestPageCacheLastModified(t *testing.T) {
+	lastModified := func(t *testing.T, rec *httptest.ResponseRecorder) time.Time {
+		t.Helper()
+		at, err := http.ParseTime(rec.Header().Get("Last-Modified"))
+		if err != nil {
+			t.Fatalf("Last-Modified %q: %v", rec.Header().Get("Last-Modified"), err)
+		}
+		return at
+	}
+	since := func(at time.Time) string { return at.UTC().Format(http.TimeFormat) }
+
+	t.Run("the first render's time, and a 304 to a browser that has it", func(t *testing.T) {
+		c := newCached(t)
+		c.now = c.now.Add(250 * time.Millisecond)
+		rec := c.get("/steady")
+		if at := lastModified(t, rec); !at.Equal(c.now.Truncate(time.Second)) {
+			t.Fatalf("Last-Modified %v, want %v", at, c.now.Truncate(time.Second))
+		}
+		if got := c.get("/steady", "If-Modified-Since", since(c.now)); got.Code != http.StatusNotModified || got.Body.Len() != 0 {
+			t.Errorf("If-Modified-Since the page's time: %d, %d bytes", got.Code, got.Body.Len())
+		}
+		if got := c.get("/steady", "If-Modified-Since", since(c.now.Add(-time.Minute))); got.Code != http.StatusOK || !strings.Contains(got.Body.String(), "the schedule") {
+			t.Errorf("If-Modified-Since a minute before: %d", got.Code)
+		}
+	})
+
+	t.Run("rendered again the same, it keeps its time", func(t *testing.T) {
+		c := newCached(t)
+		first := lastModified(t, c.get("/steady"))
+		c.now = c.now.Add(2 * time.Minute) // past its max age
+		c.version.Add(1)                   // and a write elsewhere
+		rec := c.get("/steady", "If-Modified-Since", since(first))
+		if c.renders.Load() != 2 {
+			t.Fatalf("%d renders; the page should have been made again", c.renders.Load())
+		}
+		if rec.Code != http.StatusNotModified {
+			t.Errorf("unchanged content, If-Modified-Since its first time: %d", rec.Code)
+		}
+		if at := lastModified(t, c.get("/steady")); !at.Equal(first) {
+			t.Errorf("Last-Modified %v, want %v kept", at, first)
+		}
+	})
+
+	t.Run("an edit moves it to when the page changed", func(t *testing.T) {
+		c := newCached(t)
+		first := lastModified(t, c.get("/steady"))
+		c.now = c.now.Add(10 * time.Minute)
+		c.steady.Store("the schedule, edited")
+		c.version.Add(1)
+		rec := c.get("/steady", "If-Modified-Since", since(first))
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "edited") {
+			t.Fatalf("after an edit, If-Modified-Since the old time: %d %q", rec.Code, rec.Body.String())
+		}
+		if at := lastModified(t, rec); !at.Equal(c.now.Truncate(time.Second)) {
+			t.Errorf("Last-Modified %v, want %v", at, c.now.Truncate(time.Second))
+		}
+	})
+
+	t.Run("two changes in one second get two times", func(t *testing.T) {
+		c := newCached(t)
+		first := lastModified(t, c.get("/steady"))
+		c.now = c.now.Add(300 * time.Millisecond)
+		c.steady.Store("changed within the second")
+		c.version.Add(1)
+		rec := c.get("/steady", "If-Modified-Since", since(first))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("a change in the same second, If-Modified-Since the first: %d (the browser would keep the old page)", rec.Code)
+		}
+		if at := lastModified(t, rec); !at.After(first) {
+			t.Errorf("Last-Modified %v isn't after %v", at, first)
+		}
+	})
+
+	t.Run("an ETag that doesn't match wins over a date that does", func(t *testing.T) {
+		c := newCached(t)
+		c.get("/steady")
+		if got := c.get("/steady", "If-None-Match", `"elsewhere"`, "If-Modified-Since", since(c.now.Add(time.Hour))); got.Code != http.StatusOK {
+			t.Errorf("If-None-Match another page, If-Modified-Since later: %d", got.Code)
+		}
+	})
+
+	t.Run("a page that isn't kept has no date", func(t *testing.T) {
+		c := newCached(t)
+		for _, path := range []string{"/missing", "/cookie"} {
+			if got := c.get(path).Header().Get("Last-Modified"); got != "" {
+				t.Errorf("%s: Last-Modified %q", path, got)
+			}
 		}
 	})
 }

@@ -22,8 +22,13 @@ import (
 // a fragment of its own.
 //
 // Only 200s are kept, and never a response that sets a cookie. Browsers are
-// told no-cache with an ETag, so they check back each time and get a 304
-// when nothing changed.
+// told no-cache with an ETag and a Last-Modified, so they check back each
+// time and get a 304 when nothing changed. Last-Modified is when the page
+// last changed: its first render since the app started (a deploy), or the
+// first render that came out different from the one before (an edit in the
+// admin, say). Rendered again the same, it keeps its date. It's there for
+// what's between a browser and the app: a proxy that may rewrite HTML
+// (Cloudflare) drops ETags, and passes Last-Modified on.
 type PageCache struct {
 	// Version changes whenever the data does (db.DB.Version); a page made
 	// under another version is stale. nil, or an error: pages go by MaxAge
@@ -44,14 +49,15 @@ type PageCache struct {
 }
 
 type cachedPage struct {
-	status  int
-	kept    bool        // cacheable, and in the cache
-	header  http.Header // the handler's own headers
-	body    []byte
-	gzipped []byte
-	etag    string
-	version int64
-	made    time.Time
+	status   int
+	kept     bool        // cacheable, and in the cache
+	header   http.Header // the handler's own headers
+	body     []byte
+	gzipped  []byte
+	etag     string
+	modified time.Time // when this content was first served: Last-Modified
+	version  int64
+	made     time.Time
 }
 
 func (c *PageCache) now() time.Time {
@@ -148,6 +154,17 @@ func (c *PageCache) make(key string, version int64, next http.Handler, r *http.R
 	if c.entries == nil {
 		c.entries = map[string]*cachedPage{}
 	}
+	page.modified = page.made.Truncate(time.Second)
+	if before := c.entries[key]; before != nil {
+		switch {
+		case before.etag == page.etag:
+			page.modified = before.modified // the same content: the same date
+		case !page.modified.After(before.modified):
+			// Changed within the second it last changed: a later second,
+			// so a browser holding the first isn't told it's current.
+			page.modified = before.modified.Add(time.Second)
+		}
+	}
 	if len(c.entries) >= c.maxEntries() {
 		c.evict()
 	}
@@ -191,13 +208,14 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 		return
 	}
 	h.Set("ETag", p.etag)
+	h.Set("Last-Modified", p.modified.UTC().Format(http.TimeFormat))
 	if h.Get("Cache-Control") == "" {
 		h.Set("Cache-Control", "no-cache")
 	}
 	if p.gzipped != nil {
 		h.Add("Vary", "Accept-Encoding")
 	}
-	if match := r.Header.Get("If-None-Match"); match != "" && (match == p.etag || match == "W/"+p.etag) {
+	if unchanged(r, p) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
@@ -212,6 +230,16 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 	if r.Method != http.MethodHead {
 		w.Write(body)
 	}
+}
+
+// unchanged reports whether the browser's copy of p is p, by its ETag when
+// the request has one (RFC 9110: If-None-Match wins), else by its date.
+func unchanged(r *http.Request, p *cachedPage) bool {
+	if match := r.Header.Get("If-None-Match"); match != "" {
+		return match == p.etag || match == "W/"+p.etag
+	}
+	since, err := http.ParseTime(r.Header.Get("If-Modified-Since"))
+	return err == nil && !p.modified.After(since)
 }
 
 // recorder keeps a response in memory.
