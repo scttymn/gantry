@@ -117,6 +117,11 @@ func TestRunHoldsRateAndMix(t *testing.T) {
 	if p50, p99 := res.Percentile(0.5), res.Percentile(0.99); p50 <= 0 || p99 < p50 || p99 > time.Second {
 		t.Errorf("p50 %v, p99 %v", p50, p99)
 	}
+	// The timekeeper spins through its waits, which is CPU spent on purpose:
+	// the run says how much, so it isn't taken for the load being short of it.
+	if res.Spun < 200*time.Millisecond || res.Spun > took {
+		t.Errorf("the timekeeper spun for %v of a %v run", res.Spun, took)
+	}
 }
 
 // A request that waited for a free connection is as late as it was: its

@@ -18,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -42,6 +43,9 @@ type Result struct {
 	// challenge's percentiles have them): from when it was due to its
 	// answer's last byte, or to when it was given up on. Shortest first.
 	Latencies []time.Duration
+	// Spun is how long the run's timekeeper spent spinning, waiting for the
+	// next request's moment: CPU the load used on purpose, not for want of it.
+	Spun time.Duration
 }
 
 // Percentile is the time within which that share (0.95, 0.99) of the
@@ -90,6 +94,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	// a timer wakes a millisecond or more late, which would be in every
 	// request's time.
 	moments := make(chan time.Time, due)
+	var spun atomic.Int64
 	go func() {
 		defer close(moments)
 		for i := range due {
@@ -102,8 +107,11 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			}
 			// A run that's over (cancelled, or past its grace) doesn't wait
 			// for the rest: they're due all the same, and failed.
-			for time.Now().Before(at) && ctx.Err() == nil {
+			for now := time.Now(); now.Before(at) && ctx.Err() == nil; {
 				runtime.Gosched()
+				next := time.Now()
+				spun.Add(int64(next.Sub(now)))
+				now = next
 			}
 			moments <- at
 		}
@@ -132,7 +140,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 	wg.Wait()
 
-	res := Result{Due: due}
+	res := Result{Due: due, Spun: time.Duration(spun.Load())}
 	for w := range o.Connections {
 		res.Latencies = append(res.Latencies, times[w]...)
 		res.Failed += failed[w]

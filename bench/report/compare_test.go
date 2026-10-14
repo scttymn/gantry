@@ -64,6 +64,14 @@ func TestCompare(t *testing.T) {
 	if got, err := Compare(many, few); err != nil || got.Regressed {
 		t.Errorf("the base failing 150,000 and the head 3: regressed %v, %q, %v", got.Regressed, got.Verdict, err)
 	}
+	// One in a thousand more, to the digit, is the most that isn't one.
+	even, edge := side("base", 20000, 40, 40, 40), side("head", 20000, 40, 40, 40)
+	for i := range 3 {
+		even.Runs[i].Failed, edge.Runs[i].Failed = 104, 204
+	}
+	if got, err := Compare(even, edge); err != nil || got.Regressed {
+		t.Errorf("104 and 204 failed of each 100,000: regressed %v, %q, %v", got.Regressed, got.Verdict, err)
+	}
 	// One request in 300,000, lost to who knows what, isn't a verdict.
 	one := side("head", 20000, 40, 40, 40)
 	one.Runs[0].Failed = 1
@@ -122,7 +130,8 @@ func TestCompareLimits(t *testing.T) {
 }
 
 // The load generator out of CPU is what makes a limit the bench's own: it
-// used most of the cores it had. That's told from its side, not the app's.
+// used most of the cores it had (the CPU its timekeeper spends waiting, on
+// purpose, aside). That's told from its side, not the app's.
 func TestLoadBound(t *testing.T) {
 	second := time.Second
 	for _, c := range []struct {
@@ -193,7 +202,7 @@ func TestMarkdown(t *testing.T) {
 	// What bears on the verdict is in it: requests failed, and a limit the
 	// load gave out at.
 	head.Runs[0].Failed, head.LoadBound = 12, true
-	if md := Markdown(base, head, 18000, c); !strings.Contains(md, "| Requests failed, of 300,000 a side | 0 | 12 |") || !strings.Contains(md, "the load gave out") {
+	if md := Markdown(base, head, 18000, c); !strings.Contains(md, "| Requests failed | 0 of 300,000 | 12 of 300,000 |") || !strings.Contains(md, "the load gave out") {
 		t.Errorf("12 requests failed and the load gave out, and the summary doesn't say:\n%s", md)
 	}
 }

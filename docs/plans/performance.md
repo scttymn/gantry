@@ -240,6 +240,7 @@ Evidence, each run here and its output kept in this file: the checkout against i
   - a run killed while the load was on left the network, which is the lock, behind: every container of the bench's is removed first;
   - a file such as `base.1.backup.json` was read as a run, and runs with no rate got past the check that both sides ran at one;
   - 3% more, to the digit, failed where "within 3%" is the same.
+- Review of the second tip (9b1d66e), Codex: five more, all held. The bench still ended on any failed request, so the comparison never saw the shares it was changed to compare: a run is given up on only when nothing was done (or, alone, when nine tenths of the limit doesn't pass the line). The load's timekeeper spins on purpose, and counting that would call a load on one core out of CPU when it wasn't: a run says how long it spun (`load.Result.Spun`), and that's left out. One in a thousand more failed, to the digit, was a regression by a float's hair. The failed row gave both sides the head's total. And the load's cores are whole ones, as `bin/bench` gives it: a share of cores would need more than `GOMAXPROCS` to judge.
 - After them, the branch against itself again: "The same: a request's CPU differs by −0.2%", limits 25,000 and 25,000.
 
 ## Later batches

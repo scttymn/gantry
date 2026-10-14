@@ -132,7 +132,7 @@ func main() {
 	// of CPU makes the limit its own; an app that left its core unused was
 	// waiting on something else.
 	if wall := time.Since(began); r.LimitRate > 0 {
-		r.LoadBound = report.LoadBound(ownCPU()-mine, wall, runtime.GOMAXPROCS(0))
+		r.LoadBound = report.LoadBound(ownCPU()-mine-res.Spun, wall, runtime.GOMAXPROCS(0))
 		r.Idle = report.Idle(time.Duration(after.CPU-before.CPU)*time.Microsecond, wall, *cpus)
 	}
 	r.Layers = map[string]float64{}
@@ -145,8 +145,15 @@ func main() {
 	if err := os.WriteFile(*out, append(b, '\n'), 0o644); err != nil {
 		fail("%v", err)
 	}
-	if r.Failed > 0 {
-		fail("%d of %d requests failed at %s req/s", r.Failed, r.Due, thousands(r.Rate))
+	// The report is written whatever it says: a few requests failed is
+	// something for whoever reads it (bin/bench against compares the shares).
+	// A run in which nothing was done measured nothing, and nine tenths of
+	// the limit not passing the line the limit passed isn't a limit.
+	switch {
+	case res.Done == 0:
+		fail("none of %d requests was answered at %s req/s", r.Due, thousands(r.Rate))
+	case *rate == 0 && r.Failed*100 >= r.Due:
+		fail("%d of %d requests failed at nine tenths of the limit", r.Failed, r.Due)
 	}
 }
 

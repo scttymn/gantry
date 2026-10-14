@@ -118,7 +118,7 @@ func Compare(base, head Side) (Comparison, error) {
 	told := max(leastChange, c.Noise) + hair
 	theirOwn := !base.LoadBound && !head.LoadBound && !head.AtLeast
 	switch {
-	case float64(failed[1])/float64(due[1])-float64(failed[0])/float64(due[0]) > moreFailed:
+	case float64(failed[1])/float64(due[1])-float64(failed[0])/float64(due[0]) > moreFailed+hair:
 		c.Regressed = true
 		c.Verdict = fmt.Sprintf("Slower: this change failed %s of its %s requests at a rate the base failed %s at.", Thousands(float64(failed[1])), Thousands(float64(due[1])), Thousands(float64(failed[0])))
 	case c.Change > told:
@@ -139,7 +139,9 @@ func Compare(base, head Side) (Comparison, error) {
 // over eight tenths of the cores it had (cpu over wall, over cores). Then
 // the limit it found is its own, not the app's, and reads low: a faster
 // gantry would look no faster. It's told from the generator's side, the
-// only side it can be told from.
+// only side it can be told from. cpu is what the load needed, without
+// what its timekeeper spun away on purpose (load.Result.Spun), and cores
+// are whole ones, as bin/bench gives it.
 func LoadBound(cpu, wall time.Duration, cores int) bool {
 	return wall > 0 && cores > 0 && float64(cpu)/float64(wall)/float64(cores) > 0.8
 }
@@ -174,6 +176,10 @@ func Markdown(base, head Side, rate float64, c Comparison) string {
 		}
 		return
 	}
+	failedOf := func(s Side) string {
+		f, due := failed(s)
+		return Thousands(float64(f)) + " of " + Thousands(float64(due))
+	}
 	users := func(s Side) string { return Thousands(math.Round(float64(Users(s.LimitRate))/1000) * 1000) }
 	fmt.Fprintf(&b, "## gantry bench: %s against %s\n\n**%s**\n\n", head.Name, base.Name, c.Verdict)
 	fmt.Fprintf(&b, "| | %s | %s | |\n| --- | ---: | ---: | ---: |\n", base.Name, head.Name)
@@ -181,8 +187,7 @@ func Markdown(base, head Side, rate float64, c Comparison) string {
 	fmt.Fprintf(&b, "| in the challenge's users, about | %s | %s | |\n", users(base), users(head))
 	fmt.Fprintf(&b, "| A request's CPU, both at %s req/s | %.1f µs | %.1f µs | %s |\n", Thousands(rate), c.Base, c.Head, signed(c.Change, 0))
 	if bf, _ := failed(base); bf > 0 || func() bool { hf, _ := failed(head); return hf > 0 }() {
-		hf, due := failed(head)
-		fmt.Fprintf(&b, "| Requests failed, of %s a side | %s | %s | |\n", Thousands(float64(due)), Thousands(float64(bf)), Thousands(float64(hf)))
+		fmt.Fprintf(&b, "| Requests failed | %s | %s | |\n", failedOf(base), failedOf(head))
 	}
 	for _, layer := range LayerOrder {
 		if base.Layers[layer] >= 0.05 || head.Layers[layer] >= 0.05 {
