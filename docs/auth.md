@@ -2,8 +2,9 @@
 
 Gantry supports email/password login and passwordless **email codes**, with the
 same database-backed sessions. Email codes are an explicit application choice;
-existing applications keep their current password login. TOTP authenticator
-apps, passkeys and OAuth remain planned features.
+existing applications keep their current password login. Apple and Google can
+be added as [social identities](social-login.md), sharing the same users and
+sessions. TOTP authenticator apps and passkeys remain planned features.
 
 ## Password login and first-install setup
 

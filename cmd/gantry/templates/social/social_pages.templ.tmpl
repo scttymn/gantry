@@ -1,0 +1,23 @@
+package auth
+
+import (
+	gantryauth "github.com/scttymn/gantry/auth"
+
+	"{{.Module}}/app/shared/layout"
+)
+
+templ socialIdentities(p gantryauth.Page) {
+	@layout.Layout(layout.Page{Title: "Sign-in methods"}) {
+		<main class="auth">
+			<h1>Sign-in methods</h1>
+			<p>{ p.EmailAddress }</p>
+			if p.Notice != "" {
+				<p role="status">{ p.Notice }</p>
+			}
+			if p.Alert != "" {
+				<p role="alert">{ p.Alert }</p>
+			}
+			@gantryauth.SocialConnections(p)
+		</main>
+	}
+}

@@ -20,6 +20,7 @@ templ requestCode(p gantryauth.Page) {
 			<h1>Sign in</h1>
 			<p>We'll email you a code to continue.</p>
 			@messages(p)
+			@gantryauth.SocialButtons(p)
 			<form id="request-code" method="post" action={ templ.URL(p.Paths.Login) }>
 				<label>Email <input type="email" name="email_address" required autofocus autocomplete="email" maxlength="254"/></label>
 				<button type="submit">Email me a code</button>

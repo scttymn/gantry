@@ -11,6 +11,9 @@ import (
 // show what each page needs, and nothing of any app's look.
 func DefaultViews() Views {
 	return Views{
+		Identities: func(w http.ResponseWriter, r *http.Request, p Page) error {
+			return plain(w, "Sign-in methods", p, `<p>`+html.EscapeString(p.EmailAddress)+`</p>`+socialForms(p, true))
+		},
 		Setup: func(w http.ResponseWriter, r *http.Request, p Page) error {
 			return plain(w, "Create your first account", p, `<p>Enter the setup code from your deployment terminal to finish installing this app.</p>
 <form id="first-user" method="post" action="`+html.EscapeString(p.Paths.Login+"/setup")+`">
@@ -21,7 +24,7 @@ func DefaultViews() Views {
 <button type="submit">Create account</button></form>`)
 		},
 		RequestCode: func(w http.ResponseWriter, r *http.Request, p Page) error {
-			return plain(w, "Sign in", p, `<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
+			return plain(w, "Sign in", p, socialForms(p, false)+`<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
 <label>Email <input type="email" name="email_address" required autofocus autocomplete="email" maxlength="254"></label>
 <button type="submit">Email me a code</button>
 </form>`)
@@ -39,7 +42,7 @@ func DefaultViews() Views {
 <p><a href="`+html.EscapeString(p.Paths.Login)+`">Use a different email</a></p>`)
 		},
 		Login: func(w http.ResponseWriter, r *http.Request, p Page) error {
-			return plain(w, "Sign in", p, `<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
+			return plain(w, "Sign in", p, socialForms(p, false)+`<form method="post" action="`+html.EscapeString(p.Paths.Login)+`">
 <label>Email <input type="email" name="email_address" required autofocus autocomplete="username"></label>
 <label>Password <input type="password" name="password" required autocomplete="current-password" maxlength="72"></label>
 <button type="submit">Sign in</button>

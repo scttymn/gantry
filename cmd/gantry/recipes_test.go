@@ -384,3 +384,104 @@ func TestEmailCodeRecipe(t *testing.T) {
 		t.Fatalf("signup without email codes: %s", stderr)
 	}
 }
+
+func TestSocialRecipe(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		for _, mode := range []string{"password", "email-code"} {
+			t.Run(engine+"/"+mode, func(t *testing.T) {
+				dir := shopApp(t, engine)
+				at(t, "2026-10-12T12:00:00Z")
+				args := []string{"g", "auth"}
+				if mode == "email-code" {
+					args = append(args, "--email-code", "--signup")
+				}
+				if code, _, stderr := gantry(t, dir, args...); code != 0 {
+					t.Fatal(stderr)
+				}
+				original, _ := os.ReadFile(filepath.Join(dir, "app", "auth", "auth.go"))
+				if code, out, stderr := gantry(t, dir, "g", "auth", "--social"); code != 0 || !strings.Contains(out, "ConfigureSocial") {
+					t.Fatal(out, stderr)
+				}
+				after, _ := os.ReadFile(filepath.Join(dir, "app", "auth", "auth.go"))
+				if string(original) != string(after) {
+					t.Fatal("social recipe overwrote existing auth")
+				}
+				if code, _, _ := gantry(t, dir, "g", "auth", "--social"); code != 1 {
+					t.Fatal("reapplied social recipe")
+				}
+				files, _ := filepath.Glob(filepath.Join(dir, "db", "migrations", "*_create_auth_identities.sql"))
+				if len(files) != 1 {
+					t.Fatal("no migration")
+				}
+				stamp := "20261012120001"
+				if mode == "email-code" {
+					stamp = "20261012120002"
+				}
+				if !strings.HasPrefix(filepath.Base(files[0]), stamp) {
+					t.Fatal("migration does not follow auth", files)
+				}
+				for _, rel := range []string{"app/auth/social.go", "app/auth/social_pages.templ", "app/auth/social_test.go", "db/migrations/" + filepath.Base(files[0])} {
+					got, err := os.ReadFile(filepath.Join(dir, rel))
+					if err != nil {
+						t.Fatal(err)
+					}
+					gofmted(t, rel, got)
+					want := filepath.Join("testdata", "golden", "auth-social-"+mode+"-"+engine, rel+".golden")
+					if *update {
+						if err := os.MkdirAll(filepath.Dir(want), 0755); err != nil {
+							t.Fatal(err)
+						}
+						if err := os.WriteFile(want, got, 0644); err != nil {
+							t.Fatal(err)
+						}
+					} else if expected, err := os.ReadFile(want); err != nil || string(expected) != string(got) {
+						t.Errorf("%s differs from %s (run with -update)", rel, want)
+					}
+				}
+				warnings, err := devcheck.Scan(dir)
+				if err != nil || len(warnings) != 0 {
+					t.Fatalf("Strict: %+v %v", warnings, err)
+				}
+				if testing.Short() {
+					return
+				}
+				if _, err := exec.LookPath("templ"); err != nil {
+					t.Skip("toolchain required")
+				}
+				if engine == "postgres" && os.Getenv("GANTRY_TEST_POSTGRES_URL") == "" {
+					t.Skip("Postgres required")
+				}
+				repo, _ := filepath.Abs("../..")
+				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+				os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0644)
+				migrate := func(ctx context.Context, d *db.DB) error {
+					return d.Migrate(ctx, os.DirFS(filepath.Join(dir, "db", "migrations")), "app_migrations")
+				}
+				var baseline *db.DB
+				if engine == "postgres" {
+					t.Setenv("TEST_DATABASE_URL", os.Getenv("GANTRY_TEST_POSTGRES_URL"))
+					baseline = testkit.Postgres(t, migrate)
+				} else {
+					baseline = testkit.DB(t, migrate)
+				}
+				schema, err := baseline.Schema(t.Context(), "app_migrations")
+				if err != nil {
+					t.Fatal(err)
+				}
+				os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0644)
+				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+					cmd := exec.Command(step[0], step[1:]...)
+					cmd.Dir = dir
+					cmd.Env = append(os.Environ(), "TEST_DATABASE_URL="+os.Getenv("GANTRY_TEST_POSTGRES_URL"))
+					if out, err := cmd.CombinedOutput(); err != nil {
+						t.Fatalf("%v: %v\n%s", step, err, out)
+					}
+				}
+			})
+		}
+	}
+	dir := shopApp(t, "sqlite")
+	if code, _, _ := gantry(t, dir, "g", "auth", "--social"); code != 1 {
+		t.Fatal("social recipe needs existing auth")
+	}
+}

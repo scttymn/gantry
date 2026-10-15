@@ -101,10 +101,11 @@ type Router struct {
 	Hosts []string
 	// TimeZone is the app's (Rails' config.time_zone), every request's until
 	// web.SetZone changes it: UTC when nil.
-	TimeZone    *time.Location
-	mux         *http.ServeMux
-	root        *Scope        // the router's own routes
-	constraints []constrained // tried in order, before them
+	TimeZone             *time.Location
+	mux                  *http.ServeMux
+	root                 *Scope        // the router's own routes
+	constraints          []constrained // tried in order, before them
+	crossOriginCallbacks []string      // exact POST callbacks that check their own proof
 }
 
 // NewRouter is an empty router. page may be nil: errors are then answered
@@ -171,14 +172,14 @@ func WantsHTML(r *http.Request) bool {
 //   - Recover: a panic is the 500 page, logged
 //   - Current, where the request comes from (Proxies), and Hosts
 //   - Headers and cross-origin protection: a form posted from another site
-//     is refused with 422
+//     is refused with 422, except at a CrossOriginCallback
 //   - MethodOverride: HTML forms can PUT, PATCH and DELETE, with bodies capped
 func (rt *Router) Handler() http.Handler {
 	memory.say(rt.Log)
 	rt.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusNotFound) })
 	var h http.Handler = http.HandlerFunc(rt.route)
 	h = MethodOverride(h, DefaultBodyLimits)
-	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) })
+	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) }, rt.crossOriginCallbacks...)
 	h = Headers(h)
 	h = rt.arrive(h)
 	h = withCurrent(h)

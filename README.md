@@ -5,13 +5,14 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - **A place for everything:** `app/models`, a folder per resource (its controller and views), `app/services`, `app/shared`, `db/migrations`, `config/`.
 - **Postgres or SQLite:** each app picks one; everything gantry ships works on both.
 - **Fast by default:** pages the same for every visitor are cached in memory until the data changes; photos come in a few fixed widths (never enlarged), in WebP by default; one static binary on a `scratch` image.
-- **Sign-in solved once:** email and password, or emailed login codes with optional verified signup. TOTP, passkeys and OAuth are planned. See [authentication](docs/auth.md).
+- **Sign-in solved once:** email and password, or emailed login codes with optional verified signup. Apple and Google sign-in share those users and sessions. TOTP and passkeys are planned. See [authentication](docs/auth.md).
 
 ## Guides
 
 - [Building an app: a guide for agents](docs/agents.md): the defaults to use, the
   development workflow, Strict checks and how to verify a change. Useful for
   humans following the same workflow.
+- [Social login](docs/social-login.md): Apple/Google identities, verified account linking and shared sessions.
 - [Mail](docs/mail.md): app-wide delivery configuration and a persistent development inbox.
 - [Authentication](docs/auth.md): passwords, emailed codes, signup and delivery.
 - [Contributing](CONTRIBUTING.md): working on Gantry itself.

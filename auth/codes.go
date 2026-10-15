@@ -233,6 +233,9 @@ VALUES ($1, '', $2, $2) ON CONFLICT (email_address) DO NOTHING`, email, now)
 			return deleteErr
 		}
 		if err == nil {
+			if proofErr := a.recordVerifiedEmail(ctx, tx, user); proofErr != nil {
+				return proofErr
+			}
 			result = nil
 		}
 		return nil

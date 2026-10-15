@@ -59,6 +59,14 @@ shared [app mail service](mail.md) and an external code secret, and make
 self-registration an explicit app choice. Do not copy an OTP implementation
 from another app or add a shared development bypass.
 
+For Apple and Google, use `gantry g auth --social` with existing shared Auth,
+then follow [social login](social-login.md). Keep one user/session system. Enable
+signup deliberately, never treat a matching unverified email as proof, and keep
+Apple's cross-origin exception limited to its state-validated callback. Existing
+verified email records need an explicit, trustworthy migration; do not backfill
+verification from the presence of a password. Live provider testing requires app
+credentials and registered callback URLs.
+
 Keep scripts in `assets/js`, styles in `assets/css`, and shared page shells in
 `app/shared`. Mount the generated asset routes. Avoid a parallel file server,
 manual asset hashes or hand-maintained cache-busting query strings for these
