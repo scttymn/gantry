@@ -139,3 +139,20 @@ func (rt *Router) Cached(pattern string, h Handler) { rt.root.Cached(pattern, h)
 func (rt *Router) Resources(base string, controller any, wrap func(http.Handler) http.Handler) {
 	rt.root.Resources(base, controller, wrap)
 }
+
+// CrossOriginCallback mounts an exact POST callback that authenticates its own
+// cross-site requests (OAuth state, a browser-bound nonce, or a webhook signature).
+// It keeps the normal pipeline but exempts only this path/method from origin
+// checks. Wildcards, subtree patterns and constrained scopes are refused.
+func (s *Scope) CrossOriginCallback(pattern string, h Handler) {
+	full := s.pattern(pattern)
+	if s.check != nil || !strings.HasPrefix(full, "POST /") || strings.HasSuffix(full, "/") || strings.ContainsAny(full, "{}?\\") {
+		panic("web: CrossOriginCallback requires an exact POST path outside constrained scopes")
+	}
+	s.Handle(pattern, h)
+	s.rt.crossOriginCallbacks = append(s.rt.crossOriginCallbacks, full)
+}
+
+func (rt *Router) CrossOriginCallback(pattern string, h Handler) {
+	rt.root.CrossOriginCallback(pattern, h)
+}

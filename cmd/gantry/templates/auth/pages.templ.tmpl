@@ -22,6 +22,7 @@ templ signIn(p gantryauth.Page) {
 		<main class="auth">
 			<h1>Sign in</h1>
 			@messages(p)
+			@gantryauth.SocialButtons(p)
 			<form method="post" action={ templ.URL(p.Paths.Login) }>
 				<label>Email <input type="email" name="email_address" required autofocus autocomplete="username"/></label>
 				<label>Password <input type="password" name="password" required autocomplete="current-password" maxlength="72"/></label>

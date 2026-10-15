@@ -21,3 +21,5 @@
 - [Authentication](https://github.com/scttymn/gantry/blob/main/docs/auth.md): Email/password and email-code login, verified signup, delivery and shared limits.
 
 - [Mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md): Shared app mail configuration, SMTP delivery and the development inbox.
+
+- [Social login](https://github.com/scttymn/gantry/blob/main/docs/social-login.md): Apple/Google provider setup, verified identity linking and shared database sessions.

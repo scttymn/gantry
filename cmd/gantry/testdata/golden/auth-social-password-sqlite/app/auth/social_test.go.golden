@@ -1,0 +1,18 @@
+package auth
+
+import (
+	"testing"
+
+	gantryauth "github.com/scttymn/gantry/auth"
+)
+
+func TestSocialConfiguration(t *testing.T) {
+	a := &gantryauth.Auth{}
+	if err := ConfigureSocial(a, func(string) string { return "" }); err != nil || a.Social != nil {
+		t.Fatal("unconfigured providers should leave auth unchanged", err)
+	}
+	env := map[string]string{"GOOGLE_CLIENT_ID": "test-client", "GOOGLE_CLIENT_SECRET": "test-secret", "GOOGLE_REDIRECT_URL": "https://example.com/login/google/callback"}
+	if err := ConfigureSocial(a, func(k string) string { return env[k] }); err != nil || a.Social == nil || a.Social.Signup {
+		t.Fatal("explicit provider configuration", err)
+	}
+}

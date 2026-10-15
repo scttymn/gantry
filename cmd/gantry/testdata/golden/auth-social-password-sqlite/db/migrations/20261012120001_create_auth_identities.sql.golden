@@ -1,0 +1,24 @@
+-- +goose Up
+CREATE TABLE auth_identities (
+ provider text NOT NULL,
+ subject text NOT NULL,
+ user_id bigint NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+ email_address text NOT NULL DEFAULT '',
+ verified_at bigint NOT NULL,
+ PRIMARY KEY (provider, subject),
+ UNIQUE (provider, user_id)
+);
+CREATE TABLE auth_oauth_states (
+ state_digest text PRIMARY KEY,
+ provider text NOT NULL,
+ browser_digest text NOT NULL,
+ nonce text NOT NULL,
+ verifier text NOT NULL,
+ link_session_id bigint NOT NULL DEFAULT 0,
+ expires_at bigint NOT NULL
+);
+CREATE INDEX auth_oauth_states_expiry ON auth_oauth_states(expires_at);
+
+-- +goose Down
+DROP TABLE auth_oauth_states;
+DROP TABLE auth_identities;

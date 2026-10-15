@@ -1,0 +1,72 @@
+/* Provider examples: Google HTML configurator (light, rectangular, centered)
+   and Apple's black web button. Layout tokens remain app-overridable. */
+.gantry-social {
+  display: grid;
+  gap: var(--gantry-social-gap, 12px);
+  width: 100%;
+  max-width: var(--gantry-social-width, 400px);
+  margin-inline: auto;
+}
+.gantry-social .gantry-social__form { margin: 0; padding: 0; }
+.gantry-social .gantry-social__button {
+  appearance: none;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  height: var(--gantry-social-height, 40px);
+  min-height: 40px;
+  padding: 0 12px;
+  margin: 0;
+  border: 1px solid #747775;
+  border-radius: var(--gantry-social-radius, 4px);
+  background: #fff;
+  color: #1f1f1f;
+  font: 500 14px/20px "Roboto", Arial, sans-serif;
+  letter-spacing: .25px;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+}
+.gantry-social .gantry-social__button--apple {
+  color: #fff;
+  background: #000;
+  border-color: #000;
+  border-radius: var(--gantry-social-radius, 6px);
+  font: 500 17px/1.2 system-ui, -apple-system, "Segoe UI", sans-serif;
+  letter-spacing: normal;
+}
+.gantry-social .gantry-social__icon {
+  display: block;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+}
+.gantry-social .gantry-social__button--google:hover {
+  background: #f2f2f2;
+  box-shadow: 0 1px 2px rgb(60 64 67 / 30%), 0 1px 3px 1px rgb(60 64 67 / 15%);
+}
+.gantry-social .gantry-social__button--google:active { background: #e6e6e6; }
+.gantry-social .gantry-social__button--apple:hover { background: #222; }
+.gantry-social .gantry-social__button--apple:active { background: #333; }
+.gantry-social .gantry-social__button:focus-visible {
+  outline: 3px solid var(--gantry-social-focus, #007aff);
+  outline-offset: 3px;
+}
+.gantry-social__divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: var(--gantry-social-divider-space, 28px) 0;
+  color: var(--gantry-social-muted, var(--muted, #6e6e73));
+  font: 500 12px/1.5 system-ui, sans-serif;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.gantry-social__divider::before, .gantry-social__divider::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--gantry-social-divider-color, #dadce0);
+}

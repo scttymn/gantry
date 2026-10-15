@@ -1,0 +1,22 @@
+package auth
+
+import (
+	"net/http"
+
+	gantryauth "github.com/scttymn/gantry/auth"
+	"github.com/scttymn/gantry/web"
+)
+
+// ConfigureSocial adds Apple/Google identities to this existing Auth. Call once
+// before Routes. Missing provider credentials leave existing auth unchanged.
+func ConfigureSocial(a *Auth, getenv func(string) string) error {
+	social, err := gantryauth.SocialFromEnv(getenv)
+	if err != nil {
+		return err
+	}
+	a.Social = social
+	a.Views.Identities = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
+		return web.Render(w, r, http.StatusOK, socialIdentities(p))
+	}
+	return nil
+}

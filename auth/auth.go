@@ -60,12 +60,14 @@ type Page struct {
 	Status        int    // response status for custom views; zero means 200
 	EmailAddress  string // the address receiving a login code
 	Paths         Paths
+	Social        []SocialButton
 }
 
 // Views draw the sign-in pages. Each writes the whole response, so an app
 // draws them in its own layout (and may read its database to do so).
 // gantry's defaults (DefaultViews) are plain forms.
 type Views struct {
+	Identities     func(http.ResponseWriter, *http.Request, Page) error
 	Setup          func(w http.ResponseWriter, r *http.Request, p Page) error
 	Login          func(w http.ResponseWriter, r *http.Request, p Page) error
 	RequestCode    func(w http.ResponseWriter, r *http.Request, p Page) error
@@ -89,6 +91,7 @@ type Auth struct {
 	// EmailCodes opts into passwordless email-code login. Nil preserves
 	// password login. Signup is a separate explicit option.
 	EmailCodes *EmailCodes
+	Social     *Social    // optional Apple/Google identities, sharing ordinary sessions
 	FirstUser  *FirstUser // optional one-time installation setup for password auth
 	// Mail sends login codes or password reset links. Nil: no reset by email (an app that
 	// sends no email): its pages aren't mounted, and Page.Paths.Passwords is
@@ -178,6 +181,9 @@ func (a *Auth) paths() Paths {
 
 func (a *Auth) views() Views {
 	v, d := a.Views, DefaultViews()
+	if v.Identities == nil {
+		v.Identities = d.Identities
+	}
 	if v.Setup == nil {
 		v.Setup = d.Setup
 	}
@@ -467,6 +473,7 @@ func (a *Auth) Required(w http.ResponseWriter, r *http.Request) error {
 // filters run first.
 func (a *Auth) Routes(rt web.Routes) {
 	p := a.paths()
+	a.socialRoutes(rt)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := a.PrepareFirstUser(ctx); err != nil {
@@ -502,7 +509,7 @@ func (a *Auth) Routes(rt web.Routes) {
 
 // page is the flash for this page, taken.
 func (a *Auth) page(w http.ResponseWriter, r *http.Request) Page {
-	p := Page{Paths: a.paths()}
+	p := Page{Paths: a.paths(), Social: a.socialButtons()}
 	if a.Mail == nil || a.EmailCodes != nil {
 		p.Paths.Passwords = ""
 	}

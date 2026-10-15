@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"text/template"
 	"time"
 )
@@ -119,12 +120,19 @@ func generateAuth(root string, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("auth", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	emailCode := fs.Bool("email-code", false, "passwordless email-code login")
+	social := fs.Bool("social", false, "add Google and Apple identities to existing auth")
 	signup := fs.Bool("signup", false, "create accounts after verifying email (with --email-code)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("g auth takes no arguments (%q)", fs.Arg(0))
+	}
+	if *social {
+		if *emailCode || *signup {
+			return errors.New("--social adds to existing auth; configure signup with AUTH_SOCIAL_SIGNUP")
+		}
+		return generateSocialAuth(root, out)
 	}
 	if *signup && !*emailCode {
 		return errors.New("--signup requires --email-code")
@@ -260,6 +268,58 @@ Next:
 
 Email-code login: /login, /login/verify and /logout.
 Documentation: https://github.com/scttymn/gantry/blob/main/docs/auth.md
+`)
+	return nil
+}
+
+func generateSocialAuth(root string, out io.Writer) error {
+	mod, err := appModule(root)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(filepath.Join(root, "app", "auth", "auth.go")); err != nil {
+		return errors.New("apply g auth or g auth --email-code before adding --social")
+	}
+	if existing, _ := filepath.Glob(filepath.Join(root, "db", "migrations", "*_create_auth_identities.sql")); len(existing) > 0 {
+		return errors.New("social identities recipe was applied already")
+	}
+	stamp := now().UTC()
+	existing, _ := filepath.Glob(filepath.Join(root, "db", "migrations", "*.sql"))
+	for _, file := range existing {
+		prefix, _, _ := strings.Cut(filepath.Base(file), "_")
+		if parsed, err := time.Parse("20060102150405", prefix); err == nil && !stamp.After(parsed) {
+			stamp = parsed.Add(time.Second)
+		}
+	}
+	files := map[string]string{
+		filepath.Join("db", "migrations", stamp.Format("20060102150405")+"_create_auth_identities.sql"): "migration.sql.tmpl",
+		filepath.Join("app", "auth", "social.go"):                                                       "social.go.tmpl",
+		filepath.Join("app", "auth", "social_pages.templ"):                                              "social_pages.templ.tmpl",
+		filepath.Join("app", "auth", "social_test.go"):                                                  "social_test.go.tmpl",
+	}
+	if err := writeRecipe(root, "social", files, Recipe{Module: mod}, out); err != nil {
+		return err
+	}
+	fmt.Fprint(out, `
+Next:
+  1. gantry db migrate, gantry exec templ generate, gantry exec go mod tidy.
+  2. Before a.Auth.Routes(rt), call auth.ConfigureSocial(a.Auth, os.Getenv).
+     Fail startup if it returns an error. Use the same Auth for every mechanism.
+     Keep protected routes in rt.Scope("/account", web.Pipeline{a.Auth.Required}, ...).
+  3. Add @gantryauth.SocialButtons(p) to an older app's login view if missing.
+     New password and email-code recipes include it. Link /login/identities from
+     account settings so signed-in users can connect another provider.
+  4. Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URL;
+     APPLE_CLIENT_ID, APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_FILE (or
+     APPLE_PRIVATE_KEY), APPLE_REDIRECT_URL. Pass these through Compose from
+     private configuration. Register the exact callback URLs with each provider.
+  5. Set AUTH_SOCIAL_SIGNUP=true only when public signup is intended.
+     Confirmed matching email identities auto-link. Unverified matches require
+     an existing login; passwords alone do not prove email ownership.
+  6. Schedule a.Auth.PruneSocialFlows(ctx), run gantry check --strict and gantry test.
+
+Callbacks: /login/google/callback (GET), /login/apple/callback (POST, HTTPS).
+Existing verified emails: follow docs/social-login.md for the migration.
 `)
 	return nil
 }
