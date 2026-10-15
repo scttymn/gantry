@@ -13,9 +13,10 @@ import (
 const developmentBufferLimit = 2 << 20
 const developmentPageOpen = `<div data-gantry-development-layout style="position:fixed;inset:0;display:flex;flex-direction:column;background:inherit"><div data-gantry-page style="flex:1;min-height:0;overflow:auto;position:relative;contain:layout">`
 
-// Buffer only ordinary, bounded HTML responses. Streams, upgraded connections,
-// ranges and already encoded content keep their original delivery behavior.
-func serveDevelopmentPage(next http.Handler, w http.ResponseWriter, r *http.Request) {
+// Buffer only ordinary, bounded HTML responses, for inject to change.
+// Streams, upgraded connections, ranges and already encoded content keep
+// their original delivery behavior.
+func serveDevelopmentPage(next http.Handler, w http.ResponseWriter, r *http.Request, inject func(context.Context, []byte) ([]byte, bool)) {
 	if r.Method == http.MethodHead || r.Header.Get("Upgrade") != "" || r.Header.Get("Range") != "" {
 		next.ServeHTTP(w, r)
 		return
@@ -30,7 +31,7 @@ func serveDevelopmentPage(next http.Handler, w http.ResponseWriter, r *http.Requ
 	}
 	body := dw.body.Bytes()
 	if developmentHTML(dw.Header()) && dw.status != http.StatusNoContent && dw.status != http.StatusNotModified {
-		if result, changed := injectDevelopmentHTML(r.Context(), body); changed {
+		if result, changed := inject(r.Context(), body); changed {
 			body = result
 			for _, key := range []string{"Content-Length", "ETag", "Last-Modified", "Content-MD5", "Digest"} {
 				dw.Header().Del(key)

@@ -131,6 +131,10 @@ collapsed, and makes room above it when opened. Findings are project-wide and
 are rescanned on HTML page requests, so reload after a fix. It appears only when
 findings exist and the response supports injection.
 
+Pages also reload themselves when code or templates change (see
+[reload on save](development.md#reload-on-save)); do not add a live-reload
+script or tool of your own.
+
 If the panel interferes with development, set `GANTRY_DEV_WARNINGS=false` in the
 app environment and restart. That disables the panel and its scan; CLI checks
 remain available. Production and test environments do not enable diagnostics.

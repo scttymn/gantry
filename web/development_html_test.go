@@ -31,6 +31,7 @@ func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
 		t.Run(tc.env+tc.disabled, func(t *testing.T) {
 			t.Setenv("GANTRY_ENV", tc.env)
 			t.Setenv("GANTRY_DEV_WARNINGS", tc.disabled)
+			t.Setenv("GANTRY_DEV_RELOAD", "false")
 			rt := NewRouter(slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
 			rt.Handle("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
 				w.Header().Set("Content-Type", "text/html")
@@ -104,7 +105,7 @@ func TestDevelopmentInjectionPreservesSpecialResponses(t *testing.T) {
 				req.Method = "HEAD"
 			}
 			rec := httptest.NewRecorder()
-			serveDevelopmentPage(h, rec, req)
+			serveDevelopmentPage(h, rec, req, injectDevelopmentHTML)
 			if rec.Code != http.StatusAccepted || rec.Body.String() != original {
 				t.Fatal("response altered", mode, rec.Code)
 			}

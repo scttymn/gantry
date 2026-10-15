@@ -92,6 +92,39 @@ Transformed pages are not cached. A strict CSP can block the panel's inline
 styles; terminal checks remain available. The disable setting is available for
 layouts that do not work well inside the development content area.
 
+## Reload on save
+
+Under `bin/gantry dev`, open pages reload themselves when you save. Like the
+panel, it comes with Gantry's router when `GANTRY_ENV=development`; templates
+need no changes.
+
+Each page knows the version of the code that rendered it: the server's boot
+ID and a count of template text changes. It follows a stream at
+`/_gantry/reload` that says the current version, and reloads when that differs.
+
+- **Go, CSS, JavaScript, SQL, or a template's Go code:** templ's watcher
+  rebuilds and restarts the server. The stream reconnects to the new server,
+  and the page reloads. A build that fails leaves the page as it was; it
+  reloads once a build succeeds.
+- **A template's text only:** templ rewrites the file it keeps the text in,
+  without restarting. The server notices within a fraction of a second, and
+  the page reloads.
+- **Data:** rows changed by the console, another tab or a job change no code,
+  so nothing reloads. Pages that should follow their data use the `live`
+  package's streams, in production too.
+
+The script (`/_gantry/reload.js`) is added at the end of every complete HTML
+page, with the same limits as the panel. Only visible pages hold a stream, so
+open tabs don't use up the browser's connections to the app; a tab shown again
+reconnects and reloads if the code changed while it was hidden. A reload
+discards unsaved form input. A page reloaded by hand while the server is
+restarting shows Houston's proxy error; reload it again once the server is up.
+
+Set `GANTRY_DEV_RELOAD=false` and restart development to turn reloading off;
+the generated Compose configuration passes it through. Production and test
+environments never reload. Other HTTP stacks can opt into `web.Reload(handler)`
+inside a development guard.
+
 ## Timing
 
 The router also enables request timing automatically in development. Other HTTP

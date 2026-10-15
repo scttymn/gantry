@@ -37,7 +37,7 @@ func DevelopmentWithRules(next http.Handler, root string, log *slog.Logger, rule
 			r = r.WithContext(context.WithValue(r.Context(), developmentWarningsKey{}, warnings))
 			w.Header().Set("Cache-Control", "no-store")
 		}
-		serveDevelopmentPage(next, w, r)
+		serveDevelopmentPage(next, w, r, injectDevelopmentHTML)
 	}), log)
 }
 

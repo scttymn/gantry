@@ -168,6 +168,8 @@ func WantsHTML(r *http.Request) bool {
 // any path nothing else matches. Outermost first:
 //   - NoStoreOnErrors: an error answer is never cached
 //   - compress: gzip for text
+//   - in development, Reload (pages reload when the code changes) and
+//     Development (source warnings), or Timing alone
 //   - Recover: a panic is the 500 page, logged
 //   - Current, where the request comes from (Proxies), and Hosts
 //   - Headers and cross-origin protection: a form posted from another site
@@ -190,6 +192,9 @@ func (rt *Router) Handler() http.Handler {
 			h = Timing(h, rt.Log)
 		} else {
 			h = Development(h, ".", rt.Log)
+		}
+		if os.Getenv("GANTRY_DEV_RELOAD") != "false" {
+			h = Reload(h)
 		}
 	}
 	return NoStoreOnErrors(compressHandler(h))
