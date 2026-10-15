@@ -9,6 +9,7 @@ services:
     expose: ["8080"]
     environment:
       GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true} # development panel; false hides it
+      GANTRY_DEV_RELOAD: ${GANTRY_DEV_RELOAD:-true} # pages reload on save; false turns it off
       MAIL_DRIVER: ${MAIL_DRIVER:-} # blank: local inbox in development, configured SMTP elsewhere
       MAIL_FROM: ${MAIL_FROM:-}
       SMTP_HOST: ${SMTP_HOST:-}
