@@ -27,16 +27,15 @@ Retrieve the code in your trusted terminal:
 bin/gantry task auth:setup-code
 ```
 
-On production, an authorized operator can retrieve it from the app's local
-Compose directory using Houston's SSH connection:
+On production, an operator logged in to Houston (`houston login`) can retrieve it
+from the app's folder:
 
 ```sh
 houston exec --server /app task auth:setup-code
 ```
 
-This requires Houston's new remote-exec support (currently in development;
-check `houston exec --help` for `--server`), a saved SSH target from
-`houston login --ssh` or `HOUSTON_SSH`, and an authorized SSH key. It runs in the
+This requires Houston v0.5.10 or newer (`houston exec --server`) and the saved
+`houston login`: it goes through Mission Control's API, no SSH needed. It runs in the
 first matching running web container and sends output directly to your terminal,
 without recording it in deployment logs. With an older Houston CLI, run
 `/app task auth:setup-code` in an authorized terminal inside the deployed app

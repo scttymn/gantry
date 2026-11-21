@@ -173,7 +173,7 @@ Next:
      Set Idle/Lifetime for session expiry and FirstUser.CreateUser for app-specific roles.
   3. Open /login to finish first-install setup. In your terminal, retrieve its code:
        gantry task auth:setup-code
-     On production, using a Houston CLI with exec --server and authorized SSH:
+     On production, with Houston v0.5.10 or newer (houston login, no SSH):
        houston exec --server /app task auth:setup-code
      With an older CLI, run /app task auth:setup-code inside the deployed container.
      Never put this command in deployment hooks or logs. --rotate replaces a lost
