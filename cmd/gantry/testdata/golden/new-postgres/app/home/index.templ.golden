@@ -3,7 +3,7 @@ package home
 import "example.com/shop/app/shared/layout"
 
 templ index() {
-	@layout.Layout(layout.Page{Title: "Shop"}) {
+	@layout.Layout(layout.Page{Title: "Shop", Path: "/"}) {
 		<main class="welcome">
 			<p class="eyebrow">gantry</p>
 			<h1>Shop is running.</h1>
