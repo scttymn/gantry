@@ -3,7 +3,7 @@ package home
 import "{{.Module}}/app/shared/layout"
 
 templ index() {
-	@layout.Layout(layout.Page{Title: "{{.Title}}"}) {
+	@layout.Layout(layout.Page{Title: "{{.Title}}", Path: "/"}) {
 		<main class="welcome">
 			<p class="eyebrow">gantry</p>
 			<h1>{{.Title}} is running.</h1>

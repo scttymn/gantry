@@ -1,3 +1,4 @@
+| `meta` | A page's description, canonical link, and Open Graph and Twitter card tags, so a shared link shows a proper preview. New apps' layouts draw it; the site's address is `SITE_URL`, and a 1200×630 picture in `assets/images` is its default image. |
 # gantry
 
 An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from maintained libraries.

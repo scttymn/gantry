@@ -1,3 +1,4 @@
+| Link previews and search descriptions | `meta.Tags` in `app/shared/layout`, with `layout.Site` (name, `SITE_URL`, default image) and each page's `Title`, `Description`, `Path` | Absolute addresses from the configured site address, not the request's host (pages are cached) |
 # Building an app with Gantry: a guide for agents
 
 You're an AI agent building or maintaining a Gantry application. This guide
