@@ -11,7 +11,7 @@ cd "$root"
 cache=$root/.gantry/bin
 
 # The Houston for a gantry release older than gantry houston-release.
-houston_version="v0.5.10"
+houston_version="v0.5.11"
 gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
 houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
 
