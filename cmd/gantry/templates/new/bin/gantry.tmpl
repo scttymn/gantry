@@ -1,6 +1,6 @@
 #!/bin/sh
 # Downloads this app's gantry (the release go.mod requires) and the Houston
-# release pinned below, then runs gantry. A gantry checkout in go.mod's
+# release that gantry names, then runs gantry. A gantry checkout in go.mod's
 # replace, or in go.work, uses that checkout's bin/gantry instead.
 # Assets are gantry-$os-$arch and houston-$os-$arch, checked against the
 # release's SHA256SUMS. Both land in .gantry/bin, which git ignores.
@@ -10,6 +10,7 @@ root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 cache=$root/.gantry/bin
 
+# The Houston for a gantry release older than gantry houston-release.
 houston_version="{{.Houston}}"
 gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
 houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
@@ -222,6 +223,13 @@ elif [ -n "$checkout" ]; then
 else
 	[ -n "$version" ] || die "go.mod doesn't require github.com/scttymn/gantry"
 	fetch_release gantry "gantry-$os-$arch" "$version" "$gantry_base"
+fi
+
+# The Houston this app runs with is the one its gantry release names, so
+# bumping gantry in go.mod upgrades both. A gantry older than that names
+# none, and the pin above stands.
+if named=$("${GANTRY_BIN:-$cache/gantry}" houston-release 2>/dev/null) && is_release "$named"; then
+	houston_version=$named
 fi
 
 if [ -n "${HOUSTON_BIN:-}" ]; then

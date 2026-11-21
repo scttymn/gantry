@@ -45,6 +45,15 @@ func run(args []string, root string, out, errOut io.Writer) int {
 		fmt.Fprint(out, usage)
 		return 0
 	}
+	if args[0] == "houston-release" {
+		// What bin/gantry asks: the Houston release this gantry runs apps
+		// with. Nothing else happens first.
+		fmt.Fprintln(out, houstonRelease)
+		return 0
+	}
+	if args[0] != "new" {
+		refreshBinstub(root, errOut)
+	}
 	var err error = errExit(2)
 	switch args[0] {
 	case "check":
