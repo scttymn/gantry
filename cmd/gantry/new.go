@@ -44,7 +44,7 @@ type NewApp struct {
 // itself (built from a checkout): the newest tag when it was built. It's
 // raised to a release's tag before the tag is pushed, and the release's tests
 // check it was (TestLatestReleaseIsTheTag), so it can't fall behind.
-const latestRelease = "v0.15.2"
+const latestRelease = "v0.16.0"
 
 // releaseVersion is the release's tag in the CLI binaries a release
 // publishes: the Dockerfile's release-build stage sets it (-X
@@ -56,7 +56,7 @@ var releaseTag = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
 
 // houstonRelease is the Houston CLI bin/gantry downloads. It is a release
 // that published houston-$os-$arch and SHA256SUMS.
-const houstonRelease = "v0.5.10"
+const houstonRelease = "v0.5.11"
 
 const templVersion = "v0.3.1020"
 
