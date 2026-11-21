@@ -56,7 +56,7 @@ var releaseTag = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
 
 // houstonRelease is the Houston CLI bin/gantry downloads. It is a release
 // that published houston-$os-$arch and SHA256SUMS.
-const houstonRelease = "v0.5.4"
+const houstonRelease = "v0.5.9"
 
 const templVersion = "v0.3.1020"
 

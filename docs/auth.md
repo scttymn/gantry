@@ -34,8 +34,7 @@ Compose directory using Houston's SSH connection:
 houston exec --server /app task auth:setup-code
 ```
 
-This requires Houston's new remote-exec support (currently in development;
-check `houston exec --help` for `--server`), a saved SSH target from
+This requires Houston v0.5.9 or newer (`houston exec --server`), a saved SSH target from
 `houston login --ssh` or `HOUSTON_SSH`, and an authorized SSH key. It runs in the
 first matching running web container and sends output directly to your terminal,
 without recording it in deployment logs. With an older Houston CLI, run
