@@ -525,7 +525,7 @@ func hardCodedStatuses(t *testing.T, name string, src []byte) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sel :=func(e ast.Expr, pkg string) string {
+	sel := func(e ast.Expr, pkg string) string {
 		if s, ok := e.(*ast.SelectorExpr); ok {
 			if x, ok := s.X.(*ast.Ident); ok && x.Name == pkg {
 				return s.Sel.Name
