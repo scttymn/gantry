@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -111,16 +112,24 @@ func (c *PageCache) Handler(next http.Handler) http.Handler {
 		key := r.URL.RequestURI()
 		page := c.fresh(key, version, versioned)
 		if page == nil {
+			var own *cachedPage
 			made, err, _ := c.making.Do(key, func() (any, error) {
 				if p := c.fresh(key, version, versioned); p != nil {
 					return p, nil // made while this one waited
 				}
-				return c.make(key, version, next, r), nil
+				own = c.make(key, version, next, r)
+				return own, nil
 			})
 			if err != nil {
 				return
 			}
 			page = made.(*cachedPage)
+			if page != own && !page.kept {
+				// Another request's render, kept for no one (its cookie,
+				// its error): this one gets its own.
+				next.ServeHTTP(w, r)
+				return
+			}
 		}
 		c.serve(w, r, page)
 	})
@@ -146,8 +155,8 @@ func (c *PageCache) fresh(key string, version int64, versioned bool) *cachedPage
 }
 
 // make renders the page into memory and keeps it if it's cacheable. A page
-// that isn't is still returned, uncached, to be replayed to this request
-// (and to any that waited on the same render).
+// that isn't is still returned, uncached, for this request alone; those
+// that waited on the same render make their own.
 func (c *PageCache) make(key string, version int64, next http.Handler, r *http.Request) *cachedPage {
 	// The render is shared by whoever waits on it, so it isn't cut short
 	// when this request's client goes.
@@ -155,7 +164,7 @@ func (c *PageCache) make(key string, version int64, next http.Handler, r *http.R
 	next.ServeHTTP(rec, r.Clone(context.WithoutCancel(r.Context())))
 	page := &cachedPage{status: rec.status, header: rec.header, body: rec.body.Bytes(), version: version, made: c.now()}
 	if rec.status != http.StatusOK || len(rec.header.Values("Set-Cookie")) > 0 || rec.header.Get("Content-Encoding") != "" {
-		return page // replayed to whoever waited on it, never kept
+		return page // for this request alone, never kept
 	}
 	page.kept = true
 	sum := sha256.Sum256(page.body)
@@ -211,7 +220,7 @@ func (c *PageCache) evict() {
 func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage) {
 	h := w.Header()
 	for k, v := range p.header {
-		h[k] = v
+		h[k] = slices.Clone(v) // what's downstream may change the response's
 	}
 	if !p.kept { // an error page, say: as it was written
 		w.WriteHeader(p.status)
@@ -225,8 +234,8 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 	if h.Get("Cache-Control") == "" {
 		h.Set("Cache-Control", "no-cache")
 	}
-	if p.gzipped != nil {
-		h.Add("Vary", "Accept-Encoding")
+	if p.gzipped != nil && !slices.Contains(h.Values("Vary"), "Accept-Encoding") {
+		h.Add("Vary", "Accept-Encoding") // unless compress.Handler said so
 	}
 	if unchanged(r, p) {
 		w.WriteHeader(http.StatusNotModified)

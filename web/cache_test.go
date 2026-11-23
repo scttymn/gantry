@@ -73,6 +73,16 @@ func newCached(t *testing.T) *cached {
 		io.WriteString(w, "<p>"+c.steady.Load().(string)+"</p>")
 		return nil
 	})
+	rt.Cached("GET /slow-cookie", func(w http.ResponseWriter, r *http.Request) error {
+		c.renders.Add(1)
+		if c.gate != nil {
+			<-c.gate
+		}
+		who := r.Header.Get("X-Who")
+		http.SetCookie(w, &http.Cookie{Name: "who", Value: who})
+		io.WriteString(w, "for "+who)
+		return nil
+	})
 	rt.Cached("POST /page", page)
 	membersOnly := func(w http.ResponseWriter, r *http.Request) error {
 		if r.Header.Get("X-Member") == "" {
@@ -305,6 +315,46 @@ func TestPageCache(t *testing.T) {
 		for _, b := range bodies {
 			if b != bodies[0] || b == "" {
 				t.Fatal("a request got another page, or none")
+			}
+		}
+	})
+	t.Run("a render that isn't kept isn't shared with the requests waiting on it", func(t *testing.T) {
+		c := newCached(t)
+		c.gate = make(chan struct{})
+		var wg sync.WaitGroup
+		got := map[string]*httptest.ResponseRecorder{}
+		var mu sync.Mutex
+		for _, who := range []string{"ada", "grace"} {
+			wg.Go(func() {
+				rec := c.get("/slow-cookie", "X-Who", who)
+				mu.Lock()
+				got[who] = rec
+				mu.Unlock()
+			})
+			time.Sleep(20 * time.Millisecond) // ada's render starts first; grace waits on it
+		}
+		close(c.gate)
+		wg.Wait()
+		for who, rec := range got {
+			if rec.Body.String() != "for "+who || rec.Header().Get("Set-Cookie") != "who="+who {
+				t.Errorf("%s got %q and %v", who, rec.Body, rec.Header().Values("Set-Cookie"))
+			}
+		}
+	})
+	t.Run("a served page's headers are its own copy", func(t *testing.T) {
+		c := newCached(t)
+		c.get("/page")
+		served := c.get("/page")
+		served.Header()["Content-Type"][0] = "changed downstream"
+		if next := c.get("/page"); next.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Fatalf("the kept page's header changed: %v", next.Header())
+		}
+	})
+	t.Run("Vary names Accept-Encoding once", func(t *testing.T) {
+		c := newCached(t)
+		for range 2 {
+			if vary := c.get("/page", "Accept-Encoding", "gzip").Header().Values("Vary"); len(vary) != 1 || vary[0] != "Accept-Encoding" {
+				t.Fatalf("Vary %q", vary)
 			}
 		}
 	})
