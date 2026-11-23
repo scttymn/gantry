@@ -49,7 +49,7 @@ func find(t *testing.T, file, re string) string {
 
 func TestCopiesMatchTheirPin(t *testing.T) {
 	workflows := []string{".github/workflows/ci.yml", ".github/workflows/release.yml"}
-	scripts := []string{workflows[0], workflows[1], "bin/bench", "CONTRIBUTING.md"}
+	scripts := []string{workflows[0], workflows[1], "bin/bench", "bin/ci", "CONTRIBUTING.md"}
 	postgres := regexp.MustCompile(`\Apostgres:(\d+)\b`).FindStringSubmatch(PostgresImage)
 	if postgres == nil {
 		t.Fatalf("PostgresImage %q has no major version", PostgresImage)
@@ -81,6 +81,7 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", append(
 			all(workflows, `image: (postgres:\S+)`),
 			handCopy{"internal/pins/Dockerfile", `(?m)^FROM (postgres:\S+)`},
+			handCopy{"bin/ci", `\b(postgres:\d+@sha256:[0-9a-f]+)`},
 		)},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
 		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?([\w,]+)`)},

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Before a push, the ci workflow's checks on this machine (bin/ci): a push
+# that would fail CI doesn't leave it. Once per clone:
+#   git config core.hooksPath .githooks
+# bin/ci checks the checkout, so the commit pushed must be HEAD, with nothing
+# in the tree that isn't in it (TestPrePushHook).
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+head=$(git rev-parse HEAD)
+pushes=
+while read -r _ local_sha _ _; do
+	case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a ref
+	pushes=1
+	if [ "$(git rev-parse "$local_sha^{commit}")" != "$head" ]; then
+		echo "pre-push: bin/ci checks the checkout, and $local_sha isn't HEAD: check it out, then push" >&2
+		exit 1
+	fi
+done
+[ -n "$pushes" ] || exit 0
+if [ -n "$(git status --porcelain)" ]; then
+	echo "pre-push: the tree has changes that aren't in the commit, and bin/ci would check them too: commit, stash or remove them, then push" >&2
+	git status --short >&2
+	exit 1
+fi
+
+exec bin/ci </dev/null

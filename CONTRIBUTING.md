@@ -38,6 +38,29 @@ probe on a made-up tag. Run staticcheck and govulncheck with
 `bin/go go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`, at the
 versions [`ci.yml`](.github/workflows/ci.yml) pins.
 
+`bin/ci` runs those checks here, step by step under the workflow's names, and
+stops at the first that fails; `bin/ci --fast` leaves out the race detector and
+the release's build. Its Postgres is `GANTRY_TEST_POSTGRES_URL`'s, or a
+throwaway `postgres:17` it removes when it's done; with neither, it says loudly
+that the Postgres tests skipped. Go's caches are one for every checkout
+(`~/Library/Caches/gantry` on macOS, `~/.cache/gantry` elsewhere), cleaned once
+the build cache passes 5 GB, and `bin/ci` won't start with less than 20 GB free
+there. It needs Docker running, `jq`, `timeout` and `curl` on the PATH, and
+checks for them before it starts; every Docker call it makes has a time limit.
+Have every push run it first, once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
+
+The hook (`.githooks/pre-push`) runs `bin/ci` and blocks the push when it
+fails. `bin/ci` checks the checkout, so the hook refuses a push of any commit
+but `HEAD`, or from a tree with changes or untracked files; a push that only
+deletes refs skips it.
+`TestBinCIRunsTheCIWorkflow` fails when `ci.yml` has a step, tool version or
+flag that `bin/ci` hasn't, so a step added to the workflow (shellcheck in #78,
+golangci-lint in #79) has to be added to `bin/ci` too, under the same name.
+
 ## Performance
 
 `bin/bench` measures the gantry in the checkout: it builds `bench/feed` (the
