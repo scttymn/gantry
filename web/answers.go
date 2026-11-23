@@ -106,6 +106,11 @@ func (rt *Router) staticPage(w http.ResponseWriter, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if rt.Public != nil {
 		if page, ok := rt.Public.Public(fmt.Sprintf("%d.html", status)); ok {
+			// Set, not deleted: a cached route's answer is recorded with
+			// headers of its own, laid over the app's when it's served.
+			if rt.Security.CSP != "" {
+				w.Header().Set(rt.Security.cspHeader(), staticPagePolicy)
+			}
 			w.WriteHeader(status)
 			w.Write(page)
 			return

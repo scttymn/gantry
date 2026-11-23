@@ -3,12 +3,15 @@ package images
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func newServer(t *testing.T, quality int) (*Server, string) {
@@ -118,6 +121,40 @@ func TestServer(t *testing.T) {
 			t.Errorf("%d", rec.Code)
 		}
 	})
+}
+
+// A large original to a slow client (a phone) isn't cut off by the server's
+// WriteTimeout while it's still moving.
+func TestServerSlowClient(t *testing.T) {
+	big := filepath.Join(t.TempDir(), "big.pdf")
+	if err := os.WriteFile(big, make([]byte, 32<<20), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{Pipeline: &Pipeline{Dir: t.TempDir()}, Prefix: "/files/",
+		Find: func(context.Context, string) (Original, bool, error) {
+			return Original{Path: big, ContentType: "application/pdf"}, true, nil
+		}}
+	srv := httptest.NewUnstartedServer(s)
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+	res, err := http.Get(srv.URL + "/files/k/original")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var n int64
+	for {
+		m, err := io.CopyN(io.Discard, res.Body, 2<<20)
+		n += m
+		if err != nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if n != 32<<20 {
+		t.Errorf("%d bytes of %d", n, 32<<20)
+	}
 }
 
 func TestImg(t *testing.T) {

@@ -55,6 +55,7 @@ an older CLI may not have `check`.
 | Sign-in and API access | Existing auth wiring, or the `auth` / `api-tokens` recipes when missing; `auth --email-code [--signup]` for email codes | Framework password/session handling and server-side access checks |
 | Email delivery | App-wide `App.Mail`, configured once with `mail.Config`; development inbox at `/dev/inbox` | Shared delivery, safe development capture and reusable testing |
 | Background work and live updates | `jobs` and `live`, wired through the app | Existing queues, schedules and authorization for streams |
+| Proxies, timeouts and security headers | `TRUSTED_PROXIES`, the generated `http.Server` timeouts, and `rt.Security` (HSTS, `web.ContentSecurityPolicy`); see [security](security.md) | Scripts and styles from the app's files, not inline, so the policy can be enforced |
 
 For email-code login, use the [shared Auth implementation](auth.md), configure a
 shared [app mail service](mail.md) and an external code secret, and make

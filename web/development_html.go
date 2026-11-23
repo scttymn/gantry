@@ -11,7 +11,23 @@ import (
 )
 
 const developmentBufferLimit = 2 << 20
-const developmentPageOpen = `<div data-gantry-development-layout style="position:fixed;inset:0;display:flex;flex-direction:column;background:inherit"><div data-gantry-page style="flex:1;min-height:0;overflow:auto;position:relative;contain:layout">`
+const developmentPageOpen = `<div data-gantry-development-layout><div data-gantry-page>`
+
+// The panel's style, and the page's around it, is a stylesheet from the app
+// itself, not style attributes, so the app's Content-Security-Policy lets it
+// in. The panel links it.
+const (
+	developmentStyles     = "/_gantry/development.css"
+	developmentStylesheet = `<link rel="stylesheet" href="` + developmentStyles + `">`
+	developmentCSS        = `[data-gantry-development-layout]{position:fixed;inset:0;display:flex;flex-direction:column;background:inherit}
+[data-gantry-page]{flex:1;min-height:0;overflow:auto;position:relative;contain:layout}
+[data-gantry-development-warnings]{flex:none;width:100%;box-sizing:border-box;background:#fff8e6;color:#332600;border-top:1px solid #bb8500;font:14px/1.5 system-ui,sans-serif;text-align:left}
+[data-gantry-development-warnings] summary{cursor:pointer;padding:12px 16px;font-weight:700}
+[data-gantry-development-warnings] details>div{padding:0 16px 12px;max-height:40vh;overflow:auto}
+[data-gantry-development-warnings] ul{padding-left:20px}
+[data-gantry-development-warnings] li{margin:12px 0;overflow-wrap:anywhere}
+`
+)
 
 // Buffer only ordinary, bounded HTML responses, for inject to change.
 // Streams, upgraded connections, ranges and already encoded content keep
