@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -53,6 +54,7 @@ const usage = `usage:
   feed db migrate|rollback [N]|status|seed|reset|console
   feed tasks                  the app's own tasks (app/tasks.go)
   feed task NAME [ARGS...]    run one
+  feed routes [--json]        the app's routes (app/routes.go), or as JSON
 `
 
 // command runs the command args name, and is its exit code.
@@ -92,6 +94,9 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 		return 0
 	case "task":
 		err = task(ctx, cfg, logger, args, out)
+	case "routes":
+		// Its log on errOut: out is the list, which may be JSON.
+		err = routes(ctx, cfg, slog.New(slog.NewTextHandler(errOut, nil)), args, out)
 	default:
 		fmt.Fprint(errOut, usage)
 		return 2
@@ -213,6 +218,27 @@ func runJobs(ctx context.Context, cfg config.Config, logger *slog.Logger) error 
 	defer closeDB()
 	logger.Info("running jobs", "env", cfg.Env)
 	return a.Jobs.Run(ctx)
+}
+
+// routes prints the app's routes, as its router has them, one a line, or
+// with --json as a JSON array of web.Route: what `gantry routes` shows.
+func routes(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
+	if len(args) > 1 || len(args) == 1 && args[0] != "--json" {
+		return errors.New("usage: feed routes [--json]")
+	}
+	a, closeDB, err := build(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+	list := a.Router().Routes()
+	if len(args) == 1 {
+		return json.NewEncoder(out).Encode(list)
+	}
+	for _, r := range list {
+		fmt.Fprintln(out, r)
+	}
+	return nil
 }
 
 // task runs one of app.Tasks, on the migrated database.

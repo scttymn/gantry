@@ -1,10 +1,14 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -62,6 +66,14 @@ func TestBenchFeedIsANewApp(t *testing.T) {
 		rel = filepath.ToSlash(rel)
 		seen[rel] = true
 		if _, ok := benchFeedOwn[rel]; ok {
+			if strings.HasSuffix(rel, ".go") {
+				have := declared(t, filepath.Join(bench, rel))
+				for _, name := range declared(t, path) {
+					if !slices.Contains(have, name) {
+						t.Errorf("bench/feed/%s is its own, and lacks gantry new's %s: add it", rel, name)
+					}
+				}
+			}
 			return nil
 		}
 		want, err := os.ReadFile(path)
@@ -97,4 +109,54 @@ func TestBenchFeedIsANewApp(t *testing.T) {
 			t.Errorf("gantry new doesn't write %s any more: take it out of benchFeedOwn", rel)
 		}
 	}
+}
+
+// declared is what the Go file at path has that a copy of its own in
+// bench/feed must keep: each top-level name (a method as Type.Method), and
+// each string a switch's case matches, as a command's name is.
+func declared(t *testing.T, path string) []string {
+	t.Helper()
+	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, d := range f.Decls {
+		switch d := d.(type) {
+		case *ast.FuncDecl:
+			name := d.Name.Name
+			if d.Recv != nil {
+				recv := d.Recv.List[0].Type
+				if star, ok := recv.(*ast.StarExpr); ok {
+					recv = star.X
+				}
+				if id, ok := recv.(*ast.Ident); ok {
+					name = id.Name + "." + name
+				}
+			}
+			names = append(names, name)
+		case *ast.GenDecl:
+			for _, s := range d.Specs {
+				switch s := s.(type) {
+				case *ast.TypeSpec:
+					names = append(names, s.Name.Name)
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						names = append(names, n.Name)
+					}
+				}
+			}
+		}
+	}
+	ast.Inspect(f, func(n ast.Node) bool {
+		if c, ok := n.(*ast.CaseClause); ok {
+			for _, e := range c.List {
+				if lit, ok := e.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+					names = append(names, "case "+lit.Value)
+				}
+			}
+		}
+		return true
+	})
+	return names
 }
