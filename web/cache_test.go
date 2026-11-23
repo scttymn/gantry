@@ -68,6 +68,13 @@ func newCached(t *testing.T) *cached {
 		return nil
 	})
 	rt.Cached("POST /page", page)
+	membersOnly := func(w http.ResponseWriter, r *http.Request) error {
+		if r.Header.Get("X-Member") == "" {
+			http.Redirect(w, r, "/login", http.StatusFound)
+		}
+		return nil
+	}
+	rt.Scope("/members", Pipeline{membersOnly}, func(s *Scope) { s.Cached("GET /page", page) })
 	c.h = rt.Handler()
 	return c
 }
@@ -114,6 +121,20 @@ func TestPageCache(t *testing.T) {
 		a, b := c.get("/page?week=1"), c.get("/page?week=2")
 		if a.Body.String() == b.Body.String() || c.renders.Load() != 2 {
 			t.Fatal("two queries shared a page")
+		}
+	})
+	t.Run("a scope's filters run before the cache, on every request", func(t *testing.T) {
+		c := newCached(t)
+		member := c.get("/members/page", "X-Member", "ada")
+		if member.Code != 200 || !strings.Contains(member.Body.String(), "render 1") {
+			t.Fatalf("member: %d %q", member.Code, member.Body)
+		}
+		if again := c.get("/members/page", "X-Member", "grace"); again.Body.String() != member.Body.String() || c.renders.Load() != 1 {
+			t.Fatalf("a member after the first wasn't served the kept page: renders %d", c.renders.Load())
+		}
+		anonymous := c.get("/members/page")
+		if anonymous.Code != http.StatusFound || anonymous.Header().Get("Location") != "/login" || strings.Contains(anonymous.Body.String(), "render") {
+			t.Fatalf("anonymous: %d %v %q", anonymous.Code, anonymous.Header(), anonymous.Body)
 		}
 	})
 	t.Run("an error page is never kept", func(t *testing.T) {

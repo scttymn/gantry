@@ -82,7 +82,9 @@ func (c *PageCache) maxEntries() int {
 }
 
 // Handler serves next's GETs and HEADs from the cache, keyed by path and
-// query. Anything else goes straight to next.
+// query. Anything else goes straight to next. A filter that decides who may
+// see a page goes outside it, as Cached puts a scope's: inside, a kept page
+// is served without it.
 func (c *PageCache) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {

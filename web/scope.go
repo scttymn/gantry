@@ -87,13 +87,15 @@ func (s *Scope) Mount(pattern string, h http.Handler) {
 }
 
 // Cached routes pattern to h through the router's page cache (rt.Cache),
-// or straight to h when the router has none.
+// or straight to h when the router has none. The scope's filters run first,
+// on every request, a cached page's too: a page behind auth.Required is
+// still only for who it lets in.
 func (s *Scope) Cached(pattern string, h Handler) {
 	if s.rt.Cache == nil {
 		s.Handle(pattern, h)
 		return
 	}
-	s.mux.Handle(s.pattern(pattern), s.rt.Cache.Handler(s.rt.Wrap(s.filters.then(h))))
+	s.Mount(pattern, s.rt.Cache.Handler(s.rt.Wrap(h)))
 }
 
 // pattern is a route's pattern under the scope's prefix: "GET /posts" in

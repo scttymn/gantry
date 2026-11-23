@@ -76,10 +76,12 @@ that purpose if Strict flags it.
 
 Page caching is an explicit application decision. Do not wrap account pages,
 personalized responses or an entire authenticated router in a public page cache.
-Its key is the path and query, not the user's identity. Use `db.DB.Version` for
-database-driven invalidation where appropriate, and account for other data
-sources and time-dependent content. A clean Strict scan does not check this for
-you yet.
+Its key is the path and query, not the user's identity. `Cached` runs its
+scope's filters before the cache on every request, so `auth.Required` still
+turns away whoever it would, but everyone it lets in shares one copy of the
+page. Use `db.DB.Version` for database-driven invalidation where appropriate,
+and account for other data sources and time-dependent content. A clean Strict
+scan does not check this for you yet.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user
