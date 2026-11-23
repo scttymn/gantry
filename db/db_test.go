@@ -10,6 +10,8 @@ import (
 	"testing"
 	"testing/fstest"
 	"time"
+
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 func openTemp(t *testing.T) *DB {
@@ -225,10 +227,7 @@ func TestTimes(t *testing.T) {
 }
 
 func TestPostgres(t *testing.T) {
-	url := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-	}
+	url := testenv.Postgres(t)
 	ctx := context.Background()
 	d, err := Open(ctx, url)
 	if err != nil {
