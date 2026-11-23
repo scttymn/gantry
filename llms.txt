@@ -7,6 +7,7 @@
 - [README](https://github.com/scttymn/gantry/blob/main/README.md): create an app, run it and find the framework packages
 - [Development checks](https://github.com/scttymn/gantry/blob/main/docs/development.md): current checks and fixes, automatic browser panel, exceptions, timing and an editor example
 - [Gantry Strict](https://github.com/scttymn/gantry/blob/main/docs/strict.md): purpose, rule registry, extensions and coverage limits
+- [Security](https://github.com/scttymn/gantry/blob/main/docs/security.md): trusted proxies (`TRUSTED_PROXIES`), server timeouts, HSTS and the Content-Security-Policy, with upgrade steps
 
 ## Working on Gantry
 - [Contributing](https://github.com/scttymn/gantry/blob/main/CONTRIBUTING.md): framework tests, generator fixtures and adoption checks for new features

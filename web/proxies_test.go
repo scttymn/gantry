@@ -57,6 +57,12 @@ func TestProxies(t *testing.T) {
 			`ip=203.0.113.9 scheme=https host=shop.example.com xff="1.2.3.4, 203.0.113.9, 10.0.0.9" proto="https" xfh="Shop.Example.com:443"`},
 		{"a private proxy, no header", "172.18.0.2", nil,
 			`ip=172.18.0.2 scheme=http host=app.example.com xff="" proto="" xfh=""`},
+		// A proxy that appends: the visitor's own values come first, so only
+		// the last (the proxy's) is believed.
+		{"a visitor's scheme and host, appended to", "10.0.0.2", http.Header{"X-Forwarded-Proto": {"https, http"}, "X-Forwarded-Host": {"admin.example.com, shop.example.com"}},
+			`ip=10.0.0.2 scheme=http host=shop.example.com xff="" proto="https, http" xfh="admin.example.com, shop.example.com"`},
+		{"a visitor's scheme and host, a line of their own", "10.0.0.2", http.Header{"X-Forwarded-Proto": {"https", "http"}, "X-Forwarded-Host": {"admin.example.com", "shop.example.com"}},
+			`ip=10.0.0.2 scheme=http host=shop.example.com xff="" proto="https" xfh="admin.example.com"`},
 	} {
 		if got := from(h, tc.peer, tc.header); got != tc.want {
 			t.Errorf("%s:\n got %s\nwant %s", tc.name, got, tc.want)
@@ -166,6 +172,42 @@ func TestProxiesByName(t *testing.T) {
 	}
 	if lookups != 3 {
 		t.Errorf("%d lookups, want 3", lookups)
+	}
+}
+
+// The proxies an app lists in its environment (TRUSTED_PROXIES).
+func TestParseProxies(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", "[] default"},
+		{"  ", "[] default"},
+		{"none", "[] none"},
+		{"10.0.1.5, 172.18.0.0/16 2001:db8::/32", "[10.0.1.5/32 172.18.0.0/16 2001:db8::/32] listed"},
+		{"10.0.1.5/8", "[10.0.0.0/8] listed"},
+		{"::ffff:10.0.1.5", "[10.0.1.5/32] listed"},
+	} {
+		got, err := ParseProxies(tc.in)
+		kind := "listed"
+		if got == nil {
+			kind = "default"
+		} else if len(got) == 0 {
+			kind = "none"
+		}
+		if err != nil || fmt.Sprint(got)+" "+kind != tc.want {
+			t.Errorf("ParseProxies(%q) = %v %s, %v; want %s", tc.in, got, kind, err, tc.want)
+		}
+	}
+	if _, err := ParseProxies("10.0.0.0/8, cloudflared"); err == nil {
+		t.Error("a name parsed as an address")
+	}
+
+	// "none": nothing is a proxy, so a forged X-Forwarded-For from a private
+	// address (a container beside the app) is ignored, as from anywhere.
+	none, _ := ParseProxies("none")
+	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Proxies = Proxies{Trusted: none}
+	rt.Handle("GET /who", seen)
+	if got := from(rt.Handler(), "172.18.0.1", http.Header{"X-Forwarded-For": {"198.51.100.20"}, "X-Forwarded-Proto": {"https"}}); got != `ip=172.18.0.1 scheme=http host=app.example.com xff="" proto="" xfh=""` {
+		t.Errorf("trusted with none: %s", got)
 	}
 }
 

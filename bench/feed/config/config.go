@@ -17,6 +17,11 @@ type Config struct {
 	DatabaseURL string      // DATABASE_URL; default sqlite://DATA_DIR/feed.sqlite3
 	SecretKey   string      // SECRET_KEY: signs cookies and forms; blank: a key kept in the database
 	JWTSecret   string      // JWT_SECRET: what the API's bearer tokens are signed with (HS256)
+	// TrustedProxies are the proxies in front of the app, whose word on a
+	// visitor's address and scheme it takes (TRUSTED_PROXIES: addresses and
+	// CIDR ranges, "10.0.1.5, 172.18.0.0/16", or "none" with no proxy);
+	// blank: anything on a private network, web.PrivateNetworks.
+	TrustedProxies string
 	// JobsInServer runs the background jobs in the server's process (Rails 8's
 	// Solid Queue in Puma). JOBS_IN_SERVER=false leaves them to a process of
 	// their own, `feed jobs`.
@@ -36,13 +41,14 @@ func Load(getenv func(string) string) Config {
 		return fallback
 	}
 	c := Config{
-		Mail:         mail.LoadConfig(getenv),
-		Env:          or("GANTRY_ENV", "production"),
-		Addr:         or("ADDR", ":8080"),
-		DataDir:      or("DATA_DIR", "/data"),
-		SecretKey:    getenv("SECRET_KEY"),
-		JWTSecret:    or("JWT_SECRET", "twelve-dollar-challenge"),
-		JobsInServer: getenv("JOBS_IN_SERVER") != "false",
+		Mail:           mail.LoadConfig(getenv),
+		Env:            or("GANTRY_ENV", "production"),
+		Addr:           or("ADDR", ":8080"),
+		DataDir:        or("DATA_DIR", "/data"),
+		SecretKey:      getenv("SECRET_KEY"),
+		JWTSecret:      or("JWT_SECRET", "twelve-dollar-challenge"),
+		TrustedProxies: getenv("TRUSTED_PROXIES"),
+		JobsInServer:   getenv("JOBS_IN_SERVER") != "false",
 	}
 	c.DatabaseURL = or("DATABASE_URL", "sqlite://"+c.DataDir+"/feed.sqlite3")
 	return c

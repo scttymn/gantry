@@ -95,6 +95,9 @@ type Router struct {
 	// Proxies is which peers are trusted proxies, and the header they name
 	// the visitor's address in; the zero value trusts private networks.
 	Proxies Proxies
+	// Security is HSTS and the Content-Security-Policy, sent with the
+	// headers every response gets; the zero value sends neither.
+	Security Security
 	// Hosts are the hosts the app answers to (Rails' config.hosts): any
 	// when empty, else a request for another is refused, 403. "example.com"
 	// is that host, ".example.com" it and its subdomains. /up answers any.
@@ -173,8 +176,8 @@ func WantsHTML(r *http.Request) bool {
 //     Development (source warnings), or Timing alone
 //   - Recover: a panic is the 500 page, logged
 //   - Current, where the request comes from (Proxies), and Hosts
-//   - Headers and cross-origin protection: a form posted from another site
-//     is refused with 422, except at a CrossOriginCallback
+//   - Headers, with Security's, and cross-origin protection: a form posted
+//     from another site is refused with 422, except at a CrossOriginCallback
 //   - MethodOverride: HTML forms can PUT, PATCH and DELETE, with bodies capped
 func (rt *Router) Handler() http.Handler {
 	memory.say(rt.Log)
@@ -182,7 +185,7 @@ func (rt *Router) Handler() http.Handler {
 	var h http.Handler = http.HandlerFunc(rt.route)
 	h = MethodOverride(h, DefaultBodyLimits)
 	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) }, rt.crossOriginCallbacks...)
-	h = Headers(h)
+	h = Headers(h, rt.Security)
 	h = rt.arrive(h)
 	h = withCurrent(h)
 	h = rt.Recover(h)

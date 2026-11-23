@@ -106,6 +106,10 @@ func (rt *Router) staticPage(w http.ResponseWriter, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if rt.Public != nil {
 		if page, ok := rt.Public.Public(fmt.Sprintf("%d.html", status)); ok {
+			// Its style is inline, with no hash in the app's policy, and
+			// it's a plain file: nothing in it to inject.
+			w.Header().Del("Content-Security-Policy")
+			w.Header().Del("Content-Security-Policy-Report-Only")
 			w.WriteHeader(status)
 			w.Write(page)
 			return

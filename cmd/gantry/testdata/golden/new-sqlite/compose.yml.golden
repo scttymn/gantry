@@ -18,6 +18,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
     volumes:
       - .:/app                     # the code, rebuilt on change
       - data:/data                 # the SQLite database and uploads

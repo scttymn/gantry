@@ -16,6 +16,7 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - [Social login](docs/social-login.md): Apple/Google identities, verified account linking and shared sessions.
 - [Mail](docs/mail.md): app-wide delivery configuration and a persistent development inbox.
 - [Authentication](docs/auth.md): passwords, emailed codes, signup and delivery.
+- [Security](docs/security.md): trusted proxies, server timeouts, HSTS and the Content-Security-Policy.
 - [Contributing](CONTRIBUTING.md): working on Gantry itself.
 - [llms.txt](llms.txt): the documentation index for AI tools.
 

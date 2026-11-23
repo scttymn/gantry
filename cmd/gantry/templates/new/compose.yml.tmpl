@@ -23,6 +23,7 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
 {{- if .Postgres}}
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/{{.Name}}?sslmode=disable
       # The server gantry test gives each test a database of its own on.

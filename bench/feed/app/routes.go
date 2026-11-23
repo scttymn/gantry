@@ -34,6 +34,11 @@ type App struct {
 	// a.Live.Broadcast(ctx, "post:"+id, turbo.Replace(...)), or
 	// a.Live.Refresh("post:"+id, turbo.RequestID(r)).
 	Live *live.Hub
+	// Proxies are the proxies in front of the app (TRUSTED_PROXIES), whose
+	// word on a visitor's address and scheme it takes.
+	Proxies web.Proxies
+	// Production has browsers keep to https for the site (HSTS).
+	Production bool
 
 	Secret  []byte    // signs the API's bearer tokens
 	Started time.Time // for /health's uptime
@@ -46,6 +51,20 @@ func (a *App) Handler() http.Handler {
 		web.JSON(w, status, map[string]string{"error": strings.ToLower(http.StatusText(status))})
 	})
 	rt.Public = assets.All
+	rt.Proxies = a.Proxies
+	// The Content-Security-Policy lets in scripts and styles from the app
+	// itself, and inline only its own (by hash), so one slipped into a page
+	// doesn't run. It's reported in the browser's console, not enforced:
+	// once pages report nothing, drop CSPReportOnly to enforce it.
+	rt.Security = web.Security{
+		CSP:           web.ContentSecurityPolicy(assets.ImportMap.Hashes(), assets.Styles.Hash()),
+		CSPReportOnly: true,
+	}
+	if a.Production {
+		// Once a browser has seen the site over https, it keeps to https for
+		// a year.
+		rt.Security.HSTS = 365 * 24 * time.Hour
+	}
 
 	homePage := home.Controller{DB: a.DB}
 	rt.Handle("GET /{$}", homePage.Show)

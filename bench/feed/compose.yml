@@ -16,6 +16,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
     volumes:
       - .:/app                     # the code, rebuilt on change
       # gantry beside it, for go.work (ignored by git): changes to both at once.
