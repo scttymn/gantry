@@ -18,6 +18,12 @@ root). The tags and C flags are an app's Dockerfile's: without the tags a cgo
 build has the translated SQLite, without the flags the C one doesn't start, and
 `TestSQLiteCCompileOptions` fails on any other difference between the two.
 
+The versions gantry and its apps build with (Go, templ, the toolchain's and
+Postgres's images, SQLite's C flags and build tags) are in
+[`internal/pins`](internal/pins/pins.go), and `gantry new` writes them into an
+app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
+page) are held to them by its test, which says where to change one.
+
 Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
 passes in (`internal/testenv`), e.g.
 `GANTRY_TEST_POSTGRES_URL=postgres://postgres:pw@host.docker.internal:5432/postgres?sslmode=disable bin/go go test ./...`.
@@ -57,6 +63,9 @@ side by side and says whether a request costs more, less or the same; a pull
 request's `bench` job runs that against its base, and fails on a regression.
 `bin/bench -quick` is a look, not a measurement. The app and the tools are modules of their own, so their tests are
 `GANTRY_DIR=bench bin/go go test ./...` and `GANTRY_DIR=bench/feed bin/go go test ./...`.
+`bench/feed` is held to what `gantry new` writes, apart from the files the
+challenge needs of its own (`TestBenchFeedIsANewApp`): `go test ./cmd/gantry
+-update` brings it along with a change to the generator.
 The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plans/performance.md).
 
 ## Features and Gantry Strict

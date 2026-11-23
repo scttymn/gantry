@@ -38,7 +38,7 @@ type command struct {
 }
 
 var commands = []command{
-	{name: "check", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _ := checkFlags(); return fs },
+	{name: "check", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _, _ := checkFlags(); return fs },
 		run: func(root string, args []string, out, _ io.Writer) error { return developmentCheck(root, args, out) }},
 	{name: "new", args: "NAME", flags: func() *flag.FlagSet { return new(newOptions).flags("NAME") }, run: newApp},
 	{name: "g resource", args: "[NAMESPACE/]TABLE FIELD:TYPE[:required]...", about: "a table, its model and its pages",
@@ -60,6 +60,8 @@ var commands = []command{
 	{name: "db", args: "migrate|rollback [N]|status|seed|reset|console", about: "in the app's container, or on this machine", flags: localFlag, run: appCommand("db")},
 	{name: "task", args: "NAME [ARGS...]", about: "the app's tasks, in its container", flags: localFlag, run: appCommand("task")},
 	{name: "tasks", about: "the tasks there are", flags: localFlag, run: appCommand("tasks")},
+	{name: "routes", about: "the app's routes, as its router has them", flags: func() *flag.FlagSet { fs, _, _ := routesFlags(); return fs }, run: routes},
+	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: localFlag, run: verify},
 	{name: "dev", houston: true, run: func(root string, args []string, _, errOut io.Writer) error {
 		// Advice must never prevent the development server from starting.
 		if err := developmentCheck(root, nil, errOut); err != nil {

@@ -57,6 +57,40 @@ func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
 	}
 }
 
+// The panel keeps working under the app's Content-Security-Policy, which
+// allows styles from the app itself and by hash: its style is a stylesheet
+// the middleware serves, not style attributes.
+func TestDevelopmentPanelUnderCSP(t *testing.T) {
+	t.Chdir(t.TempDir())
+	if err := os.WriteFile("page.html", []byte(`<script src="/app.js"></script>`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GANTRY_ENV", "development")
+	t.Setenv("GANTRY_DEV_RELOAD", "false")
+	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Security = Security{CSP: ContentSecurityPolicy("", "")}
+	rt.Handle("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Content-Type", "text/html")
+		_, err := io.WriteString(w, `<!doctype html><html><head></head><body><main>Page</main></body></html>`)
+		return err
+	})
+	h := rt.Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/", nil))
+	page := rec.Body.String()
+	if !strings.Contains(page, "asset-url") || strings.Contains(page, "style=") || strings.Contains(page, "<style") {
+		t.Fatalf("a panel that needs inline style: %s", page)
+	}
+	if strings.Count(page, `<link rel="stylesheet" href="/_gantry/development.css">`) != 1 {
+		t.Fatalf("not one stylesheet: %s", page)
+	}
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest("GET", "/_gantry/development.css", nil))
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/css; charset=utf-8" || !strings.Contains(rec.Body.String(), "[data-gantry-development-layout]") {
+		t.Fatalf("the stylesheet: %d %v %s", rec.Code, rec.Header(), rec.Body)
+	}
+}
+
 func warningContext() context.Context {
 	return context.WithValue(context.Background(), developmentWarningsKey{}, []developmentWarning{{File: "page.html", Line: 1, Rule: "asset-url", Severity: "error", Message: "Use assets.Path"}})
 }

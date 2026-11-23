@@ -132,6 +132,7 @@ func TestInboxHTTP(t *testing.T) {
 			r.Header.Set("Sec-Fetch-Site", site)
 		}
 		w := httptest.NewRecorder()
+		w.Header().Set("Content-Security-Policy-Report-Only", "default-src 'self'") // the app's, from web.Headers
 		mux.ServeHTTP(w, r)
 		return w
 	}
@@ -142,6 +143,13 @@ func TestInboxHTTP(t *testing.T) {
 	}
 	if w.Header().Get("Cache-Control") != "no-store" || w.Header().Get("Content-Security-Policy") == "" {
 		t.Fatal("missing privacy headers")
+	}
+	if w.Header().Get("Content-Security-Policy-Report-Only") != "" {
+		t.Fatal("the app's policy reports the inbox's own style")
+	}
+	// The development panel's stylesheet (/_gantry/development.css) is the app's own.
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("the development panel's stylesheet is blocked: %s", csp)
 	}
 	if got := get("/dev/inbox?q=welcome%3A").Body.String(); !strings.Contains(strings.ToLower(got), "q=welcome%3a") {
 		t.Fatal("search query was double-escaped in navigation links")

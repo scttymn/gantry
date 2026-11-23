@@ -19,6 +19,7 @@ services:
       SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (openssl rand -hex 32, a Houston secret); blank in development
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/shop?sslmode=disable
       # The server gantry test gives each test a database of its own on.
       TEST_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/postgres?sslmode=disable
@@ -28,7 +29,7 @@ services:
       - data:/data                 # uploads
 
   db:
-    image: postgres:17
+    image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: shop

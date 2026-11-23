@@ -43,7 +43,11 @@ type Options struct {
 	KeepAlive time.Duration // how often an idle stream gets a comment, so proxies keep it open: 30 s
 	Debounce  time.Duration // refreshes to a stream this close together are one: 0.5 s (turbo-rails')
 	Buffer    int           // messages a subscriber may fall behind before it's dropped: 64
-	Log       *slog.Logger
+	// WriteTimeout is how long one write to a stream may wait on its client
+	// before the client is taken for gone and the stream ends: 10 s. It
+	// stands in for the server's own, which would end every stream.
+	WriteTimeout time.Duration
+	Log          *slog.Logger
 }
 
 // Hub is the app's streams and who's listening.
@@ -83,6 +87,9 @@ func New(signer sign.Signer, o Options) *Hub {
 	}
 	if o.Buffer == 0 {
 		o.Buffer = 64
+	}
+	if o.WriteTimeout == 0 {
+		o.WriteTimeout = 10 * time.Second
 	}
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
@@ -125,13 +132,25 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer h.unsubscribe(sub)
 
+	// A stream outlives the server's write timeout, so each write has a
+	// deadline of its own instead, and waiting between them has none.
 	rc := http.NewResponseController(w)
-	rc.SetWriteDeadline(time.Time{}) // a stream outlives the server's write timeout
+	write := func(out string) error {
+		rc.SetWriteDeadline(time.Now().Add(h.o.WriteTimeout))
+		if _, err := io.WriteString(w, out); err != nil {
+			return err
+		}
+		if err := rc.Flush(); err != nil {
+			return err
+		}
+		rc.SetWriteDeadline(time.Time{})
+		return nil
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no") // nginx: pass it on as it comes
 	w.WriteHeader(http.StatusOK)
-	if err := rc.Flush(); err != nil {
+	if err := write(""); err != nil {
 		return err
 	}
 	keepAlive := time.NewTicker(h.o.KeepAlive)
@@ -148,11 +167,8 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 		case <-r.Context().Done():
 			return nil
 		}
-		if _, err := io.WriteString(w, out); err != nil {
-			return nil // gone
-		}
-		if err := rc.Flush(); err != nil {
-			return nil
+		if err := write(out); err != nil {
+			return nil // gone, or stopped reading
 		}
 	}
 }

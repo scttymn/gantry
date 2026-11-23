@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgres:17
+        image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
         env:
           POSTGRES_PASSWORD: gantry-tests
         ports:
@@ -91,17 +91,14 @@ jobs:
           bin/go sh -c 'export CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4" &&
             go vet ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...'
       - name: govulncheck
-        # Both builds: the CLI's (bin/go's, without cgo) and an app's.
-        # GO-2026-6866 and GO-2026-6860, in golang.org/x/net v0.59.0, go with
-        # raising it (#18): until then they're listed, and any other
+        # Both builds: the CLI's (bin/go's, without cgo) and an app's. Any
         # vulnerability gantry's code reaches fails the job.
         run: |
           bin/go go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json ./... > "$RUNNER_TEMP/vulns.json"
           bin/go sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 ./...' >> "$RUNNER_TEMP/vulns.json"
           reached=$(jq -rs '[.[].finding | select(.trace[0].function) | .osv] | unique[]' "$RUNNER_TEMP/vulns.json")
           echo "reached: ${reached:-none}"
-          unknown=$(printf '%s\n' "$reached" | grep -vx -e GO-2026-6866 -e GO-2026-6860 || true)
-          [ -z "$unknown" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $unknown"; exit 1; }
+          [ -z "$reached" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $reached"; exit 1; }
       - name: The bench modules' tests
         run: |
           GANTRY_DIR=bench bin/go go test ./...
@@ -128,3 +125,11 @@ jobs:
           (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
           grep -qx "	github.com/scttymn/gantry $VERSION" "$probe/probe/go.mod" \
             || { echo "a new app's go.mod doesn't require $VERSION:"; cat "$probe/probe/go.mod"; exit 1; }
+      - name: The binary pins its Houston release's digests
+        # As the release checks them: a Houston bump without its digests
+        # (houstonSHA256SUMS) fails here, not once the tag is pushed.
+        run: |
+          houston=$(dist/gantry-linux-amd64 houston-release)
+          published=$(curl -fsSL --proto =https --retry 3 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+          pinned=$(dist/gantry-linux-amd64 houston-release --sha256)
+          [ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }

@@ -10,11 +10,19 @@ package layout
 import "github.com/a-h/templ"
 import templruntime "github.com/a-h/templ/runtime"
 
-import "feed/assets"
+import (
+	"github.com/scttymn/gantry/meta"
 
-// Page is what the layout needs from a page.
+	"feed/assets"
+)
+
+// Page is what the layout needs from a page: its title, and what its link
+// preview and search result say.
 type Page struct {
-	Title string
+	Title       string
+	Description string
+	Path        string // the page's address on the site: "/terms"
+	Image       string // its own preview picture; the site's when ""
 }
 
 func Layout(p Page) templ.Component {
@@ -45,13 +53,17 @@ func Layout(p Page) templ.Component {
 		var templ_7745c5c3_Var2 string
 		templ_7745c5c3_Var2, templ_7745c5c3_Err = templ.JoinStringErrs(p.Title)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/shared/layout/layout.templ`, Line: 16, Col: 19}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `app/shared/layout/layout.templ`, Line: 24, Col: 19}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var2))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</title><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = meta.Tags(Site, meta.Page{Title: p.Title, Description: p.Description, Path: p.Path, Image: p.Image}).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

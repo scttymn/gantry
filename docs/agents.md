@@ -28,7 +28,13 @@ From an existing app's root:
 bin/gantry --help
 bin/gantry check --rules
 bin/gantry check
+bin/gantry routes --json
 ```
+
+`routes` is the app's routes from its own router, with each one's scope,
+filters and whether it's cached. Read it rather than inferring them from
+`app/routes.go`. `test/features.yaml` says which feature each route belongs to
+and who it's for (see [the feature map](development.md#the-feature-map)).
 
 Use the app's `bin/gantry`, which selects the CLI matching its Gantry dependency
 and the pinned Houston CLI. Cloning a generated app requires Docker, a shell
@@ -55,6 +61,7 @@ an older CLI may not have `check`.
 | Sign-in and API access | Existing auth wiring, or the `auth` / `api-tokens` recipes when missing; `auth --email-code [--signup]` for email codes | Framework password/session handling and server-side access checks |
 | Email delivery | App-wide `App.Mail`, configured once with `mail.Config`; development inbox at `/dev/inbox` | Shared delivery, safe development capture and reusable testing |
 | Background work and live updates | `jobs` and `live`, wired through the app | Existing queues, schedules and authorization for streams |
+| Proxies, timeouts and security headers | `TRUSTED_PROXIES`, the generated `http.Server` timeouts, and `rt.Security` (HSTS, `web.ContentSecurityPolicy`); see [security](security.md) | Scripts and styles from the app's files, not inline, so the policy can be enforced |
 
 For email-code login, use the [shared Auth implementation](auth.md), configure a
 shared [app mail service](mail.md) and an external code secret, and make
@@ -178,9 +185,15 @@ Before handing over or deploying the change:
 ```sh
 bin/gantry check --strict
 bin/gantry test
+bin/gantry verify
 ```
 
 `check --strict` and the test suite are separate checks; run both in CI as well.
+`check --json` gives the findings to a tool with stable field names. A route
+you add needs a feature in `test/features.yaml`, or the tests fail. `verify`
+visits every feature's pages as each role the app can sign in as. It checks
+statuses and selectors, the page cache's headers, and that no signed-in user's
+cached page is shown to anyone else.
 Report remaining advice and justified exceptions rather than equating a zero
 exit status with no findings. Use the app's existing tests and Gantry's `testkit`
 helpers where relevant: `Links`/`Crawl` for page assets and navigation,
