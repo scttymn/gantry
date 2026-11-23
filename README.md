@@ -1,4 +1,3 @@
-| `meta` | A page's description, canonical link, and Open Graph and Twitter card tags, so a shared link shows a proper preview. New apps' layouts draw it; the site's address is `SITE_URL`, and a 1200×630 picture in `assets/images` is its default image. |
 # gantry
 
 An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from maintained libraries.
@@ -30,7 +29,7 @@ bin/gantry g migration create_posts title:string:required body:text
 bin/gantry db migrate          # db rollback, status, seed, reset, console: in the app's container
 bin/gantry test                # the app's tests, in a throwaway copy
 ```
-`bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release that gantry names, for this machine, into `.gantry/bin`. An app tracks one version, gantry's: bumping it in `go.mod` (as Dependabot does) upgrades Houston too, and gantry keeps `bin/gantry` itself current (commit the update it notes). Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
+`bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release that gantry names, for this machine, into `.gantry/bin`, over https. gantry is checked against its release's `SHA256SUMS` and, with `gh` 2.70 or later installed, its build provenance (`gh attestation verify`: gantry's release workflow built that binary at that tag); Houston is checked against the digests that gantry release pins for it. A download that fails either check is refused. An app tracks one version, gantry's: bumping it in `go.mod` (as Dependabot does) upgrades Houston too, and gantry keeps `bin/gantry` itself current (commit the update it notes). Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
 
 `bin/gantry dev` first prints development warnings with file and line numbers, then starts Houston. Open pages reload themselves when you save. `bin/gantry check` runs those checks alone; `--strict` makes convention violations fail CI. See [development checks and the editor example](docs/development.md).
 
@@ -52,6 +51,7 @@ catalog. See [the purpose and extension contract](docs/strict.md) and
 | `assets` | Fingerprinted, minified, gzipped-once assets; stylesheet bundles drawn into the page or linked by size, with the first screen's fonts preloaded by name (`Face{Family: "Oswald", Weight: 600}`). |
 | `images` | Resized copies at fixed widths, 160 to 2400 about 1.5× apart, never enlarged: WebP by default, formats as adapters (`images/heic` reads iPhones' photos), made once in a child process. One `Server` serves the copies and writes the `<img>` tags that ask for them, so a page can't ask for one it doesn't serve. |
 | `storage` | Active Storage: files attached to records (`Attach`, `Find`, `Detach`, `Purge`) in Rails' tables and disk layout, so a Rails app's files carry over (`gantry g storage` writes the tables). Pictures come as `images`' standard way: AVIF and WebP at every width, made ahead by the polite child, drawn as a `<picture>`. |
+| `meta` | A page's description, canonical link, and Open Graph and Twitter card tags, so a shared link shows a proper preview. New apps' layouts draw it; the site's address is `SITE_URL`, and a 1200×630 picture in `assets/images` is its default image. |
 | `testkit` | A database with fixtures for each test (SQLite, or one of its own on Postgres), `Migrations` (each one up and down), and `Links`/`Crawl`: every image, font, script and link a page (or a whole section) refers to must load. |
 | `sign`, `mail`, `compress` | Signed tokens, email, and gzip. |
 

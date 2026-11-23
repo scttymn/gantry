@@ -56,7 +56,8 @@ func TestServer(t *testing.T) {
 		}
 		for _, u := range urls {
 			rec := get(s, u)
-			if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/webp" || rec.Header().Get("Cache-Control") != "public, max-age=31556952, immutable" {
+			if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/webp" || rec.Header().Get("Cache-Control") != "public, max-age=31556952, immutable" ||
+				rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Disposition") != "" {
 				t.Errorf("%s: %d %v", u, rec.Code, rec.Header())
 			}
 		}
@@ -101,11 +102,12 @@ func TestServer(t *testing.T) {
 		}
 	})
 
-	t.Run("a type it can't resize is served as it is", func(t *testing.T) {
+	t.Run("a type it can't resize is served as it is, as a download", func(t *testing.T) {
 		s, _ := newServer(t, 80)
 		rec := get(s, "/photos/tiff/original")
-		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/tiff" {
-			t.Errorf("%d %s", rec.Code, rec.Header().Get("Content-Type"))
+		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/tiff" || rec.Header().Get("Content-Disposition") != "attachment" ||
+			rec.Header().Get("X-Content-Type-Options") != "nosniff" || rec.Header().Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
+			t.Errorf("%d %v", rec.Code, rec.Header())
 		}
 		if rec := get(s, "/photos/tiff/720w-q80.webp"); rec.Code != 404 {
 			t.Errorf("a copy of it: %d", rec.Code)

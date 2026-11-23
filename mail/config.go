@@ -12,18 +12,23 @@ import (
 
 // Config is app-wide mail configuration, shared by auth, jobs and controllers.
 // LoadConfig reads MAIL_DRIVER, MAIL_FROM, SMTP_HOST, SMTP_PORT, SMTP_USERNAME,
-// SMTP_PASSWORD and MAIL_INBOX_PATH. Open selects environment-safe defaults.
+// SMTP_PASSWORD, SMTP_TLS and MAIL_INBOX_PATH. Open selects environment-safe
+// defaults.
 type Config struct {
 	Driver, From                   string
 	Host, Port, Username, Password string
+	TLS                            string
 	InboxPath                      string
 }
 
 func LoadConfig(getenv func(string) string) Config {
 	return Config{Driver: getenv("MAIL_DRIVER"), From: getenv("MAIL_FROM"),
 		Host: getenv("SMTP_HOST"), Port: getenv("SMTP_PORT"), Username: getenv("SMTP_USERNAME"), Password: getenv("SMTP_PASSWORD"),
-		InboxPath: getenv("MAIL_INBOX_PATH")}
+		TLS: getenv("SMTP_TLS"), InboxPath: getenv("MAIL_INBOX_PATH")}
 }
+
+// smtpTLS is SMTP_TLS's values; blank is mandatory.
+var smtpTLS = map[string]TLS{"": TLSMandatory, "mandatory": TLSMandatory, "opportunistic": TLSOpportunistic, "none": TLSNone}
 
 // Mailer is the app's one mail service. Send supplies the default From when a
 // message omits it. Inbox is present only for the development capture driver.
@@ -84,7 +89,11 @@ func Open(ctx context.Context, environment, dataDir string, cfg Config, log *slo
 				return nil, errors.New("mail: SMTP_PORT must be between 1 and 65535")
 			}
 		}
-		m.sender = SMTP{Host: cfg.Host, Port: port, Username: cfg.Username, Password: cfg.Password}
+		tls, ok := smtpTLS[cfg.TLS]
+		if !ok {
+			return nil, fmt.Errorf("mail: unknown SMTP_TLS %q (mandatory, opportunistic or none)", cfg.TLS)
+		}
+		m.sender = SMTP{Host: cfg.Host, Port: port, Username: cfg.Username, Password: cfg.Password, TLS: tls}
 	case "log":
 		if log == nil {
 			log = slog.Default()

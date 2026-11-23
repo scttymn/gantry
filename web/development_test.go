@@ -1,3 +1,5 @@
+//go:build !nodevcheck
+
 package web
 
 import (
@@ -58,7 +60,7 @@ func TestDevelopmentPanel(t *testing.T) {
 }
 
 func TestDevelopmentPanelEscapesSource(t *testing.T) {
-	ctx := context.WithValue(context.Background(), developmentWarningsKey{}, []devcheck.Warning{{File: "<img src=x onerror=alert(1)>", Line: 1, Rule: "<script>", Message: "<script>alert(1)</script>"}})
+	ctx := context.WithValue(context.Background(), developmentWarningsKey{}, []developmentWarning{{File: "<img src=x onerror=alert(1)>", Line: 1, Rule: "<script>", Message: "<script>alert(1)</script>"}})
 	var out bytes.Buffer
 	if err := DevelopmentWarnings().Render(ctx, &out); err != nil {
 		t.Fatal(err)

@@ -8,6 +8,9 @@
 - [Development checks](https://github.com/scttymn/gantry/blob/main/docs/development.md): current checks and fixes, automatic browser panel, exceptions, timing and an editor example
 - [Gantry Strict](https://github.com/scttymn/gantry/blob/main/docs/strict.md): purpose, rule registry, extensions and coverage limits
 - [Security](https://github.com/scttymn/gantry/blob/main/docs/security.md): trusted proxies (`TRUSTED_PROXIES`), server timeouts, HSTS and the Content-Security-Policy, with upgrade steps
+- [Authentication](https://github.com/scttymn/gantry/blob/main/docs/auth.md): email/password and email-code login, verified signup, delivery and shared limits
+- [Mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md): shared app mail configuration, SMTP delivery and the development inbox
+- [Social login](https://github.com/scttymn/gantry/blob/main/docs/social-login.md): Apple/Google provider setup, verified identity linking and shared database sessions
 
 ## Working on Gantry
 - [Contributing](https://github.com/scttymn/gantry/blob/main/CONTRIBUTING.md): framework tests, generator fixtures and adoption checks for new features
@@ -18,9 +21,3 @@
 
 ## Optional
 - [Design plans](https://github.com/scttymn/gantry/tree/main/docs/plans): implementation history and measurements; confirm current behavior against the app's pinned version
-
-- [Authentication](https://github.com/scttymn/gantry/blob/main/docs/auth.md): Email/password and email-code login, verified signup, delivery and shared limits.
-
-- [Mail](https://github.com/scttymn/gantry/blob/main/docs/mail.md): Shared app mail configuration, SMTP delivery and the development inbox.
-
-- [Social login](https://github.com/scttymn/gantry/blob/main/docs/social-login.md): Apple/Google provider setup, verified identity linking and shared database sessions.

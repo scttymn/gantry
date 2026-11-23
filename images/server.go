@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
@@ -54,7 +55,8 @@ type Server struct {
 type Original struct {
 	Path        string // on disk
 	ContentType string
-	Width       int // upright; 0 when unknown (every width is served)
+	Width       int    // upright; 0 when unknown (every width is served)
+	Filename    string // the name it's downloaded as, when it's served as it is
 }
 
 // year is how long a copy is cached: its address changes with its width,
@@ -96,7 +98,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var path, contentType string
-	if name == "original" && !s.Pipeline.Resizable(o.ContentType) {
+	original := name == "original" && !s.Pipeline.Resizable(o.ContentType)
+	if original {
 		path, contentType = o.Path, o.ContentType
 	} else {
 		// The name's extension says the format: WebP, or AVIF.
@@ -142,8 +145,22 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(year)+", immutable")
+	h := w.Header()
+	h.Set("Content-Type", contentType)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(year)+", immutable")
+	if original {
+		// Its type is whatever its uploader made it (a page, an SVG), so it's
+		// a download, and never a document of the app's origin: opened in a
+		// tab, its scripts would run with the visitor's session. An <img>
+		// still shows it.
+		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": o.Filename})
+		if o.Filename == "" || disposition == "" {
+			disposition = "attachment"
+		}
+		h.Set("Content-Disposition", disposition)
+		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	}
 	// A large original to a slow client can outlast the server's
 	// WriteTimeout while it's still being read.
 	http.ServeContent(web.Moving(w, r), r, "", info.ModTime(), f)

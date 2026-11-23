@@ -4,6 +4,7 @@ package auth
 
 import (
  "net/http"
+ "time"
  gantryauth "github.com/scttymn/gantry/auth"
  "github.com/scttymn/gantry/db"
  "github.com/scttymn/gantry/mail"
@@ -15,10 +16,12 @@ type Auth = gantryauth.Auth
 type User = gantryauth.User
 
 // New enables first-install setup. codeFile belongs on the private persistent
-// data volume. Set URL for emailed reset links and Idle/Lifetime for expiry.
+// data volume. Set URL for emailed reset links. A session ends 30 days unused
+// or 90 days after sign-in; gantryauth.NoLimit lifts either.
 func New(d *db.DB, signer sign.Signer, sender mail.Sender, from, codeFile string) *Auth {
  return &Auth{
   DB:d, Signer:signer, Mail:sender, From:from, Limits:&web.Limits{},
+  Idle:30*24*time.Hour, Lifetime:90*24*time.Hour,
   FirstUser:&gantryauth.FirstUser{CodeFile:codeFile},
   Views:gantryauth.Views{
    Login:func(w http.ResponseWriter,r *http.Request,p gantryauth.Page) error { return web.Render(w,r,pageStatus(p),signIn(p)) },
