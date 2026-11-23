@@ -83,6 +83,28 @@ func TestResourceRules(t *testing.T) {
 			}
 		}
 	})
+	t.Run("an edit reads and writes its row in one transaction, locked on Postgres", func(t *testing.T) {
+		for engine, lock := range map[string]string{"sqlite": "WHERE id = sqlc.arg(id);", "postgresql": "WHERE id = sqlc.arg(id) FOR UPDATE;"} {
+			root := app(t)
+			os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: "+engine+"\n"), 0o644)
+			generate(t, root, "admin/pillars", "title:string:required")
+			code, _ := os.ReadFile(filepath.Join(root, "app/admin/pillars/controller.go"))
+			update := string(code[strings.Index(string(code), "func (c Controller) Update"):])
+			update = update[:strings.Index(update, "\n}\n")]
+			for _, want := range []string{"c.DB.Tx(r.Context(), func(tx *db.Tx) error {", "q := models.New(tx)", "q.GetPillarForUpdate(", "q.UpdatePillar("} {
+				if !strings.Contains(update, want) {
+					t.Errorf("%s: no %q in\n%s", engine, want, update)
+				}
+			}
+			if strings.Contains(update, "c.DB.Read") || strings.Contains(update, "c.DB.Write") {
+				t.Errorf("%s: Update reads or writes outside its transaction:\n%s", engine, update)
+			}
+			sql, _ := os.ReadFile(filepath.Join(root, "app/models/pillars.sql"))
+			if !strings.Contains(string(sql), "-- name: GetPillarForUpdate :one\nSELECT * FROM pillars "+lock) {
+				t.Errorf("%s: GetPillarForUpdate isn't %q:\n%s", engine, lock, sql)
+			}
+		}
+	})
 	t.Run("a file that's there already is never overwritten", func(t *testing.T) {
 		root := app(t)
 		generate(t, root, "admin/pillars", "title:string")

@@ -7,6 +7,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
 
 	"example.com/gym/app/admin"
@@ -85,21 +86,34 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, program.ID, formValues(program), nil)
 }
 
+// Update reads, checks and writes in one transaction, so an edit saved
+// meanwhile isn't overwritten with what this one read.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
-	was, err := models.New(c.DB.Read).GetProgram(r.Context(), web.ID(r, "id"))
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.GetProgramForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, admin.Overlay(r, param, formValues(was))
+		program := fromForm(v)
+		if errs = program.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.UpdateProgram(r.Context(), models.UpdateProgramParams{Name: program.Name, Blurb: program.Blurb, CTA: program.CTA, Position: program.Position, Now: c.Now(), ID: id})
+	})
 	if err != nil {
 		return err
 	}
-	v := admin.Overlay(r, param, formValues(was))
-	program := fromForm(v)
-	if errs := program.Errors(); len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
 	}
-	err = models.New(c.DB.Write).UpdateProgram(r.Context(), models.UpdateProgramParams{Name: program.Name, Blurb: program.Blurb, CTA: program.CTA, Position: program.Position, Now: c.Now(), ID: was.ID})
-	if err != nil {
-		return err
-	}
-	if err := c.SavePhoto(r, param, "photo", recordType, was.ID); err != nil {
+	if err := c.SavePhoto(r, param, "photo", recordType, id); err != nil {
 		return err
 	}
 	return c.Saved(w, r, path, singular)

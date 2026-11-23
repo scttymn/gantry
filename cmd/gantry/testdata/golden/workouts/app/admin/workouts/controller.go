@@ -7,6 +7,7 @@ import (
 
 	"github.com/a-h/templ"
 
+	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
 
 	"example.com/gym/app/admin"
@@ -73,19 +74,32 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, workout.ID, formValues(workout), nil)
 }
 
+// Update reads, checks and writes in one transaction, so an edit saved
+// meanwhile isn't overwritten with what this one read.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
-	was, err := models.New(c.DB.Read).GetWorkout(r.Context(), web.ID(r, "id"))
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.GetWorkoutForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, admin.Overlay(r, param, formValues(was))
+		workout := fromForm(v)
+		if errs = workout.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.UpdateWorkout(r.Context(), models.UpdateWorkoutParams{Date: admin.DateParam(workout.Date), Name: workout.Name, Rx: workout.Rx, Now: c.Now(), ID: id})
+	})
 	if err != nil {
 		return err
 	}
-	v := admin.Overlay(r, param, formValues(was))
-	workout := fromForm(v)
-	if errs := workout.Errors(); len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
-	}
-	err = models.New(c.DB.Write).UpdateWorkout(r.Context(), models.UpdateWorkoutParams{Date: admin.DateParam(workout.Date), Name: workout.Name, Rx: workout.Rx, Now: c.Now(), ID: was.ID})
-	if err != nil {
-		return err
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
 	}
 	return c.Saved(w, r, path, singular)
 }
