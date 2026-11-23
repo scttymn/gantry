@@ -141,7 +141,10 @@ func TestMigrationsHaveDown(t *testing.T) {
 	}
 }
 
-var email = regexp.MustCompile(`[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]+)`)
+// email is an address (its first group) and its domain (its second). It
+// doesn't start just after a backslash: in "\t@templ.Raw(x)", a templ call in
+// a Go string, the t is the escape's.
+var email = regexp.MustCompile(`(?:^|[^\\A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]+))`)
 
 // exampleDomain is a domain reserved for examples (RFC 2606, RFC 6761, and
 // .internal).
@@ -169,8 +172,8 @@ func addressProblems(name, text string) []string {
 	}
 	var bad []string
 	for _, m := range email.FindAllStringSubmatch(text, -1) {
-		if !exampleDomain(m[1]) && !slices.Contains(providerDomains[name], strings.ToLower(m[1])) {
-			bad = append(bad, m[0])
+		if !exampleDomain(m[2]) && !slices.Contains(providerDomains[name], strings.ToLower(m[2])) {
+			bad = append(bad, m[1])
 		}
 	}
 	return bad
@@ -191,6 +194,8 @@ func TestAddressProblems(t *testing.T) {
 		{"auth/social_test.go", real, []string{real}},
 		{"testkit/links_test.go", `<a href="mailto:` + short + `">`, []string{short}},
 		{"docs/plans/gantry.md", real, nil},
+		{"devcheck/rules_test.go", `"templ show() {\n\t@templ.Raw(body)\n}"`, nil},
+		{"README.md", gmail + "," + real, []string{gmail, real}},
 	} {
 		if got := addressProblems(c.name, c.text); !slices.Equal(got, c.bad) {
 			t.Errorf("%s %q: %q, want %q", c.name, c.text, got, c.bad)
