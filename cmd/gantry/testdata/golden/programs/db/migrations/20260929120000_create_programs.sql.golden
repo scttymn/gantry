@@ -1,0 +1,13 @@
+-- +goose Up
+CREATE TABLE "programs" (
+  "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  "name" text NOT NULL DEFAULT '',
+  "blurb" text NOT NULL DEFAULT '',
+  "cta" text NOT NULL DEFAULT '',
+  "position" integer,
+  "created_at" datetime NOT NULL,
+  "updated_at" datetime NOT NULL
+);
+
+-- +goose Down
+DROP TABLE "programs";

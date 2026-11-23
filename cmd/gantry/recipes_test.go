@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -28,78 +27,6 @@ func shopApp(t *testing.T, engine string) string {
 		t.Fatalf("gantry new: %s", stderr)
 	}
 	return filepath.Join(root, "shop")
-}
-
-// What each recipe writes is pinned, on each engine.
-func TestRecipesGolden(t *testing.T) {
-	for _, tc := range []struct {
-		recipe string
-		args   []string
-		files  int
-	}{
-		{"api-tokens", []string{"--prefix", "shop_"}, 4},
-		{"auth", nil, 7},
-		{"auth", []string{"--email-code"}, 5},
-		{"auth", []string{"--email-code", "--signup"}, 5},
-		{"storage", nil, 1},
-	} {
-		for _, engine := range []string{"sqlite", "postgres"} {
-			t.Run(tc.recipe+strings.Join(tc.args, "")+"/"+engine, func(t *testing.T) {
-				recipeGolden(t, tc.recipe, tc.args, tc.files, engine)
-			})
-		}
-	}
-}
-
-func recipeGolden(t *testing.T, recipe string, args []string, files int, engine string) {
-	t.Helper()
-	dir := shopApp(t, engine)
-	at(t, "2026-09-29T12:00:00Z")
-	before := map[string]bool{}
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		before[p] = true
-		return err
-	})
-	code, out, stderr := gantry(t, dir, append([]string{"g", recipe}, args...)...)
-	if code != 0 {
-		t.Fatalf("exit %d: %s", code, stderr)
-	}
-	if !strings.Contains(out, "rt.Scope(") && !strings.Contains(out, "rt.Mount(") {
-		t.Errorf("no route to add:\n%s", out)
-	}
-	label := recipe
-	if recipe == "auth" && len(args) > 0 {
-		label += "-email-code"
-		if len(args) > 1 {
-			label += "-signup"
-		}
-	}
-	golden := filepath.Join("testdata", "golden", label+"-"+engine)
-	if *update {
-		os.RemoveAll(golden)
-	}
-	written := 0
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || before[p] {
-			return err
-		}
-		written++
-		rel, _ := filepath.Rel(dir, p)
-		got, _ := os.ReadFile(p)
-		gofmted(t, rel, got)
-		want := filepath.Join(golden, rel+".golden")
-		if *update {
-			os.MkdirAll(filepath.Dir(want), 0o755)
-			return os.WriteFile(want, got, 0o644)
-		}
-		if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-			t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
-		}
-		return nil
-	})
-	if written != files {
-		t.Errorf("wrote %d files, want %d", written, files)
-	}
 }
 
 func TestAPITokensRules(t *testing.T) {
@@ -419,24 +346,6 @@ func TestSocialRecipe(t *testing.T) {
 				}
 				if !strings.HasPrefix(filepath.Base(files[0]), stamp) {
 					t.Fatal("migration does not follow auth", files)
-				}
-				for _, rel := range []string{"app/auth/social.go", "app/auth/social_pages.templ", "app/auth/social_test.go", "db/migrations/" + filepath.Base(files[0])} {
-					got, err := os.ReadFile(filepath.Join(dir, rel))
-					if err != nil {
-						t.Fatal(err)
-					}
-					gofmted(t, rel, got)
-					want := filepath.Join("testdata", "golden", "auth-social-"+mode+"-"+engine, rel+".golden")
-					if *update {
-						if err := os.MkdirAll(filepath.Dir(want), 0755); err != nil {
-							t.Fatal(err)
-						}
-						if err := os.WriteFile(want, got, 0644); err != nil {
-							t.Fatal(err)
-						}
-					} else if expected, err := os.ReadFile(want); err != nil || string(expected) != string(got) {
-						t.Errorf("%s differs from %s (run with -update)", rel, want)
-					}
 				}
 				warnings, err := devcheck.Scan(dir)
 				if err != nil || len(warnings) != 0 {

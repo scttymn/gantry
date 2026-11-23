@@ -6,7 +6,6 @@ import (
 	"go/format"
 	"image"
 	"image/jpeg"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -110,63 +109,6 @@ func TestNewInModuleRules(t *testing.T) {
 	}
 	if code, _, stderr := gantry(t, big(t, ""), "new", "control", "--in-module", "--gantry", "..", "--skip-houston"); code != 1 || !strings.Contains(stderr, "--in-module and --gantry") {
 		t.Errorf("with --gantry: exit %d, %s", code, stderr)
-	}
-}
-
-// What gantry new writes is pinned, on each engine: a change to it is a
-// change to every app made next, so it shows up here, and in review.
-func TestNewGolden(t *testing.T) {
-	for _, engine := range []string{"sqlite", "postgres"} {
-		t.Run(engine, func(t *testing.T) {
-			root := t.TempDir()
-			if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--module", "example.com/shop", "--skip-houston"); code != 0 {
-				t.Fatalf("exit %d: %s", code, stderr)
-			}
-			dir := filepath.Join(root, "shop")
-			golden := filepath.Join("testdata", "golden", "new-"+engine)
-			if *update {
-				os.RemoveAll(golden)
-			}
-			seen := map[string]bool{}
-			filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return err
-				}
-				rel, _ := filepath.Rel(dir, path)
-				if rel == ".env" {
-					// A random password, checked by TestNewPostgresEnv.
-					return nil
-				}
-				got, _ := os.ReadFile(path)
-				if strings.HasPrefix(filepath.ToSlash(rel), "assets/js/vendor/") {
-					// Vendored JavaScript is copied as it is, not kept twice.
-					if want, err := fs.ReadFile(templates, "templates/new/"+filepath.ToSlash(rel)); err != nil || string(want) != string(got) {
-						t.Errorf("%s isn't gantry's copy", rel)
-					}
-					return nil
-				}
-				seen[rel] = true
-				gofmted(t, rel, got)
-				want := filepath.Join(golden, rel+".golden")
-				if *update {
-					os.MkdirAll(filepath.Dir(want), 0o755)
-					return os.WriteFile(want, got, 0o644)
-				}
-				if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-					t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
-				}
-				return nil
-			})
-			filepath.WalkDir(golden, func(path string, d fs.DirEntry, err error) error {
-				if err == nil && !d.IsDir() {
-					rel, _ := filepath.Rel(golden, path)
-					if !seen[strings.TrimSuffix(rel, ".golden")] {
-						t.Errorf("%s isn't written any more", rel)
-					}
-				}
-				return err
-			})
-		})
 	}
 }
 

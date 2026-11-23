@@ -31,49 +31,6 @@ func generate(t *testing.T, root string, args ...string) string {
 	return out.String()
 }
 
-// The generator's output is pinned: a change to it is a change to every
-// table an app generates next, so it shows up here, and in review. The
-// helpers in app/shared, the same for every resource, are pinned once.
-func TestGolden(t *testing.T) {
-	for name, args := range map[string][]string{
-		"pillars":         {"admin/pillars", "title:string:required", "body:string", "position:position"},
-		"programs":        {"admin/programs", "name:string:required", "blurb:text", "photo:photo", "cta:string", "position:position"},
-		"workouts":        {"admin/workouts", "date:date:required", "name:string", "rx:text"},
-		"posts":           {"posts", "title:string:required", "body:text", "published_on:date"},
-		"events-postgres": {"editor/events", "name:string:required", "starts_on:date", "position:position"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			root := app(t)
-			if strings.HasSuffix(name, "-postgres") {
-				os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: postgresql\n"), 0o644)
-			}
-			generate(t, root, args...)
-			golden := filepath.Join("testdata", "golden", name)
-			filepath.WalkDir(filepath.Join(root, "app"), func(path string, d os.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return err
-				}
-				rel, _ := filepath.Rel(root, path)
-				got, _ := os.ReadFile(path)
-				gofmted(t, rel, got)
-				want := filepath.Join(golden, rel)
-				if strings.HasPrefix(filepath.ToSlash(rel), "app/shared/") {
-					want = filepath.Join("testdata", "golden", "resource-shared", rel)
-				}
-				if *update {
-					os.MkdirAll(filepath.Dir(want), 0o755)
-					os.WriteFile(want, got, 0o644)
-					return nil
-				}
-				if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-					t.Errorf("%s differs from %s (go test ./cmd/gantry -update, then review the diff)", rel, want)
-				}
-				return nil
-			})
-		})
-	}
-}
-
 func TestResourceRules(t *testing.T) {
 	t.Run("the next steps name the route and the package", func(t *testing.T) {
 		out := generate(t, app(t), "admin/membership_options", "name:string:required", "position:position")

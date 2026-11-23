@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"text/template"
@@ -19,7 +20,7 @@ var binstubSignature = []byte("#!/bin/sh\n# Downloads this app's gantry")
 
 // binstub is bin/gantry as this gantry writes it.
 func binstub() ([]byte, error) {
-	raw, err := templates.ReadFile("templates/new/bin/gantry.tmpl")
+	raw, err := fs.ReadFile(templates, "templates/new/bin/gantry.tmpl")
 	if err != nil {
 		return nil, err
 	}

@@ -220,7 +220,7 @@ func writeWork(t *testing.T, dir, use string) {
 
 func installBinstub(t *testing.T, dir string) string {
 	t.Helper()
-	raw, err := templates.ReadFile("templates/new/bin/gantry.tmpl")
+	raw, err := fs.ReadFile(templates, "templates/new/bin/gantry.tmpl")
 	if err != nil {
 		t.Fatalf("bin/gantry template: %v", err)
 	}

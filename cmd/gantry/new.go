@@ -230,21 +230,6 @@ func writeApp(dir string, a NewApp) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		body, err := fs.ReadFile(sub, path)
-		if err != nil {
-			return err
-		}
-		if !strings.HasSuffix(path, ".tmpl") {
-			return write(filepath.Join(dir, path), body)
-		}
-		t, err := template.New(path).Parse(string(body))
-		if err != nil {
-			return err
-		}
-		var b bytes.Buffer
-		if err := t.Execute(&b, a); err != nil {
-			return err
-		}
 		out := strings.Replace(strings.TrimSuffix(path, ".tmpl"), "cmd/NAME/", "cmd/"+a.Name+"/", 1)
 		switch out {
 		case "gitignore":
@@ -265,6 +250,21 @@ func writeApp(dir string, a NewApp) error {
 			if a.InModule != (out == "Dockerfile.dockerignore") {
 				return nil
 			}
+		}
+		body, err := fs.ReadFile(sub, path)
+		if err != nil {
+			return err
+		}
+		if !strings.HasSuffix(path, ".tmpl") {
+			return write(filepath.Join(dir, out), body)
+		}
+		t, err := template.New(path).Parse(string(body))
+		if err != nil {
+			return err
+		}
+		var b bytes.Buffer
+		if err := t.Execute(&b, a); err != nil {
+			return err
 		}
 		return write(filepath.Join(dir, out), b.Bytes())
 	})

@@ -78,7 +78,11 @@ func writeRecipe(root, dir string, files map[string]string, data any, out io.Wri
 			return fmt.Errorf("%s is there already: move it aside to apply the recipe", path)
 		}
 	}
-	t := template.Must(template.ParseFS(templates, "templates/"+dir+"/*.tmpl"))
+	var names []string
+	for _, name := range files {
+		names = append(names, "templates/"+dir+"/"+name)
+	}
+	t := template.Must(template.ParseFS(templates, names...))
 	for path, name := range files {
 		var b bytes.Buffer
 		if err := t.ExecuteTemplate(&b, name, data); err != nil {
