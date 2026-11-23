@@ -42,6 +42,9 @@ side by side and says whether a request costs more, less or the same; a pull
 request's `bench` job runs that against its base, and fails on a regression.
 `bin/bench -quick` is a look, not a measurement. The app and the tools are modules of their own, so their tests are
 `GANTRY_DIR=bench bin/go go test ./...` and `GANTRY_DIR=bench/feed bin/go go test ./...`.
+`bench/feed` is held to what `gantry new` writes, apart from the files the
+challenge needs of its own (`TestBenchFeedIsANewApp`): `go test ./cmd/gantry
+-update` brings it along with a change to the generator.
 The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plans/performance.md).
 
 ## Features and Gantry Strict

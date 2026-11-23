@@ -4,7 +4,7 @@ go 1.27.1
 
 require (
 	github.com/a-h/templ v0.3.1020
-	github.com/scttymn/gantry v0.14.2
+	github.com/scttymn/gantry v0.17.0
 )
 
 require (

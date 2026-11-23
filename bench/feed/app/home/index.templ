@@ -3,7 +3,7 @@ package home
 import "feed/app/shared/layout"
 
 templ index() {
-	@layout.Layout(layout.Page{Title: "Feed"}) {
+	@layout.Layout(layout.Page{Title: "Feed", Path: "/"}) {
 		<main class="welcome">
 			<p class="eyebrow">gantry</p>
 			<h1>Feed is running.</h1>

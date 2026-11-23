@@ -25,6 +25,7 @@ import (
 	"github.com/scttymn/gantry/sign"
 
 	"feed/app"
+	"feed/app/shared/layout"
 	"feed/assets"
 	"feed/config"
 	"feed/db/migrations"
@@ -130,6 +131,8 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 			mailer.Close()
 		}
 	}()
+	// Link previews are made from the site's address (meta.Site).
+	layout.Site.URL = cfg.SiteURL
 	signer := sign.Signer{Key: key}
 	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
 		Secret: []byte(cfg.JWTSecret), Started: time.Now()}
