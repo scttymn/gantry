@@ -26,7 +26,8 @@ Without it they skip, except under `CI=true`, where they fail.
 Every pull request and push to `main` runs the `ci` workflow: both passes on
 SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
 staticcheck and govulncheck (`go vet`, staticcheck and govulncheck on the cgo
-build too), the bench modules' tests (below), and the release's build and its
+build too), shellcheck on `bin/go`, `bin/bench` and an app's `bin/gantry`, the
+bench modules' tests (below), and the release's build and its
 probe on a made-up tag. Run staticcheck and govulncheck with
 `bin/go go run honnef.co/go/tools/cmd/staticcheck@<version> ./...` and
 `bin/go go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`, at the
