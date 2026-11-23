@@ -24,6 +24,7 @@ func TestUsage(t *testing.T) {
 		"gantry g resource [NAMESPACE/]TABLE FIELD:TYPE[:required]...",
 		"gantry g auth [--email-code] [--signup] [--social]",
 		"gantry check [--rules] [--strict]",
+		"gantry secret ",
 		"gantry dev|",
 	} {
 		if !strings.Contains(help, want) {
@@ -42,6 +43,7 @@ func TestUsage(t *testing.T) {
 		{[]string{"g", "error-pages", "--forced"}, []string{"usage: gantry g error-pages [--force]"}},
 		{[]string{"g", "api-tokens", "--prefixes", "x_"}, []string{"usage: gantry g api-tokens [--prefix PREFIX_]"}},
 		{[]string{"importmap", "pin"}, []string{"usage: gantry importmap pin|unpin PACKAGE[@VERSION]..."}},
+		{[]string{"secret", "32"}, []string{"takes no arguments", "usage: gantry secret"}},
 	} {
 		var out, errOut strings.Builder
 		code := run(tc.args, t.TempDir(), &out, &errOut)

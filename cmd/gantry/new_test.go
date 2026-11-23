@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"go/format"
 	"image"
@@ -11,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,7 +136,7 @@ func TestNewGolden(t *testing.T) {
 				}
 				rel, _ := filepath.Rel(dir, path)
 				if rel == ".env" {
-					// A random password, checked by TestNewPostgresEnv.
+					// Random keys, checked by TestNewEnv.
 					return nil
 				}
 				got, _ := os.ReadFile(path)
@@ -200,17 +202,62 @@ func TestNewVendorLicenses(t *testing.T) {
 	}
 }
 
-func TestNewPostgresEnv(t *testing.T) {
-	root := t.TempDir()
-	gantry(t, root, "new", "shop", "--db", "postgres", "--skip-houston")
-	env, _ := os.ReadFile(filepath.Join(root, "shop", ".env"))
-	if !strings.HasPrefix(string(env), "POSTGRES_PASSWORD=") || len(strings.TrimSpace(string(env))) != len("POSTGRES_PASSWORD=")+32 {
-		t.Errorf(".env = %q", env)
+// gantry secret is a key sign.Key takes: 32 random bytes, in hex.
+func TestSecret(t *testing.T) {
+	keys := map[string]bool{}
+	for range 2 {
+		code, out, stderr := gantry(t, t.TempDir(), "secret")
+		key, ok := strings.CutSuffix(out, "\n")
+		if raw, err := hex.DecodeString(key); code != 0 || !ok || err != nil || len(raw) != 32 || stderr != "" {
+			t.Fatalf("exit %d: %q (%s)", code, out, stderr)
+		}
+		keys[key] = true
 	}
-	root2 := t.TempDir()
-	gantry(t, root2, "new", "shop", "--db", "postgres", "--skip-houston")
-	if env2, _ := os.ReadFile(filepath.Join(root2, "shop", ".env")); string(env2) == string(env) {
-		t.Error("two apps got the same password")
+	if len(keys) != 2 {
+		t.Error("two runs printed the same key")
+	}
+}
+
+// A new app's .env, which git ignores, has development's own SECRET_KEY,
+// and on Postgres the dev database's password: each app its own.
+func TestNewEnv(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			env := func() map[string]string {
+				root := t.TempDir()
+				if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--skip-houston"); code != 0 {
+					t.Fatalf("exit %d: %s", code, stderr)
+				}
+				ignored, _ := os.ReadFile(filepath.Join(root, "shop", ".gitignore"))
+				if !slices.Contains(strings.Split(string(ignored), "\n"), ".env") {
+					t.Errorf(".gitignore doesn't ignore .env:\n%s", ignored)
+				}
+				data, _ := os.ReadFile(filepath.Join(root, "shop", ".env"))
+				values := map[string]string{}
+				for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+					if name, value, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(line, "#") {
+						values[name] = value
+					}
+				}
+				return values
+			}
+			first, second := env(), env()
+			want := map[string]int{"SECRET_KEY": 32}
+			if engine == "postgres" {
+				want["POSTGRES_PASSWORD"] = 16
+			}
+			if len(first) != len(want) {
+				t.Errorf(".env = %q, want %v", first, want)
+			}
+			for name, size := range want {
+				if raw, err := hex.DecodeString(first[name]); err != nil || len(raw) != size {
+					t.Errorf("%s = %q, want %d random bytes in hex", name, first[name], size)
+				}
+				if first[name] == second[name] {
+					t.Errorf("two apps got the same %s", name)
+				}
+			}
+		})
 	}
 }
 
