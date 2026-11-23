@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -484,4 +487,82 @@ func TestSocialRecipe(t *testing.T) {
 	if code, _, _ := gantry(t, dir, "g", "auth", "--social"); code != 1 {
 		t.Fatal("social recipe needs existing auth")
 	}
+}
+
+// No auth recipe's view renders with a status of its own: gantry sets
+// Page.Status (422 on a form redrawn with errors), and a view that writes
+// 200 hides it. The recipes' tests check today's views in a built app;
+// this catches a view added later, without building one.
+func TestRecipeViewsKeepPageStatus(t *testing.T) {
+	old := `package auth
+var v = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
+	return web.Render(w, r, http.StatusOK, page(p))
+}`
+	if got := hardCodedStatuses(t, "old.go", []byte(old)); len(got) != 1 {
+		t.Fatalf("missed a view's hard-coded status: %v", got)
+	}
+	files, _ := filepath.Glob(filepath.Join("testdata", "golden", "auth-*", "app", "auth", "*.go.golden"))
+	if len(files) == 0 {
+		t.Fatal("no auth recipe goldens")
+	}
+	for _, file := range files {
+		src, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, at := range hardCodedStatuses(t, file, src) {
+			t.Errorf("%s: a view renders a gantryauth.Page with a status of its own; use pageStatus(p)", at)
+		}
+	}
+}
+
+// hardCodedStatuses is where, in src, a function taking a gantryauth.Page
+// calls web.Render with a literal status or an http.Status constant.
+func hardCodedStatuses(t *testing.T, name string, src []byte) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sel :=func(e ast.Expr, pkg string) string {
+		if s, ok := e.(*ast.SelectorExpr); ok {
+			if x, ok := s.X.(*ast.Ident); ok && x.Name == pkg {
+				return s.Sel.Name
+			}
+		}
+		return ""
+	}
+	var found []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		var typ *ast.FuncType
+		var body *ast.BlockStmt
+		switch fn := n.(type) {
+		case *ast.FuncLit:
+			typ, body = fn.Type, fn.Body
+		case *ast.FuncDecl:
+			typ, body = fn.Type, fn.Body
+		default:
+			return true
+		}
+		takesPage := false
+		for _, p := range typ.Params.List {
+			takesPage = takesPage || sel(p.Type, "gantryauth") == "Page"
+		}
+		if !takesPage || body == nil {
+			return true
+		}
+		ast.Inspect(body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || sel(call.Fun, "web") != "Render" || len(call.Args) < 3 {
+				return true
+			}
+			if _, literal := call.Args[2].(*ast.BasicLit); literal || strings.HasPrefix(sel(call.Args[2], "http"), "Status") {
+				found = append(found, fset.Position(call.Pos()).String())
+			}
+			return true
+		})
+		return true
+	})
+	return found
 }
