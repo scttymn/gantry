@@ -10,9 +10,9 @@ func TestStaleExceptions(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "app/page.html", `<script src="/custom.js"></script>`)
 	put(t, root, ".gantry-check.json", `{"exceptions":[
-		{"rule":"asset-url","file":"app/page.html","reason":"Custom handler revalidates this script."},
-		{"rule":"raw-assets","file":"app/page.html","reason":"Served elsewhere."},
-		{"rule":"asset-url","file":"app/gone.html","reason":"Deleted page."}
+		{"rule":"asset-url","file":"app/page.html","reason":"Custom handler revalidates this script (#7)."},
+		{"rule":"raw-assets","file":"app/page.html","reason":"Served elsewhere (#8)."},
+		{"rule":"asset-url","file":"app/gone.html","reason":"Deleted page (#9)."}
 	]}`)
 	got, err := Scan(root)
 	if err != nil {
@@ -55,7 +55,17 @@ func TestRequireIssue(t *testing.T) {
 		}
 	}
 	put(t, root, ".gantry-check.json", config(false, "Custom handler revalidates this script."))
+	got, err := Scan(root)
+	want := []Warning{{File: ".gantry-check.json", Rule: "exception-reason", Severity: Advice, Message: "exception asset-url app/page.html: the reason cites no issue (#123) or link to an issue or decision record; add one so the exception points at where it was decided"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("without requireIssue a plain reason is advice:\ngot %+v %v\nwant %+v", got, err, want)
+	}
+	put(t, root, ".gantry-check.json", config(false, "Custom handler revalidates this script; see #12."))
 	if got, err := Scan(root); err != nil || len(got) != 0 {
-		t.Fatalf("without requireIssue a plain reason should pass: %+v %v", got, err)
+		t.Fatalf("a cited reason without requireIssue: %+v %v", got, err)
+	}
+	put(t, root, ".gantry-check.json", `{"requireIssue":true,"exceptions":[{"rule":"exception-reason","file":"app/page.html","reason":"#1"}]}`)
+	if _, err := Scan(root); err == nil || !strings.Contains(err.Error(), `unknown rule "exception-reason"`) {
+		t.Fatal("an exception for exception-reason should be an unknown rule:", err)
 	}
 }

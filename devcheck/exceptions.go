@@ -65,11 +65,14 @@ func applyExceptions(root string, warnings []Warning, rules map[string]Rule) ([]
 			active = append(active, w)
 		}
 	}
-	// Advice, not a violation: an upgrade that fixes a rule's false positive
-	// shouldn't fail CI until someone deletes the exception.
+	// Advice, not violations: an upgrade that fixes a rule's false positive, or
+	// a file written before requireIssue existed, shouldn't fail CI.
 	for i, e := range cfg.Exceptions {
 		if !matched[i] {
 			active = append(active, Warning{File: ".gantry-check.json", Rule: "stale-exception", Severity: Advice, Message: fmt.Sprintf("exception %s %s matched nothing; remove it so it can't hide a future violation", e.Rule, e.File)})
+		}
+		if !citesIssue.MatchString(e.Reason) {
+			active = append(active, Warning{File: ".gantry-check.json", Rule: "exception-reason", Severity: Advice, Message: fmt.Sprintf("exception %s %s: the reason cites no issue (#123) or link to an issue or decision record; add one so the exception points at where it was decided", e.Rule, e.File)})
 		}
 	}
 	return active, nil

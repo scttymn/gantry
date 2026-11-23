@@ -65,7 +65,7 @@ func TestDevelopmentOnlyNeedsGuard(t *testing.T) {
 func TestDocumentedExceptions(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "app/page.html", `<script src="/custom.js"></script>`)
-	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"asset-url","file":"app/page.html","reason":"Custom handler revalidates this development integration."}]}`)
+	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"asset-url","file":"app/page.html","reason":"Custom handler revalidates this development integration (#7)."}]}`)
 	got, err := Scan(root)
 	if err != nil || len(got) != 0 {
 		t.Fatalf("%v %v", got, err)
