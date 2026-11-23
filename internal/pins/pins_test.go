@@ -76,10 +76,9 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 		{"sqlc's image", SqlcImage, "internal/pins/pins.go (SqlcImage)", []handCopy{
 			{"Dockerfile", `--from=(sqlc/sqlc:\S+)`},
 		}},
-		{"Postgres's major version", postgres[1], "internal/pins/pins.go (PostgresImage)", append(
-			all([]string{"Dockerfile", "cmd/gantry/templates/new/Dockerfile.tmpl"}, `postgresql-client-(\d+)`),
-			all(workflows, `image: postgres:(\d+)`)...,
-		)},
+		{"Postgres's major version", postgres[1], "internal/pins/pins.go (PostgresImage)",
+			all([]string{"Dockerfile", "cmd/gantry/templates/new/Dockerfile.tmpl"}, `postgresql-client-(\d+)`)},
+		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", all(workflows, `image: (postgres:\S+)`)},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
 		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?(nodynamic,[\w,]+)`)},
 	}
