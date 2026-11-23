@@ -37,12 +37,9 @@ func newCached(t *testing.T) *cached {
 	c.cache = &PageCache{
 		Version: func(context.Context) (int64, error) { return c.version.Load(), nil },
 		Now:     func() time.Time { return c.now },
-		Skip: func(r *http.Request) bool {
-			_, err := r.Cookie("session")
-			return err == nil
-		},
 	}
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Proxies = Proxies{ForwardedHost: true}
 	rt.Cache = c.cache
 	page := func(w http.ResponseWriter, r *http.Request) error {
 		n := c.renders.Add(1)
@@ -112,6 +109,10 @@ func newCached(t *testing.T) *cached {
 		s.Cached("GET /page", page)
 		s.Scope("/staff", Pipeline{staffOnly}, func(s *Scope) { s.Cached("GET /page", page) })
 	})
+	rt.Scope("/private", Pipeline{func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Cache-Control", "private")
+		return nil
+	}}, func(s *Scope) { s.Cached("GET /page", page) })
 	takeFlash := func(w http.ResponseWriter, r *http.Request) error {
 		if message := r.Header.Get("X-Flash"); message != "" {
 			ClearCookie(w, "flash")
@@ -204,7 +205,7 @@ func TestPageCache(t *testing.T) {
 	for name, header := range map[string]http.Header{
 		"an Authorization header":                {"Authorization": {"Bearer ada"}},
 		"an Authorization header after an empty": {"Authorization": {"", "Bearer ada"}},
-		"what Skip names (a session cookie)":     {"Cookie": {"session=ada"}},
+		"a session cookie, with no Skip":         {"Cookie": {"session=ada"}},
 	} {
 		t.Run("a request with "+name+" neither fills nor reads the cache", func(t *testing.T) {
 			c := newCached(t)
@@ -225,6 +226,46 @@ func TestPageCache(t *testing.T) {
 			}
 		})
 	}
+	t.Run("Skip, when set, decides in place of the session cookie", func(t *testing.T) {
+		c := newCached(t)
+		c.cache.Skip = func(r *http.Request) bool {
+			_, err := r.Cookie("sid")
+			return err == nil
+		}
+		c.get("/page", "Cookie", "session=ada")
+		if c.get("/page", "Cookie", "session=ada"); c.renders.Load() != 1 {
+			t.Fatalf("a session cookie Skip doesn't name bypassed the cache: renders %d", c.renders.Load())
+		}
+		if c.get("/page", "Cookie", "sid=ada"); c.renders.Load() != 2 {
+			t.Fatalf("what Skip names was served the kept page: renders %d", c.renders.Load())
+		}
+	})
+	t.Run("an empty session cookie doesn't skip the cache", func(t *testing.T) {
+		c := newCached(t)
+		c.get("/page", "Cookie", "session=")
+		if c.get("/page", "Cookie", "session="); c.renders.Load() != 1 {
+			t.Fatalf("renders %d", c.renders.Load())
+		}
+	})
+	t.Run("each forwarded host is its own page", func(t *testing.T) {
+		c := newCached(t)
+		for _, host := range []string{"one.example", "two.example", "one.example"} {
+			r := httptest.NewRequest("GET", "/page", nil)
+			r.RemoteAddr, r.Host = "10.0.0.2:1", "app.internal"
+			r.Header.Set("X-Forwarded-Host", host)
+			c.h.ServeHTTP(httptest.NewRecorder(), r)
+		}
+		if c.renders.Load() != 2 {
+			t.Fatalf("renders %d: forwarded hosts shared a page, or one wasn't kept", c.renders.Load())
+		}
+	})
+	t.Run("a response a filter marked private is never kept", func(t *testing.T) {
+		c := newCached(t)
+		c.get("/private/page")
+		if got := c.get("/private/page"); c.renders.Load() != 2 || got.Header().Get("Cache-Control") != "private" {
+			t.Fatalf("renders %d, Cache-Control %q", c.renders.Load(), got.Header().Get("Cache-Control"))
+		}
+	})
 	t.Run("a response a filter set a cookie on is never kept", func(t *testing.T) {
 		c := newCached(t)
 		flashed := c.get("/flash/page", "X-Flash", "saved")

@@ -76,18 +76,18 @@ that purpose if Strict flags it.
 
 Page caching is an explicit application decision. Do not wrap account pages,
 personalized responses or an entire authenticated router in a public page cache.
-Its key is the host, path and query, not the user's identity, and a response
-that says `Cache-Control: private` or `no-store` is never kept. `Cached` runs
+Its key is the host, path and query, not the user's identity. `Cached` runs
 its scope's filters before the cache on every request, so `auth.Required` still
 turns away whoever it would, but everyone it lets in shares one copy of the
 page: cache a page behind it only when it's the same for every member, never
-one that reads `auth.Current`. Requests with an `Authorization` header and
-responses that set a cookie bypass the cache. A session cookie alone does
-not, unless the app sets `rt.Cache.Skip = a.Auth.HasSessionCookie`; do that
-when a public cached page looks different to signed-in visitors
-(`auth.SignedIn`). Use `db.DB.Version` for database-driven invalidation where
-appropriate, and account for other data sources and time-dependent content. A
-clean Strict scan does not check this for you yet.
+one that reads `auth.Current`. Requests with an `Authorization` header or a
+`session` cookie (auth's default name) bypass the cache, and a response that
+sets a cookie or says `Cache-Control: private` or `no-store` is never kept. An
+app that renames its session cookie sets
+`rt.Cache.Skip = a.Auth.HasSessionCookie`; `Skip` replaces the default check.
+Use `db.DB.Version` for database-driven invalidation where appropriate, and
+account for other data sources and time-dependent content. A clean Strict scan
+does not check this for you yet.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user

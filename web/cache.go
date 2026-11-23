@@ -46,9 +46,11 @@ type PageCache struct {
 	// Now is time.Now when nil; tests set it.
 	Now func() time.Time
 	// Skip names more requests that go straight to the handler, neither
-	// served from the cache nor kept in it: auth.Auth.HasSessionCookie, so
-	// a page that looks different to someone signed in (auth.SignedIn)
-	// isn't kept for, or served to, the wrong visitor. nil: none.
+	// served from the cache nor kept in it, so a page that looks different
+	// to someone signed in (auth.SignedIn) isn't kept for, or served to,
+	// the wrong visitor. nil: a request with a "session" cookie, auth's
+	// default. An app that renames its cookie sets a.Auth.HasSessionCookie;
+	// one whose pages never change for a signed-in visitor can say none.
 	Skip func(*http.Request) bool
 
 	mu      sync.Mutex
@@ -90,18 +92,18 @@ func (c *PageCache) maxEntries() int {
 }
 
 // Handler serves next's GETs and HEADs from the cache, keyed by host, path
-// and query; a HEAD shares its GET's page. Anything else goes straight to
-// next, as does a request with credentials (an Authorization header), one
-// Skip names, and one whose response already sets a cookie (a filter before
-// the cache took a flash, say): none is the same for every visitor. A
-// filter that decides who may see a page goes
-// outside it, as Cached puts a scope's: inside, a kept page is served
-// without it.
+// and query (RequestHost: a trusted proxy's X-Forwarded-Host); a HEAD shares
+// its GET's page. Anything else goes straight to next, as does a request
+// with credentials (an Authorization header) or one Skip names, and one
+// whose response a filter before the cache already set a cookie on (a flash
+// taken, say) or marked private or no-store: none is the same for every
+// visitor. A filter that decides who may see a page goes outside it, as
+// Cached puts a scope's: inside, a kept page is served without it.
 func (c *PageCache) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
-			len(r.Header.Values("Authorization")) > 0 || len(w.Header().Values("Set-Cookie")) > 0 ||
-			(c.Skip != nil && c.Skip(r)) {
+			len(r.Header.Values("Authorization")) > 0 || c.skip(r) ||
+			len(w.Header().Values("Set-Cookie")) > 0 || private(w.Header()) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -111,7 +113,7 @@ func (c *PageCache) Handler(next http.Handler) http.Handler {
 				version, versioned = v, true
 			}
 		}
-		key := strings.ToLower(r.Host) + r.URL.RequestURI() // a host may be another site (Router.Hosts)
+		key := RequestHost(r) + r.URL.RequestURI() // a host may be another site (Router.Hosts)
 		page := c.fresh(key, version, versioned)
 		if page == nil {
 			var own *cachedPage
@@ -258,6 +260,16 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 	if r.Method != http.MethodHead {
 		w.Write(body)
 	}
+}
+
+// skip is Skip's answer, or without one, whether the request carries a
+// session cookie by auth's default name.
+func (c *PageCache) skip(r *http.Request) bool {
+	if c.Skip != nil {
+		return c.Skip(r)
+	}
+	s, err := r.Cookie("session")
+	return err == nil && s.Value != ""
 }
 
 // private reports whether the response's Cache-Control keeps it out of a
