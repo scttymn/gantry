@@ -97,6 +97,28 @@ func TestPrecompileScripts(t *testing.T) {
 	}
 }
 
+// A vendored package's license travels with it: the build's minifying keeps
+// a /*! */ comment, as MIT asks of every copy.
+func TestPrecompileKeepsLicenses(t *testing.T) {
+	const license = "/*!\nLib 1.0\nCopyright (c) Someone\nPermission is hereby granted\n*/"
+	src := fstest.MapFS{"js/vendor/lib.js": {Data: []byte("// lib@1.0 downloaded from https://example.com\n\n" + license + "\nexport const lib = 1 + 2\n")}}
+	a, err := New(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := a.Precompile(context.Background(), dir); err != nil {
+		t.Fatal(err)
+	}
+	b, err := New(built(t, src, dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := served(t, b, "vendor/lib.js"); !strings.Contains(got, "Copyright (c) Someone\nPermission is hereby granted") || strings.Contains(got, "downloaded from") {
+		t.Errorf("minified: %q", got)
+	}
+}
+
 // With Images, the build makes the pictures' copies too, under images/.
 func TestPrecompilePictures(t *testing.T) {
 	a, im := pictures(t)
