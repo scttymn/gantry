@@ -9,7 +9,10 @@ block the server. Run `bin/gantry check` again after edits, or use
 `bin/gantry check --strict` in CI (exit 1 when unsuppressed violations are found; advice does not fail CI).
 `bin/gantry check --generated` is a separate check: templ's and sqlc's Go,
 generated again in a copy of the app, must be what the app has, so a hand
-edit to generated code fails it rather than being lost to the next generate.
+edit to generated code fails it rather than being lost to the next generate,
+and so does a generated file whose `.templ` or `.sql` is gone. It runs the
+`templ` and `sqlc` on the machine, which should be the versions the app's
+Dockerfile installs: a file another version made is reported as such.
 
 The checks read local `.html`, `.templ`, `.js`, and Go source files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,

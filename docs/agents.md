@@ -128,8 +128,10 @@ bin/gantry exec templ generate
 Follow the app's existing generation workflow and do not edit generated Go
 instead of its `.sql` or `.templ` source: `bin/gantry check --generated`
 generates it again in a copy of the app and fails on a difference, naming the
-source to edit. It runs the `templ` and `sqlc` on the machine, at the versions
-the app's Dockerfile installs. Keep the Dockerfile's asset precompile
+source to edit, and on a generated file whose source is gone, which no generate
+deletes. It runs the `templ` and `sqlc` on the machine; run it with the versions
+the app's Dockerfile installs (the app's CI does), since a file another version
+made is reported as made by that version, not as an edit. Keep the Dockerfile's asset precompile
 step so tests and production use the optimized assets. Preserve the app's
 SQLite/upload volumes and apply schema changes through migrations. Development
 fixtures belong to the app; do not introduce a shared default production login.
