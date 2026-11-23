@@ -117,6 +117,11 @@ func TestAttach(t *testing.T) {
 	if err != nil || !strings.HasPrefix(txt.ContentType, "text/plain") || txt.Width != 0 || s.Picture(txt) {
 		t.Errorf("text: %+v %v", txt, err)
 	}
+	// A picture claiming more pixels than the pipeline reads is refused.
+	bomb := []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
+	if b, err := s.Attach(ctx, clip(3), File{Filename: "bomb.gif", Data: bomb}); err == nil {
+		t.Errorf("stored a bomb: %+v", b)
+	}
 }
 
 func TestAttachReplaces(t *testing.T) {
@@ -257,6 +262,17 @@ func TestServe(t *testing.T) {
 	}
 	if w := get(s.URL(txt)); w.Code != 200 || w.Body.String() != "hello there" {
 		t.Errorf("an original: %d %q", w.Code, w.Body.String())
+	}
+	// An upload that isn't a picture is a download, never a page of the
+	// app's: a script in it would run with the visitor's session.
+	page, _ := s.Attach(ctx, Ref{"Clip", 1, "page"}, File{"page.html", []byte(`<html><script>fetch("/account")</script></html>`)})
+	svg, _ := s.Attach(ctx, Ref{"Clip", 1, "logo"}, File{"logo.svg", []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/account")</script></svg>`)})
+	for _, b := range []Blob{txt, page, svg} {
+		w := get(s.URL(b))
+		if w.Code != 200 || w.Header().Get("Content-Disposition") != "attachment; filename="+b.Filename ||
+			w.Header().Get("X-Content-Type-Options") != "nosniff" || w.Header().Get("Content-Security-Policy") != "default-src 'none'; sandbox" {
+			t.Errorf("%s (%s): %d %v", b.Filename, b.ContentType, w.Code, w.Header())
+		}
 	}
 	for _, path := range []string{"/storage/" + loose.Key + "/160w-q80.webp", "/storage/" + loose.Key + "/original", "/storage/nosuchkey/original"} {
 		if w := get(path); w.Code != http.StatusNotFound {

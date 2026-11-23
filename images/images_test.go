@@ -65,6 +65,10 @@ func withOrientation(jpg []byte, o uint16) []byte {
 	return append(out, jpg[2:]...)
 }
 
+// bomb is a GIF's 13-byte header claiming 65535×65535: 4.3 billion pixels,
+// 17 GB decoded.
+var bomb = []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
+
 func TestResize(t *testing.T) {
 	p := &Pipeline{}
 	t.Run("resize fits within the width and never enlarges", func(t *testing.T) {
@@ -86,6 +90,15 @@ func TestResize(t *testing.T) {
 		}
 		if _, err := p.Resize([]byte("not an image"), 100, 80); err == nil {
 			t.Error("resized garbage")
+		}
+	})
+
+	t.Run("an image claiming too many pixels is refused from its header", func(t *testing.T) {
+		if w, h, _, err := p.Dimensions(bomb); err == nil {
+			t.Errorf("sized a bomb: %d×%d", w, h)
+		}
+		if _, err := p.Resize(bomb, 100, 80); err == nil {
+			t.Error("resized a bomb")
 		}
 	})
 
