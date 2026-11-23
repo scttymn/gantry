@@ -210,6 +210,22 @@ workflow or `bin/gantry deploy --server --follow`. Confirm the intended commit
 is serving and check the affected live pages before reporting success. Creating
 a local development app does not itself require creating a production project.
 
+### The signing key
+
+`SECRET_KEY` signs password-reset links, flash and return-to cookies, email-code
+challenges and live-stream tokens. Outside development and test (`GANTRY_ENV`,
+which defaults to production) the app refuses to start without one of at least
+32 bytes. Generate it once with `openssl rand -hex 32` and store it as a Houston
+secret; never commit it or print it. Development and test keep a generated key
+in the database instead, so they need no setting.
+
+Upgrading: a production app deployed with a blank or short `SECRET_KEY` must set
+one before it upgrades, or it won't start. Changing the key invalidates
+outstanding reset links, flash, return-to and email-code cookies, and live-stream
+tokens; sessions are unaffected, as their cookies hold a random token rather
+than a signature. A `sign.Signer` built with a key under 32 bytes panics, so
+tests that construct one need a longer key (`strings.Repeat("test-key", 4)`).
+
 ### First-install password accounts
 
 The password generator now uses shared Gantry Auth with a one-time setup wizard

@@ -15,7 +15,7 @@ import (
 )
 
 func TestPasswordSetupAndLogin(t *testing.T) {
-	a := New(test.DB(t), sign.Signer{Key: []byte("test cookies")}, nil, "", filepath.Join(t.TempDir(), "setup-code"))
+	a := New(test.DB(t), sign.Signer{Key: []byte("test cookies, signed with 32 bytes")}, nil, "", filepath.Join(t.TempDir(), "setup-code"))
 	a.Paths.AfterLogin = "/account"
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	a.Routes(rt)
