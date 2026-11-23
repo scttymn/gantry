@@ -47,6 +47,21 @@ func TestDefaultsAndGuards(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+func TestDevelopmentOnlyNeedsGuard(t *testing.T) {
+	for _, name := range []string{"Development", "DevelopmentWithRules", "Timing", "Reload"} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			put(t, root, "cmd/shop/main.go", "package main\nimport \"github.com/scttymn/gantry/web\"\nfunc main(){\nif cfg.Development(){h = web."+name+"(h)}\nh = web."+name+"(h)\n}\n")
+			got, err := Scan(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Rule != "development-guard" || got[0].Line != 5 || !strings.Contains(got[0].Message, "web."+name+" ") {
+				t.Fatalf("want one development-guard finding on line 5 naming web.%s, got %+v", name, got)
+			}
+		})
+	}
+}
 func TestDocumentedExceptions(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "app/page.html", `<script src="/custom.js"></script>`)
