@@ -108,7 +108,14 @@ var (
 	fontWghtRe = regexp.MustCompile(`font-weight: (\d+)`)
 )
 
-// generateFonts is `gantry g fonts FAMILY[:WEIGHTS]... [--subsets latin,latin-ext]
+func fontsFlags() (fs *flag.FlagSet, subsets *string, force *bool) {
+	fs = flagSet("fonts")
+	subsets = fs.String("subsets", "latin,latin-ext", "the character sets to keep, as Google names them: `latin,latin-ext`")
+	force = fs.Bool("force", false, "replace assets/css/fonts.css, and the fonts it used")
+	return fs, subsets, force
+}
+
+// generateFonts is`gantry g fonts FAMILY[:WEIGHTS]... [--subsets latin,latin-ext]
 // [--force]`: Google Fonts served from the app itself, so no stylesheet on
 // another host holds up the first paint. It downloads each face's WOFF2
 // files into assets/fonts and writes assets/css/fonts.css, and prints the
@@ -118,13 +125,10 @@ var (
 // when the family swaps in: measured from the family's TTF, which Google
 // serves a plain client, and which isn't kept.
 func generateFonts(root string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("fonts", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	subsets := fs.String("subsets", "latin,latin-ext", "the character sets to keep, as Google names them")
-	force := fs.Bool("force", false, "replace assets/css/fonts.css, and the fonts it used")
+	fs, subsets, force := fontsFlags()
 	var specs []string
 	for len(args) > 0 {
-		if err := fs.Parse(args); err != nil {
+		if err := parseFlags(fs, args); err != nil {
 			return err
 		}
 		if fs.NArg() == 0 {

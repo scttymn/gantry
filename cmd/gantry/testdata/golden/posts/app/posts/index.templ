@@ -1,0 +1,8 @@
+package posts
+
+import "example.com/gym/app/shared/resource"
+
+// index is the list: each post's title and body.
+templ index(p resource.Page, rows []resource.Row) {
+	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Title", "Body"}, Rows: rows})
+}

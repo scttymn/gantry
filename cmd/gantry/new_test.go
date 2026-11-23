@@ -170,6 +170,36 @@ func TestNewGolden(t *testing.T) {
 	}
 }
 
+// The JavaScript a new app vendors is MIT, which asks that every copy carry
+// its copyright and permission notice: the app's copy does, in a /*! */
+// comment the build's minifying keeps.
+func TestNewVendorLicenses(t *testing.T) {
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for file, copyright := range map[string]string{
+		"@hotwired--turbo.js":    "Copyright (c) 37signals",
+		"@hotwired--stimulus.js": "Copyright © 2021 Basecamp, LLC.",
+	} {
+		got, err := os.ReadFile(filepath.Join(root, "shop", "assets", "js", "vendor", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, rest, opened := strings.Cut(string(got), "\n\n/*!\n")
+		license, _, closed := strings.Cut(rest, "*/")
+		if !opened || !closed {
+			t.Errorf("%s has no license comment after its first line", file)
+			continue
+		}
+		for _, want := range []string{copyright, "Permission is hereby granted, free of charge", "included in all copies or substantial portions of the Software"} {
+			if !strings.Contains(license, want) {
+				t.Errorf("%s's license is missing %q", file, want)
+			}
+		}
+	}
+}
+
 func TestNewPostgresEnv(t *testing.T) {
 	root := t.TempDir()
 	gantry(t, root, "new", "shop", "--db", "postgres", "--skip-houston")
@@ -308,6 +338,39 @@ func TestNewRequiresThisRelease(t *testing.T) {
 		if got, stderr := requires(t); got != latestRelease || !strings.Contains(stderr, "isn't a release") {
 			t.Errorf("version %q: requires %s; %s", v, got, stderr)
 		}
+	}
+}
+
+// AGENTS.md sends agents to the docs of the gantry go.mod requires, and its
+// layout map is the README's.
+func TestNewAgents(t *testing.T) {
+	was := releaseVersion
+	t.Cleanup(func() { releaseVersion = was })
+	releaseVersion = "v9.8.7"
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	agents, err := os.ReadFile(filepath.Join(root, "shop", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"blob/v9.8.7/docs/agents.md", "blob/v9.8.7/docs/strict.md", "bin/gantry check --strict", "bin/gantry test"} {
+		if !strings.Contains(string(agents), want) {
+			t.Errorf("AGENTS.md has no %s:\n%s", want, agents)
+		}
+	}
+	if strings.Contains(string(agents), "blob/main/") {
+		t.Error("AGENTS.md links to docs on main, not the app's version")
+	}
+	readme, _ := os.ReadFile(filepath.Join(root, "shop", "README.md"))
+	layout := func(doc []byte) string {
+		_, after, _ := strings.Cut(string(doc), "## Where things go\n")
+		section, _, _ := strings.Cut(after, "\n## ")
+		return section
+	}
+	if layout(agents) == "" || layout(agents) != layout(readme) {
+		t.Errorf("AGENTS.md's layout map isn't the README's:\n%s\n---\n%s", layout(agents), layout(readme))
 	}
 }
 
@@ -522,5 +585,54 @@ func gofmted(t *testing.T, rel string, src []byte) {
 	}
 	if f, err := format.Source(src); err != nil || string(f) != string(src) {
 		t.Errorf("%s isn't gofmt'd (%v)", rel, err)
+	}
+}
+
+// A new app's test stage compiles it as its production build does, with
+// nodevcheck, so a call that only development builds have fails at gantry
+// test, not at deploy.
+func TestNewAppProductionBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short")
+	}
+	if _, err := exec.LookPath("templ"); err != nil {
+		t.Skip("templ isn't installed: run it in the toolchain (bin/go)")
+	}
+	repo, _ := filepath.Abs("../..")
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston", "--gantry", repo, "--module", "example.com/shop"); code != 0 {
+		t.Fatal(stderr)
+	}
+	dir := filepath.Join(root, "shop")
+	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run("templ", "generate"); err != nil {
+		t.Fatalf("templ generate: %v\n%s", err, out)
+	}
+	if out, err := run("go", "build", "-tags", "nodynamic,nodevcheck", "./..."); err != nil {
+		t.Fatalf("a new app's production build: %v\n%s", err, out)
+	}
+	os.MkdirAll(filepath.Join(dir, "internal", "devrules"), 0o755)
+	os.WriteFile(filepath.Join(dir, "internal", "devrules", "devrules.go"), []byte(`package devrules
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+)
+
+func Wrap(h http.Handler) http.Handler { return web.DevelopmentWithRules(h, ".", nil, nil) }
+`), 0o644)
+	if out, err := run("go", "vet", "./internal/devrules"); err != nil {
+		t.Fatalf("the development build should compile the call: %v\n%s", err, out)
+	}
+	if out, err := run("go", "build", "-tags", "nodynamic,nodevcheck", "./..."); err == nil || !strings.Contains(out, "undefined: web.DevelopmentWithRules") {
+		t.Fatalf("the production build should fail naming web.DevelopmentWithRules: %v\n%s", err, out)
 	}
 }

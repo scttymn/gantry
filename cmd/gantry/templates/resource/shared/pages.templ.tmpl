@@ -1,0 +1,108 @@
+package resource
+
+import (
+	"strings"
+
+	"github.com/scttymn/gantry/text"
+	"github.com/scttymn/gantry/web"
+
+	"{{.Module}}/app/shared/layout"
+)
+
+templ notice(p Page) {
+	if p.Notice != "" {
+		<p role="status">{ p.Notice }</p>
+	}
+}
+
+// ListPage is a resource's list, as Rails' scaffold's index: a row for each
+// record, with a link to edit it, and one to make a new one.
+templ ListPage(p Page, l List) {
+	@layout.Layout(layout.Page{Title: p.Title, Path: p.Path}) {
+		<main class="resource">
+			@notice(p)
+			<h1>{ p.Title }</h1>
+			<table>
+				<thead>
+					<tr>
+						for _, column := range l.Columns {
+							<th>{ column }</th>
+						}
+						<th></th>
+					</tr>
+				</thead>
+				<tbody>
+					for _, row := range l.Rows {
+						<tr>
+							for _, cell := range row.Cells {
+								<td>{ cell }</td>
+							}
+							<td><a href={ templ.URL(l.Path + "/" + web.IDText(row.ID) + "/edit") }>Edit</a></td>
+						</tr>
+					}
+				</tbody>
+			</table>
+			<p><a href={ templ.URL(l.Path + "/new") }>New { strings.ToLower(l.Singular) }</a></p>
+		</main>
+	}
+}
+
+// FormPage is a record's new or edit page, as Rails' scaffold's form: its
+// fields, what's wrong when it's sent back, and on an edit, deleting it.
+templ FormPage(p Page, f Form) {
+	@layout.Layout(layout.Page{Title: p.Title, Path: p.Path}) {
+		<main class="resource">
+			@notice(p)
+			<h1>{ p.Title }</h1>
+			if len(f.Errors) > 0 {
+				<div role="alert">
+					<h2>{ text.Count(len(f.Errors), "error") } prohibited this { strings.ReplaceAll(f.Param, "_", " ") } from being saved:</h2>
+					<ul>
+						for _, e := range f.Errors {
+							<li>{ e }</li>
+						}
+					</ul>
+				</div>
+			}
+			<form
+				method="post"
+				action={ templ.URL(f.Action) }
+				if f.Multipart() {
+					enctype="multipart/form-data"
+				}
+			>
+				if f.Method != "post" {
+					<input type="hidden" name="_method" value={ f.Method }/>
+				}
+				for _, field := range f.Fields {
+					@input(f, field)
+				}
+				<button type="submit">Save</button>
+				<a href={ templ.URL(f.Cancel) }>Cancel</a>
+			</form>
+			if f.Method == "patch" {
+				<form class="delete" method="post" action={ templ.URL(f.Action) } data-turbo-confirm="Are you sure?">
+					<input type="hidden" name="_method" value="delete"/>
+					<button type="submit">Delete</button>
+				</form>
+			}
+		</main>
+	}
+}
+
+templ input(f Form, field Field) {
+	<p>
+		<label for={ f.Param + "_" + field.Name }>{ field.Label }</label>
+		switch field.Type {
+			case "textarea":
+				<textarea id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }>{ f.Values[field.Name] }</textarea>
+			case "file":
+				if f.Photos[field.Name] != nil {
+					@f.Photos[field.Name]
+				}
+				<input type="file" id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }/>
+			default:
+				<input type={ field.Type } id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" } value={ f.Values[field.Name] }/>
+		}
+	</p>
+}

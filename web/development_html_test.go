@@ -1,3 +1,5 @@
+//go:build !nodevcheck
+
 package web
 
 import (
@@ -12,8 +14,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/scttymn/gantry/devcheck"
 )
 
 func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
@@ -58,7 +58,7 @@ func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
 }
 
 func warningContext() context.Context {
-	return context.WithValue(context.Background(), developmentWarningsKey{}, []devcheck.Warning{{File: "page.html", Line: 1, Rule: "asset-url", Severity: "error", Message: "Use assets.Path"}})
+	return context.WithValue(context.Background(), developmentWarningsKey{}, []developmentWarning{{File: "page.html", Line: 1, Rule: "asset-url", Severity: "error", Message: "Use assets.Path"}})
 }
 func TestDevelopmentInjectionBoundaries(t *testing.T) {
 	original := `<html><body><script>const text = "</body>";</script><p>content</p></body></html>`

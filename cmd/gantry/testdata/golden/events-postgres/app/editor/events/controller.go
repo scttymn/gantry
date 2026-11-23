@@ -1,0 +1,143 @@
+// Package events is the editor's events, at /editor/events.
+package events
+
+import (
+	"maps"
+	"net/http"
+	"strings"
+
+	"github.com/a-h/templ"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/web"
+
+	"example.com/gym/app/models"
+	"example.com/gym/app/shared/resource"
+)
+
+const (
+	path     = "/editor/events"
+	param    = "event" // the form's fields are event[name], …
+	title    = "Events"
+	singular = "Event"
+)
+
+// Controller is the events' pages: the list, the forms, and deleting.
+type Controller struct{ resource.Controller }
+
+var fields = []resource.Field{resource.F("name"), resource.F("starts_on", resource.Type("date")), resource.Position}
+
+// formValues are a event as its form holds them: text, as typed.
+func formValues(event models.Event) map[string]string {
+	return map[string]string{"name": event.Name, "starts_on": resource.DateText(event.StartsOn), "position": resource.IntText(event.Position)}
+}
+
+// fromForm reads a form's values back into a event.
+func fromForm(v map[string]string) models.Event {
+	return models.Event{Name: v["name"], StartsOn: resource.OptionalDate(v["starts_on"]), Position: resource.OptionalInt(v["position"])}
+}
+
+func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
+	list, err := models.New(c.DB.Read).ListEvents(r.Context())
+	if err != nil {
+		return err
+	}
+	rows := make([]resource.Row, len(list))
+	for i, event := range list {
+		rows[i] = resource.Row{ID: event.ID, Cells: []string{resource.ListText(event.Name), resource.DateText(event.StartsOn)}}
+	}
+	return c.Render(w, r, http.StatusOK, title, func(p resource.Page) templ.Component { return index(p, rows) })
+}
+
+func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
+	return c.form(w, r, http.StatusOK, 0, map[string]string{}, nil)
+}
+
+func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
+	v := resource.Overlay(r, param, map[string]string{})
+	event := fromForm(v)
+	if errs := event.Errors(); len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
+	}
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
+		// On Postgres two at once can still take the same position; the
+		// list orders by position, then id.
+		if !event.Position.Valid {
+			next, err := q.NextEventPosition(r.Context())
+			if err != nil {
+				return err
+			}
+			event.Position.Int64, event.Position.Valid = next, true
+		}
+		_, err = q.CreateEvent(r.Context(), models.CreateEventParams{Name: event.Name, StartsOn: resource.DateParam(event.StartsOn), Position: event.Position, Now: c.Now()})
+		return err
+	})
+	if err != nil {
+		return err
+	}
+	return c.Created(w, r, path, singular)
+}
+
+func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
+	event, err := models.New(c.DB.Read).GetEvent(r.Context(), web.ID(r, "id"))
+	if err != nil {
+		return err
+	}
+	return c.form(w, r, http.StatusOK, event.ID, formValues(event), nil)
+}
+
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
+func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
+	sent := resource.Overlay(r, param, map[string]string{})
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.GetEventForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
+		event := fromForm(v)
+		if errs = event.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.UpdateEvent(r.Context(), models.UpdateEventParams{Name: event.Name, StartsOn: resource.DateParam(event.StartsOn), Position: event.Position, Now: c.Now(), ID: id})
+	})
+	if err != nil {
+		return err
+	}
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
+	}
+	return c.Saved(w, r, path, singular)
+}
+
+func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
+	q := models.New(c.DB.Write)
+	event, err := q.GetEvent(r.Context(), web.ID(r, "id"))
+	if err != nil {
+		return err
+	}
+	if err := q.DeleteEvent(r.Context(), event.ID); err != nil {
+		return err
+	}
+	return c.Deleted(w, r, path, singular)
+}
+
+// form is the new or edit form, with what's wrong when it's sent back.
+func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
+	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
+	heading := "New " + strings.ToLower(singular)
+	if id != 0 {
+		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
+	}
+	return c.Render(w, r, status, heading, func(p resource.Page) templ.Component { return form(p, f) })
+}

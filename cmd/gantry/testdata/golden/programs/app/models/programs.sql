@@ -7,6 +7,11 @@ SELECT * FROM programs ORDER BY position, id;
 -- name: GetProgram :one
 SELECT * FROM programs WHERE id = sqlc.arg(id);
 
+-- The row, read in the transaction that changes it, so no other change
+-- lands between the read and the write: SQLite's transaction holds the write lock already.
+-- name: GetProgramForUpdate :one
+SELECT * FROM programs WHERE id = sqlc.arg(id);
+
 -- name: CreateProgram :one
 INSERT INTO programs (name, blurb, cta, position, created_at, updated_at)
 VALUES (sqlc.arg(name), sqlc.arg(blurb), sqlc.arg(cta), sqlc.arg(position), sqlc.arg(now), sqlc.arg(now))
@@ -20,5 +25,6 @@ WHERE id = sqlc.arg(id);
 DELETE FROM programs WHERE id = sqlc.arg(id);
 
 -- A new program with no position goes last, as Rails' Positioned.
+-- BIGINT is int64 on both engines, as the position column is.
 -- name: NextProgramPosition :one
-SELECT CAST(COALESCE(MAX(position), 0) + 1 AS INTEGER) AS position FROM programs;
+SELECT CAST(COALESCE(MAX(position), 0) + 1 AS BIGINT) AS position FROM programs;

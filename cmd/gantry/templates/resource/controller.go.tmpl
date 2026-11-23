@@ -1,16 +1,18 @@
-// Package {{.Package}} is the {{.Namespace}}'s {{lower .Title}}, at {{.Base}}.
+// Package {{.Package}} is {{if .Namespace}}the {{.Namespace}}'s{{else}}the app's{{end}} {{lower .Title}}, at {{.Base}}.
 package {{.Package}}
 
 import (
+	"maps"
 	"net/http"
 	"strings"
 
 	"github.com/a-h/templ"
 
+	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
 
-	"{{.Module}}/app/admin"
 	"{{.Module}}/app/models"
+	"{{.Module}}/app/shared/resource"
 )
 
 const (
@@ -25,9 +27,9 @@ const (
 )
 
 // Controller is the {{lower .Title}}' pages: the list, the forms, and deleting.
-type Controller struct{ admin.Controller }
+type Controller struct{ resource.Controller }
 
-var fields = []admin.Field{ {{- range $i, $f := .Fields}}{{if $i}}, {{end}}{{field $f}}{{end -}} }
+var fields = []resource.Field{ {{- range $i, $f := .Fields}}{{if $i}}, {{end}}{{field $f}}{{end -}} }
 
 // formValues are a {{lower .Singular}} as its form holds them: text, as typed.
 func formValues({{var}} models.{{.Model}}) map[string]string {
@@ -44,11 +46,11 @@ func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	rows := make([]admin.Row, len(list))
+	rows := make([]resource.Row, len(list))
 	for i, {{var}} := range list {
-		rows[i] = admin.Row{ID: {{var}}.ID, Cells: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}{{cell $f}}{{end -}} }}
+		rows[i] = resource.Row{ID: {{var}}.ID, Cells: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}{{cell $f}}{{end -}} }}
 	}
-	return c.Render(w, r, http.StatusOK, title, func(p admin.AdminPage) templ.Component { return index(p, rows) })
+	return c.Render(w, r, http.StatusOK, title, func(p resource.Page) templ.Component { return index(p, rows) })
 }
 
 func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
@@ -56,22 +58,28 @@ func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
-	v := admin.Overlay(r, param, map[string]string{})
+	v := resource.Overlay(r, param, map[string]string{})
 	{{var}} := fromForm(v)
 	if errs := {{var}}.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
 	}
-	q := models.New(c.DB.Write)
+	{{if .Photos}}var id int64
+	{{end}}err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
 {{- if .Position}}
-	if !{{var}}.Position.Valid {
-		next, err := q.Next{{.Model}}Position(r.Context())
-		if err != nil {
-			return err
+		// On Postgres two at once can still take the same position; the
+		// list orders by position, then id.
+		if !{{var}}.Position.Valid {
+			next, err := q.Next{{.Model}}Position(r.Context())
+			if err != nil {
+				return err
+			}
+			{{var}}.Position.Int64, {{var}}.Position.Valid = next, true
 		}
-		{{var}}.Position.Int64, {{var}}.Position.Valid = next, true
-	}
 {{- end}}
-	{{if .Photos}}id{{else}}_{{end}}, err := q.Create{{.Model}}(r.Context(), models.Create{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now()})
+		{{if .Photos}}id{{else}}_{{end}}, err = q.Create{{.Model}}(r.Context(), models.Create{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now()})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -91,22 +99,38 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, {{var}}.ID, formValues({{var}}), nil)
 }
 
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
-	was, err := models.New(c.DB.Read).Get{{.Model}}(r.Context(), web.ID(r, "id"))
+	sent := resource.Overlay(r, param, map[string]string{})
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.Get{{.Model}}ForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
+		{{var}} := fromForm(v)
+		if errs = {{var}}.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.Update{{.Model}}(r.Context(), models.Update{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now(), ID: id})
+	})
 	if err != nil {
 		return err
 	}
-	v := admin.Overlay(r, param, formValues(was))
-	{{var}} := fromForm(v)
-	if errs := {{var}}.Errors(); len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
-	}
-	err = models.New(c.DB.Write).Update{{.Model}}(r.Context(), models.Update{{.Model}}Params{ {{- range .Columns}}{{.Go}}: {{param .}}, {{end}}Now: c.Now(), ID: was.ID})
-	if err != nil {
-		return err
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
 	}
 {{- range .Photos}}
-	if err := c.SavePhoto(r, param, "{{.Column}}", recordType, was.ID); err != nil {
+	if err := c.SavePhoto(r, param, "{{.Column}}", recordType, id); err != nil {
 		return err
 	}
 {{- end}}
@@ -120,7 +144,7 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 {{- range .Photos}}
-	if err := c.Photos.Purge(r.Context(), recordType, {{var}}.ID, "{{.Column}}"); err != nil {
+	if err := c.PurgePhoto(r.Context(), recordType, {{var}}.ID, "{{.Column}}"); err != nil {
 		return err
 	}
 {{- end}}
@@ -132,13 +156,17 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 
 // form is the new or edit form, with what's wrong when it's sent back.
 func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
-	f := admin.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
+	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)
 	if id != 0 {
 		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
 {{- if .Photos}}
-		f.Photos = c.PhotoPreviews(r.Context(), recordType, id{{range .Photos}}, "{{.Column}}"{{end}})
+		photos, err := c.PhotoPreviews(r.Context(), recordType, id{{range .Photos}}, "{{.Column}}"{{end}})
+		if err != nil {
+			return err
+		}
+		f.Photos = photos
 {{- end}}
 	}
-	return c.Render(w, r, status, heading, func(p admin.AdminPage) templ.Component { return form(p, heading, f) })
+	return c.Render(w, r, status, heading, func(p resource.Page) templ.Component { return form(p, f) })
 }

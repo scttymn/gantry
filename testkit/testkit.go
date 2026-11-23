@@ -52,7 +52,7 @@ type IDs map[string]map[string]int64
 // and each file's rows in its order. A table's created_at and updated_at,
 // when it has them, default to now. A value equal to a key of replace is
 // replaced ("PASSWORD_DIGEST" with a real hash, say). true and false are
-// written as 1 and 0, and ~ as NULL.
+// booleans on Postgres and 1 and 0 on SQLite, and ~ is NULL.
 func Fixtures(t testing.TB, d *db.DB, fsys fs.FS, replace map[string]any) IDs {
 	t.Helper()
 	ctx := context.Background()
@@ -91,7 +91,14 @@ func Fixtures(t testing.TB, d *db.DB, fsys fs.FS, replace map[string]any) IDs {
 				var v any = node.Value
 				switch {
 				case node.Tag == "!!bool":
-					v = map[string]int{"true": 1, "false": 0}[node.Value]
+					var b bool
+					if err := node.Decode(&b); err != nil {
+						t.Fatalf("fixture %s.%s.%s: %v", table, label, col, err)
+					}
+					v = b
+					if d.Engine != db.Postgres {
+						v = map[bool]int{true: 1, false: 0}[b]
+					}
 				case node.Tag == "!!null":
 					v = nil
 				default:

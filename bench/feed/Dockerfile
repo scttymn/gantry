@@ -1,7 +1,7 @@
 # Stages: toolchain (Go, templ, sqlc, sqlite3), dev (the mounted code,
-# rebuilt on change), test, and production (a static binary on an empty
-# image). Houston builds dev for gantry dev, test for gantry test, and
-# production to deploy.
+# rebuilt on change), test, and production (a static binary without the
+# development checks, on an empty image). Houston builds dev for gantry dev,
+# test for gantry test, and production to deploy.
 
 FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS toolchain
 COPY --from=sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537 /workspace/sqlc /usr/local/bin/sqlc
@@ -37,9 +37,16 @@ RUN templ generate -path /app
 # production serves and no picture is resized on request.
 RUN --mount=type=cache,id=feed-assets,target=/cache/assets,sharing=locked \
     go run ./cmd/feed assets /cache/assets && cp -a /cache/assets/. assets/built/
-CMD ["sh", "-c", "go vet ./... && go test ./..."]
+# The build as production compiles it too (nodevcheck, below), so code that
+# only the dev stage has, such as web.DevelopmentWithRules, fails here and
+# not at deploy.
+CMD ["sh", "-c", "go vet ./... && GOFLAGS=\"$GOFLAGS,nodevcheck\" go build ./... && go test ./..."]
 
 FROM toolchain AS build
+# nodevcheck: the production binary leaves out the development checks
+# (web.Development's source scanner); dev keeps them. It extends -tags, so
+# -tags must stay the last flag in the toolchain's GOFLAGS.
+ENV GOFLAGS="${GOFLAGS},nodevcheck"
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

@@ -12,8 +12,9 @@ patterns; it covers a growing subset of them, not every performance concern.
 
 ## 1. Read the app before changing it
 
-- Read the app's own instructions and README, then `go.mod`, `compose.yml`,
-  `Dockerfile`, `app/routes.go`, and `app/shared/layout`.
+- Read the app's own instructions (`AGENTS.md`, which `gantry new` writes) and
+  README, then `go.mod`, `compose.yml`, `Dockerfile`, `app/routes.go`, and
+  `app/shared/layout`.
 - Check the pinned Gantry version and any `replace` directive or `go.work`.
   Use the APIs and generators that version provides. The documentation on
   `main` may describe features newer than the app's dependency.
@@ -76,10 +77,18 @@ that purpose if Strict flags it.
 
 Page caching is an explicit application decision. Do not wrap account pages,
 personalized responses or an entire authenticated router in a public page cache.
-Its key is the path and query, not the user's identity. Use `db.DB.Version` for
-database-driven invalidation where appropriate, and account for other data
-sources and time-dependent content. A clean Strict scan does not check this for
-you yet.
+Its key is the host, path and query, not the user's identity. `Cached` runs
+its scope's filters before the cache on every request, so `auth.Required` still
+turns away whoever it would, but everyone it lets in shares one copy of the
+page: cache a page behind it only when it's the same for every member, never
+one that reads `auth.Current`. Requests with an `Authorization` header or a
+`session` cookie (auth's default name) bypass the cache, and a response that
+sets a cookie or says `Cache-Control: private` or `no-store` is never kept. An
+app that renames its session cookie sets
+`rt.Cache.Skip = a.Auth.HasSessionCookie`; `Skip` replaces the default check.
+Use `db.DB.Version` for database-driven invalidation where appropriate, and
+account for other data sources and time-dependent content. A clean Strict scan
+does not check this for you yet.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user
@@ -100,9 +109,12 @@ Use the existing development server when it is already running.
 
 Use generators for a feature when they fit. Read `bin/gantry --help` and the
 generator's printed next steps. Generated code still needs application-specific
-wiring, validation and tests. The resource generator currently targets
-`admin/<table>` and expects a shared admin controller; inspect those dependencies
-before treating its output as a complete feature.
+wiring, validation and tests. `g resource posts ...` makes a top-level resource
+and `g resource admin/posts ...` one under any namespace. Its controllers share
+`app/shared/resource`, which the first resource writes and the app owns from
+then on. A namespaced resource is routed in its namespace's scope: give that
+scope the filter that guards it, such as `a.Auth.Required` from the `auth`
+recipe, since the generator can't know it.
 
 When the change needs migrations or regenerated queries/views, use the relevant
 steps in the app's container:
@@ -152,8 +164,9 @@ integration; see [Browser warnings](development.md#browser-warnings).
 
 For a justified alternative, use an exact file/rule exception with a specific
 reason in `.gantry-check.json`. Explain why the framework pattern does not apply
-and how the intended behavior is preserved. Do not add blanket exceptions just
-to get a clean result. The [development guide](development.md) defines the six
+and how the intended behavior is preserved, and cite the issue (`#123`) or
+decision record where it was agreed. Do not add blanket exceptions just
+to get a clean result. The [development guide](development.md) lists the
 current checks, their severities and exception syntax. Use `check --rules` to
 discover additions after an upgrade. [Strict's current coverage](strict.md#current-coverage)
 also identifies patterns that still require human or agent review.

@@ -555,6 +555,33 @@ func TestRequire(t *testing.T) {
 			t.Error("not signed in with a live session")
 		}
 	})
+	t.Run("HasSessionCookie goes by the cookie alone, for the page cache", func(t *testing.T) {
+		a := &Auth{}
+		for _, c := range []struct {
+			name   string
+			cookie *http.Cookie
+			want   bool
+		}{
+			{"none", nil, false},
+			{"the session's", &http.Cookie{Name: "session", Value: "anything"}, true},
+			{"an empty one", &http.Cookie{Name: "session", Value: ""}, false},
+			{"another", &http.Cookie{Name: "flash", Value: "x"}, false},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			if c.cookie != nil {
+				req.AddCookie(c.cookie)
+			}
+			if got := a.HasSessionCookie(req); got != c.want {
+				t.Errorf("%s: %v", c.name, got)
+			}
+		}
+		renamed := &Auth{Cookie: "sid"}
+		req := httptest.NewRequest("GET", "/", nil)
+		req.AddCookie(&http.Cookie{Name: "sid", Value: "x"})
+		if !renamed.HasSessionCookie(req) {
+			t.Error("the app's own cookie name wasn't used")
+		}
+	})
 }
 
 func TestPaths(t *testing.T) {

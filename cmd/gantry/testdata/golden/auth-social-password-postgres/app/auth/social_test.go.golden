@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	gantryauth "github.com/scttymn/gantry/auth"
@@ -14,5 +16,11 @@ func TestSocialConfiguration(t *testing.T) {
 	env := map[string]string{"GOOGLE_CLIENT_ID": "test-client", "GOOGLE_CLIENT_SECRET": "test-secret", "GOOGLE_REDIRECT_URL": "https://example.com/login/google/callback"}
 	if err := ConfigureSocial(a, func(k string) string { return env[k] }); err != nil || a.Social == nil || a.Social.Signup {
 		t.Fatal("explicit provider configuration", err)
+	}
+	for status, want := range map[int]int{0: http.StatusOK, http.StatusUnprocessableEntity: http.StatusUnprocessableEntity} {
+		w := httptest.NewRecorder()
+		if err := a.Views.Identities(w, httptest.NewRequest("GET", "/login/identities", nil), gantryauth.Page{Status: status}); err != nil || w.Code != want {
+			t.Errorf("Identities with Status %d: %d, want %d (%v)", status, w.Code, want, err)
+		}
 	}
 }
