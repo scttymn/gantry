@@ -130,6 +130,8 @@ func (i *Inbox) Routes(mount func(string, http.Handler), prefix string) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		// The inbox sets its own policy, for its pages and the mail it shows.
+		w.Header().Del("Content-Security-Policy-Report-Only")
 		if os.Getenv("GANTRY_ENV") != "development" || !localInboxHost(r.Host) {
 			http.NotFound(w, r)
 			return
@@ -247,7 +249,8 @@ func (i *Inbox) serve(w http.ResponseWriter, r *http.Request, base string) error
 			return nil
 		}
 	}
-	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+	// style-src 'self': the development panel's stylesheet.
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return inboxView.Execute(w, p)
 }

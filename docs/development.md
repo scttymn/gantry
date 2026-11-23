@@ -127,9 +127,11 @@ Both extend the toolchain stage's `-tags=` list, so they work only while
 Injection happens before Gantry compresses the response. Only complete HTML
 pages with a body are transformed; streams, fragments, encoded responses,
 upgraded connections, ranges and pages larger than 2 MiB pass through unchanged.
-Transformed pages are not cached. A strict CSP can block the panel's inline
-styles; terminal checks remain available. The disable setting is available for
-layouts that do not work well inside the development content area.
+Transformed pages are not cached. The panel's styles are a stylesheet at
+`/_gantry/development.css`, from the app itself, so the app's
+[Content-Security-Policy](security.md#content-security-policy) lets them in. The
+disable setting is available for layouts that do not work well inside the
+development content area.
 
 ## Reload on save
 
