@@ -80,7 +80,7 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 			all([]string{"Dockerfile", "cmd/gantry/templates/new/Dockerfile.tmpl"}, `postgresql-client-(\d+)`)},
 		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", all(workflows, `image: (postgres:\S+)`)},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
-		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?(nodynamic,[\w,]+)`)},
+		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?([\w,]+)`)},
 	}
 	for _, p := range pins {
 		for _, c := range p.copies {
@@ -96,6 +96,22 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// An image is pinned by its digest, which is what's pulled; its tag is for
+// people and Dependabot. Go's image is go.mod's Go series.
+func TestImagesArePinned(t *testing.T) {
+	pinned := regexp.MustCompile(`\A[\w./-]+:([\w.-]+)@sha256:[0-9a-f]{64}\z`)
+	for name, image := range map[string]string{"GolangImage": GolangImage, "SqlcImage": SqlcImage, "PostgresImage": PostgresImage} {
+		if !pinned.MatchString(image) {
+			t.Errorf("%s %q isn't name:tag@sha256:<64 hex digits> (internal/pins/pins.go)", name, image)
+		}
+	}
+	series := regexp.MustCompile(`\A\d+\.\d+`).FindString(Go)
+	tag := pinned.FindStringSubmatch(GolangImage)
+	if series == "" || tag == nil || !strings.HasPrefix(tag[1], series+"-") && !strings.HasPrefix(tag[1], series+".") {
+		t.Errorf("GolangImage %q isn't Go %s's series (go.mod's go line): pin a golang:%s image in internal/pins/pins.go", GolangImage, Go, series)
 	}
 }
 
