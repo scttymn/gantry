@@ -10,7 +10,7 @@
 # ignores.
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 cache=$root/.gantry/bin
 
@@ -142,7 +142,7 @@ if [ -n "$checkout" ]; then
 	*) checkout=$moddir/$checkout ;;
 	esac
 	[ -d "$checkout" ] || die "gantry checkout $checkout isn't there"
-	checkout=$(CDPATH= cd -- "$checkout" && pwd)
+	checkout=$(CDPATH='' cd -- "$checkout" && pwd)
 	grep -q '^module github.com/scttymn/gantry$' "$checkout/go.mod" || die "$checkout is not a gantry checkout"
 fi
 
@@ -305,7 +305,7 @@ if [ -n "${HOUSTON_BIN:-}" ]; then
 	[ -x "$HOUSTON_BIN" ] || die "HOUSTON_BIN ($HOUSTON_BIN) isn't executable"
 	case $HOUSTON_BIN in
 	/*) houston_abs=$HOUSTON_BIN ;;
-	*) houston_abs=$(CDPATH= cd -- "$(dirname -- "$HOUSTON_BIN")" && pwd)/$(basename -- "$HOUSTON_BIN") ;;
+	*) houston_abs=$(CDPATH='' cd -- "$(dirname -- "$HOUSTON_BIN")" && pwd)/$(basename -- "$HOUSTON_BIN") ;;
 	esac
 	mkdir -p "$cache"
 	ensure_link "$cache/houston" "$houston_abs"

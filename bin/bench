@@ -131,7 +131,7 @@ docker run --rm --name gantry-bench-load-0 --network "$net" gantry-toolchain tim
 	{ echo "bin/bench: the apps didn't come up" >&2; docker logs --tail 20 gantry-bench-base >&2; docker logs --tail 20 gantry-bench-head >&2; exit 1; }
 measure() { # measure SIDE ARGS...: the bench of that app, with the other stopped where it stands
 	local side=$1 other=base status=0; shift
-	[ "$side" = base ] && other=head
+	[ "$side" = base ] && other="head"
 	docker pause "gantry-bench-$other" >/dev/null
 	bench "$side" "$@" || status=$?
 	docker unpause "gantry-bench-$other" >/dev/null
