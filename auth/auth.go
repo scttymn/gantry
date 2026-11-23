@@ -11,8 +11,10 @@
 //
 // A session's cookie holds a random token and the table holds its SHA-256,
 // so a copy of the database signs nobody in, and ending a session is
-// deleting its row. Only routes wrapped in Require look a session up: public
-// pages never touch the sessions table.
+// deleting its row. Reset links are signed with the app's key, which in
+// production is SECRET_KEY, outside the database too (sign.Key). Only routes
+// wrapped in Require look a session up: public pages never touch the
+// sessions table.
 package auth
 
 import (

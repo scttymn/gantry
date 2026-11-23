@@ -35,7 +35,7 @@ func TestSecure(t *testing.T) {
 }
 
 func TestFlash(t *testing.T) {
-	f := Flash{Signer: sign.Signer{Key: []byte("k")}}
+	f := Flash{Signer: sign.Signer{Key: []byte(strings.Repeat("k", 32))}}
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest("POST", "https://example.com/login", nil)
 	f.Redirect(rec, r, "/login", "alert", "Try again | later.")
@@ -79,7 +79,7 @@ func TestRedirect(t *testing.T) {
 // browser to drop.
 func TestFlashTooLong(t *testing.T) {
 	var logged bytes.Buffer
-	f := Flash{Signer: sign.Signer{Key: []byte("k")}, Log: slog.New(slog.NewTextHandler(&logged, nil))}
+	f := Flash{Signer: sign.Signer{Key: []byte(strings.Repeat("k", 32))}, Log: slog.New(slog.NewTextHandler(&logged, nil))}
 	message := strings.Repeat("é", 5000) // two bytes each
 	r := httptest.NewRequest("POST", "https://example.com/", nil)
 	w := httptest.NewRecorder()

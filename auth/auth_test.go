@@ -57,7 +57,7 @@ func newApp(t *testing.T) *app {
 	t.Helper()
 	d := testkit.DB(t, func(ctx context.Context, d *db.DB) error { return d.Migrate(ctx, schema, "app_migrations") })
 	a := &app{t: t, mail: &fakeMail{}, now: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)}
-	a.auth = &Auth{DB: d, Signer: sign.Signer{Key: []byte("test key")}, Mail: a.mail, From: "Site <no-reply@example.com>",
+	a.auth = &Auth{DB: d, Signer: sign.Signer{Key: []byte(strings.Repeat("test key", 4))}, Mail: a.mail, From: "Site <no-reply@example.com>",
 		URL: func(path string) string { return "https://example.com" + path }, Limits: &web.Limits{},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return a.now },
 		Paths: Paths{AfterLogin: "/admin"}}

@@ -101,7 +101,7 @@ start() { # start SIDE BINARY: an app, as gantry-bench-SIDE
 	docker run -d --name "gantry-bench-$1" --network "$net" "${core[@]}" --memory=2g --memory-swap=2g \
 		-v "$PWD/bench/out:/bench:ro" -w /tmp \
 		-e GANTRY_ENV=production -e ADDR=:8080 -e DATA_DIR=/data -e BENCH_ADDR=:6060 \
-		-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets \
+		-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets-to-keep \
 		gantry-toolchain "/bench/$2" >/dev/null
 }
 loads=0

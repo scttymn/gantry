@@ -33,7 +33,7 @@ func newApp(t *testing.T) *app.App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer := sign.Signer{Key: []byte("test-key")}
+	signer := sign.Signer{Key: []byte(strings.Repeat("test-key", 4))}
 	a := &app.App{Mail: mailer, DB: d, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Signer: signer, Jobs: q, Live: live.New(signer, live.Options{}),
 		Secret: []byte("test-secret"), Started: time.Now()}
 	if err := a.DefineJobs(); err != nil {

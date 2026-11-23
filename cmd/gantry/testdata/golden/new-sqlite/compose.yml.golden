@@ -16,7 +16,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (openssl rand -hex 32, a Houston secret); blank in development
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
     volumes:
       - .:/app                     # the code, rebuilt on change

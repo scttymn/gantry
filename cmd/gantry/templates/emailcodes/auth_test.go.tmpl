@@ -27,7 +27,7 @@ func (c *capture) Send(_ context.Context, m mail.Message) error {
 func TestEmailCodeSignIn(t *testing.T) {
 	d := test.DB(t)
 	m := &capture{}
-	a := New(d, sign.Signer{Key: []byte("test cookies")}, m, "login@example.com", []byte(strings.Repeat("k", 32)))
+	a := New(d, sign.Signer{Key: []byte(strings.Repeat("c", 32))}, m, "login@example.com", []byte(strings.Repeat("k", 32)))
 	{{if not .Signup}}if _, err := a.CreateUser(t.Context(), "rider@example.com", "existing-user-password"); err != nil {
 		t.Fatal(err)
 	}
