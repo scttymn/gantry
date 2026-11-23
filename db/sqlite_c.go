@@ -114,6 +114,8 @@ import (
 	"unsafe"
 
 	_ "github.com/mattn/go-sqlite3" // SQLite's C, compiled
+
+	"github.com/scttymn/gantry/internal/pins"
 )
 
 // SQLite compiled from C, for a build with cgo (sqlite.go): gantry's own
@@ -152,20 +154,16 @@ var sqliteUncounted = C.gantry_memstatus_off() == sqliteOK
 // sqliteCOptions are what SQLite compiled from C must have been compiled
 // with, so an app's SQL means what it means in the translated build. The
 // build tags that select this build have github.com/mattn/go-sqlite3
-// compile in the first four; the rest are CGO_CFLAGS's (sqliteCFlags), as a
-// gantry app's Dockerfile sets them. A build without them doesn't start.
+// compile in the first four; the rest are CGO_CFLAGS's (pins.SQLiteCFlags),
+// as a gantry app's Dockerfile sets them. A build without them doesn't start.
 var sqliteCOptions = []string{
 	"ENABLE_FTS5", "ENABLE_MATH_FUNCTIONS", "ENABLE_DBSTAT_VTAB", "ENABLE_STAT4",
 	"SOUNDEX", "LIKE_DOESNT_MATCH_BLOBS", "ENABLE_OFFSET_SQL_FUNC", "ENABLE_DBPAGE_VTAB", "ENABLE_GEOPOLY",
 }
 
-// sqliteCFlags is CGO_CFLAGS for the C build: Go's own, and the options
-// the build tags don't give.
-const sqliteCFlags = "-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY"
-
 func init() {
 	if missing := sqliteMissing(); len(missing) > 0 {
-		panic(fmt.Sprintf("gantry/db: SQLite was compiled without %s: build with CGO_CFLAGS=%q, as a gantry app's Dockerfile does, or without cgo", strings.Join(missing, ", "), sqliteCFlags))
+		panic(fmt.Sprintf("gantry/db: SQLite was compiled without %s: build with CGO_CFLAGS=%q, as a gantry app's Dockerfile does, or without cgo", strings.Join(missing, ", "), pins.SQLiteCFlags))
 	}
 }
 

@@ -18,6 +18,12 @@ root). The tags and C flags are an app's Dockerfile's: without the tags a cgo
 build has the translated SQLite, without the flags the C one doesn't start, and
 `TestSQLiteCCompileOptions` fails on any other difference between the two.
 
+The versions gantry and its apps build with (Go, templ, the toolchain's and
+Postgres's images, SQLite's C flags and build tags) are in
+[`internal/pins`](internal/pins/pins.go), and `gantry new` writes them into an
+app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
+page) are held to them by its test, which says where to change one.
+
 Every pull request and push to `main` runs the `ci` workflow: both passes,
 the cgo one again with `-race`, `go vet`, gofmt, staticcheck, govulncheck and
 the bench modules' tests (below). Run staticcheck and govulncheck with
