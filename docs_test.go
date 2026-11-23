@@ -6,6 +6,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"unicode"
@@ -52,6 +53,9 @@ func TestDocChecksCatchProblems(t *testing.T) {
 		{"missing local anchor", "# Title\n\nSee [below](#later).\n", "has no heading with the anchor #later"},
 		{"missing file on main", "# Title\n\n- [Gone](https://github.com/scttymn/gantry/blob/main/docs/gone.md): notes\n", "docs/gone.md doesn't exist"},
 		{"module not in go.mod", "# Title\n\n## Decisions\n| Need | Choice |\n|---|---|\n| CLI | `github.com/spf13/cobra` |\n", "github.com/spf13/cobra is named in a decisions table"},
+		{"replacement not in go.mod", "# Title\n\n## Decisions\n| Need | Choice |\n|---|---|\n| CLI | `github.com/spf13/cobra`. **Superseded:** `github.com/urfave/cli` |\n", "github.com/urfave/cli is named in a decisions table"},
+		{"superseded outside the choice", "# Title\n\n## Decisions\n| Need | Choice | Why |\n|---|---|---|\n| CLI | `github.com/spf13/cobra` | Superseded the old one |\n", "github.com/spf13/cobra is named in a decisions table"},
+		{"another major version", "# Title\n\n## Decisions\n| Need | Choice |\n|---|---|\n| Views | `github.com/a-h/templ/v2/runtime` |\n", "github.com/a-h/templ/v2/runtime is named in a decisions table"},
 	}
 	required := map[string]bool{"github.com/a-h/templ": true}
 	for _, c := range cases {
@@ -67,7 +71,7 @@ func TestDocChecksCatchProblems(t *testing.T) {
 		})
 	}
 
-	sound := parseDoc("docs/x.md", "\n# Title\n\nSee [reload](other.md#reload-on-save), [setup](other.md#set-up-bingantry-twice), [plans](https://github.com/scttymn/gantry/tree/main/docs), [code](`x](y)`) and [below](#decisions).\n\n## Decisions\n| Need | Choice |\n| :--- | ---: |\n| Views | `github.com/a-h/templ/runtime` |\n| CLI | `github.com/spf13/cobra`. **Superseded:** `flag` |\n\n```sh\n| not a table\n```\n")
+	sound := parseDoc("docs/x.md", "\n# Title\n\nSee [reload](other.md#reload-on-save), [setup](other.md#set-up-bingantry-twice), [plans](https://github.com/scttymn/gantry/tree/main/docs), [code](`x](y)`) and [below](#decisions).\n\n## Decisions\n| Need | Choice | Why |\n| :--- | ---: | --- |\n| Views | `github.com/a-h/templ/runtime` | Typed, as [its docs](https://pkg.go.dev/net/http) and https://example.com/a/b say |\n| CSRF | Go 1.25/1.26's `http.CrossOriginProtection`, as in github.com/a-h/templ. | Standard |\n| CLI | `github.com/spf13/cobra`. **Superseded:** `flag` | `github.com/spf13/cobra` is what Houston used |\n\n```sh\n| not a table\n```\n")
 	for _, p := range check(sound, read, required) {
 		t.Errorf("a sound doc has a problem: %d: %s", p.line, p.msg)
 	}
@@ -258,10 +262,16 @@ func anchors(d doc) map[string]bool {
 	return out
 }
 
-var modulePath = regexp.MustCompile(`\b[a-z0-9-]+(?:\.[a-z0-9-]+)+(?:/[A-Za-z0-9._~-]+)+`)
+var (
+	modulePath   = regexp.MustCompile(`\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}(?:/[A-Za-z0-9._~-]+)+`)
+	addresses    = regexp.MustCompile(`\]\([^)]*\)|https?://\S+`)
+	superseded   = regexp.MustCompile(`(?i)superseded`)
+	majorVersion = regexp.MustCompile(`^v(?:[2-9]|[1-9][0-9]+)$`)
+)
 
 // decisionProblems holds a plan's decisions table to go.mod: a module it
-// names is required there, or its row says it was superseded.
+// names is required there. A Choice marked Superseded is history up to the
+// marker, and only what replaced it, after the marker, is checked.
 func decisionProblems(d doc, required map[string]bool) []problem {
 	runs, isTable := tables(d)
 	var problems []problem
@@ -269,13 +279,17 @@ func decisionProblems(d doc, required map[string]bool) []problem {
 		if !isTable(r) || !strings.Contains(strings.ToLower(headingAbove(d, r[0])), "decisions") {
 			continue
 		}
+		choice := slices.IndexFunc(cells(d.lines[r[0]]), func(c string) bool { return strings.EqualFold(strings.TrimSpace(c), "choice") })
 		for i := r[0] + 2; i < r[1]; i++ {
-			if strings.Contains(strings.ToLower(d.lines[i]), "superseded") {
-				continue
+			text := d.lines[i]
+			if row := cells(text); choice >= 0 && choice < len(row) {
+				if m := superseded.FindStringIndex(row[choice]); m != nil {
+					text = row[choice][m[1]:]
+				}
 			}
-			for _, mod := range modulePath.FindAllString(d.lines[i], -1) {
-				if !requires(required, mod) {
-					problems = append(problems, problem{i + 1, fmt.Sprintf(`%s is named in a decisions table but go.mod doesn't require it. Mark the row "**Superseded:**" with what's used instead, or require the module.`, mod)})
+			for _, mod := range modulePath.FindAllString(addresses.ReplaceAllString(text, ""), -1) {
+				if mod = strings.TrimRight(mod, "."); !requires(required, mod) {
+					problems = append(problems, problem{i + 1, fmt.Sprintf(`%s is named in a decisions table but go.mod doesn't require it. Require it, or, if it's no longer used, end its Choice with "**Superseded:**" and what replaced it.`, mod)})
 				}
 			}
 		}
@@ -292,10 +306,16 @@ func headingAbove(d doc, line int) string {
 	return ""
 }
 
+// requires reports whether a module go.mod requires holds pkg. Its path's
+// enclosing modules are tried in turn, but not across a major version:
+// m/v2 is a module of its own, not a package of m.
 func requires(required map[string]bool, pkg string) bool {
 	for p := pkg; p != "."; p = path.Dir(p) {
 		if required[p] {
 			return true
+		}
+		if majorVersion.MatchString(path.Base(p)) && required[path.Dir(p)] {
+			return false
 		}
 	}
 	return false
