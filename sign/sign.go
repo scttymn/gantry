@@ -29,10 +29,15 @@ const minKey = 32
 // generate is what an error over a short or missing key says to do.
 const generate = "generate one with `openssl rand -hex 32` and set it in the app's environment (a Houston secret)"
 
-func (s Signer) mac(purpose, value string) string {
+// checkKey panics on a short key, first thing in Sign and Verify, so a
+// misconfigured Signer fails its first use whatever the token.
+func (s Signer) checkKey() {
 	if len(s.Key) < minKey {
 		panic(fmt.Sprintf("sign: a %d-byte key; a Signer needs at least %d: %s", len(s.Key), minKey, generate))
 	}
+}
+
+func (s Signer) mac(purpose, value string) string {
 	m := hmac.New(sha256.New, s.Key)
 	m.Write([]byte(purpose + "\x00" + value))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
@@ -40,6 +45,7 @@ func (s Signer) mac(purpose, value string) string {
 
 // Sign signs value for purpose ("session", "lead_form", …).
 func (s Signer) Sign(purpose, value string) string {
+	s.checkKey()
 	return base64.RawURLEncoding.EncodeToString([]byte(value)) + "--" + s.mac(purpose, value)
 }
 
@@ -48,6 +54,7 @@ var macLen = base64.RawURLEncoding.EncodedLen(sha256.Size)
 
 // Verify is the value signed for purpose, if the token is genuine.
 func (s Signer) Verify(purpose, token string) (string, bool) {
+	s.checkKey()
 	// The signature is the fixed-length end: the value's encoding may have
 	// "--" in it too, as base64url's "-" is a letter of it.
 	i := len(token) - macLen - len("--")
@@ -93,5 +100,9 @@ func Key(ctx context.Context, d *db.DB, secret string) ([]byte, error) {
 	if err := d.Write.QueryRowContext(ctx, `SELECT value FROM gantry_settings WHERE name = 'signing_key'`).Scan(&stored); err != nil {
 		return nil, err
 	}
-	return hex.DecodeString(stored)
+	k, err := hex.DecodeString(stored)
+	if err != nil || len(k) < minKey {
+		return nil, fmt.Errorf("sign: the signing key kept in the database (gantry_settings) isn't a %d-byte key: delete its row (name 'signing_key') for a new one, or set SECRET_KEY", minKey)
+	}
+	return k, nil
 }

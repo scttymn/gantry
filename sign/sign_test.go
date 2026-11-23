@@ -2,6 +2,7 @@ package sign
 
 import (
 	"context"
+	"encoding/hex"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -34,18 +35,28 @@ func TestSigner(t *testing.T) {
 	}
 }
 
-// A key under 32 bytes is a mistake, not a key: signing with one panics
-// rather than hand out tokens anyone could forge.
+// A key under 32 bytes is a mistake, not a key: signing or checking with one
+// panics, whatever the token, rather than hand out tokens anyone could forge
+// or pass its tests until a real token turns up.
 func TestShortKey(t *testing.T) {
+	genuine := Signer{Key: key("k")}.Sign("p", "v")
 	for _, k := range [][]byte{nil, []byte("k"), key("")[1:]} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("a %d-byte key signed", len(k))
-				}
+		s := Signer{Key: k}
+		for name, use := range map[string]func(){
+			"signed":                      func() { s.Sign("p", "v") },
+			"checked a well-formed token": func() { s.Verify("p", genuine) },
+			"checked garbage":             func() { s.Verify("p", "!!--!!") },
+			"checked nothing":             func() { s.Verify("p", "") },
+		} {
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Errorf("a %d-byte key %s", len(k), name)
+					}
+				}()
+				use()
 			}()
-			Signer{Key: k}.Sign("p", "v")
-		}()
+		}
 	}
 }
 
@@ -70,6 +81,22 @@ func TestKey(t *testing.T) {
 		if again, _ := Key(ctx, d, ""); string(again) != string(first) {
 			t.Error(env, ": a restart made a new key")
 		}
+	}
+	// A stored key that isn't 32 bytes (emptied, cut short) is refused,
+	// saying how to start over, rather than panic at the first signature.
+	for _, stored := range []string{"", "abcd", hex.EncodeToString(key(""))[2:]} {
+		if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_settings SET value = $1 WHERE name = 'signing_key'`, stored); err != nil {
+			t.Fatal(err)
+		}
+		if k, err := Key(ctx, d, ""); err == nil || !strings.Contains(err.Error(), "gantry_settings") {
+			t.Errorf("a stored key of %q gave %d bytes: %v", stored, len(k), err)
+		}
+	}
+	if _, err := d.Write.ExecContext(ctx, `DELETE FROM gantry_settings WHERE name = 'signing_key'`); err != nil {
+		t.Fatal(err)
+	}
+	if k, err := Key(ctx, d, ""); err != nil || len(k) != 32 {
+		t.Errorf("deleting the row didn't make a new key: %d bytes, %v", len(k), err)
 	}
 	secret := strings.Repeat("s", 32)
 	for _, env := range []string{"development", "test", "production", ""} {
