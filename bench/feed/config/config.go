@@ -15,7 +15,7 @@ type Config struct {
 	Addr        string      // ADDR, default :8080
 	DataDir     string      // DATA_DIR: the database and uploads; default /data
 	DatabaseURL string      // DATABASE_URL; default sqlite://DATA_DIR/feed.sqlite3
-	SecretKey   string      // SECRET_KEY: signs cookies and forms; blank: a key kept in the database
+	SecretKey   string      // SECRET_KEY: signs cookies and forms, 32 bytes or more; blank in development and test: a key kept in the database
 	SiteURL     string      // SITE_URL: the site's address (https://www.example.com), for link previews; blank: none
 	JWTSecret   string      // JWT_SECRET: what the API's bearer tokens are signed with (HS256)
 	// JobsInServer runs the background jobs in the server's process (Rails 8's

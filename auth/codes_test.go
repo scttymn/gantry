@@ -79,7 +79,7 @@ CREATE INDEX auth_code_limits_expiry ON auth_code_limits(expires_at);`
 	}
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 	m := &codeMail{}
-	a := &Auth{DB: d, Mail: m, From: "Test <login@example.com>", Signer: sign.Signer{Key: []byte("cookie key")},
+	a := &Auth{DB: d, Mail: m, From: "Test <login@example.com>", Signer: sign.Signer{Key: []byte(strings.Repeat("cookie key", 4))},
 		EmailCodes: &EmailCodes{Key: []byte(strings.Repeat("k", 32)), Signup: true},
 		Now:        func() time.Time { return now }, Log: slog.New(slog.DiscardHandler)}
 	return a, m, &now
