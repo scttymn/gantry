@@ -462,6 +462,14 @@ func (a *Auth) SignedIn(r *http.Request) bool {
 	return ok
 }
 
+// HasSessionCookie reports whether the request carries a session cookie,
+// live or not, without reading the database: cheap enough for every
+// request, as web.PageCache.Skip is asked.
+func (a *Auth) HasSessionCookie(r *http.Request) bool {
+	c, err := r.Cookie(a.cookie())
+	return err == nil && c.Value != ""
+}
+
 const returnToCookie = "return_to"
 
 // Require lets signed-in users through, with their user in the request

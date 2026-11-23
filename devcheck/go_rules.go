@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -52,10 +53,22 @@ func checkRawAssets(s *Source, report func(int, string)) error {
 		}
 	})
 }
+
+var developmentOnly = []string{"Development", "DevelopmentWithRules", "Timing", "Reload"}
+
+func developmentGuardGuidance() string {
+	names := make([]string, len(developmentOnly))
+	for i, name := range developmentOnly {
+		names[i] = "web." + name
+	}
+	last := len(names) - 1
+	return strings.Join(names[:last], ", ") + " and " + names[last] + " are development-only: call them inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception"
+}
+
 func checkDevelopmentGuard(s *Source, report func(int, string)) error {
 	return visitCalls(s, func(call *ast.CallExpr, stack []ast.Node, aliases map[string]string, offset int) {
 		pkg, name := packageCall(call, aliases)
-		if pkg != "github.com/scttymn/gantry/web" || (name != "Development" && name != "DevelopmentWithRules" && name != "Timing") {
+		if pkg != "github.com/scttymn/gantry/web" || !slices.Contains(developmentOnly, name) {
 			return
 		}
 		for _, parent := range stack {
@@ -72,7 +85,7 @@ func checkDevelopmentGuard(s *Source, report func(int, string)) error {
 				return
 			}
 		}
-		report(offset, "")
+		report(offset, "web."+name+" is development-only: call it inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception")
 	})
 }
 func checkEnvironment(s *Source, report func(int, string)) error {

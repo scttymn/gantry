@@ -33,6 +33,13 @@ import (
 )
 
 func main() {
+	// Started as a picture's resizing child, it makes the copy and exits.
+	if images.IsChild(os.Args) {
+		os.Exit(app.Pictures.RunChild(os.Args))
+	}
+	if exe, err := os.Executable(); err == nil {
+		app.Pictures.Maker = images.Child{Exe: exe}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))

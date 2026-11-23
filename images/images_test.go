@@ -8,9 +8,11 @@ import (
 	"image"
 	"image/color"
 	"image/jpeg"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -65,6 +67,20 @@ func withOrientation(jpg []byte, o uint16) []byte {
 	return append(out, jpg[2:]...)
 }
 
+// claims is a format whose header says it's w×h, whatever its bytes.
+type claims struct{ w, h int }
+
+func (claims) ContentType() string                   { return "image/x-claims" }
+func (claims) Match(data []byte) bool                { return string(data) == "claims" }
+func (claims) Decode(io.Reader) (image.Image, error) { return nil, errors.New("claims: decoded") }
+func (c claims) DecodeConfig(io.Reader) (image.Config, error) {
+	return image.Config{Width: c.w, Height: c.h}, nil
+}
+
+// bomb is a GIF's 13-byte header claiming 65535×65535: 4.3 billion pixels,
+// 17 GB decoded.
+var bomb = []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
+
 func TestResize(t *testing.T) {
 	p := &Pipeline{}
 	t.Run("resize fits within the width and never enlarges", func(t *testing.T) {
@@ -86,6 +102,57 @@ func TestResize(t *testing.T) {
 		}
 		if _, err := p.Resize([]byte("not an image"), 100, 80); err == nil {
 			t.Error("resized garbage")
+		}
+	})
+
+	t.Run("an image claiming too many pixels is refused from its header", func(t *testing.T) {
+		if w, h, _, err := p.Dimensions(bomb); !errors.Is(err, ErrTooManyPixels) {
+			t.Errorf("sized a bomb: %d×%d %v", w, h, err)
+		}
+		if _, err := p.Resize(bomb, 100, 80); !errors.Is(err, ErrTooManyPixels) {
+			t.Errorf("resized a bomb: %v", err)
+		}
+		// The limit is the pipeline's, and its AVIF's, and its child's.
+		small := &Pipeline{MaxPixels: 400 * 200}
+		if _, _, _, err := small.Dimensions(picture(400, 200)); err != nil {
+			t.Errorf("at the limit: %v", err)
+		}
+		if _, _, _, err := small.Dimensions(picture(400, 201)); !errors.Is(err, ErrTooManyPixels) {
+			t.Errorf("over the limit: %v", err)
+		}
+		src := filepath.Join(t.TempDir(), "photo.jpg")
+		os.WriteFile(src, picture(400, 201), 0o644)
+		for _, dst := range []string{"copy.webp", "copy.avif"} {
+			if err := small.ResizeFile(src, filepath.Join(t.TempDir(), dst), 100, 80); !errors.Is(err, ErrTooManyPixels) {
+				t.Errorf("%s over the limit: %v", dst, err)
+			}
+		}
+		if a := AVIFFor(small); a.MaxPixels != small.MaxPixels {
+			t.Errorf("AVIF's limit: %d", a.MaxPixels)
+		}
+		// A product past int64 would wrap to a small number.
+		huge := 1 << (strconv.IntSize / 2)
+		claiming := &Pipeline{Decoders: []Decoder{claims{huge, huge}}}
+		if w, h, _, err := claiming.Dimensions([]byte("claims")); !errors.Is(err, ErrTooManyPixels) {
+			t.Errorf("a decoder claiming %d×%d: %d×%d %v", huge, huge, w, h, err)
+		}
+	})
+
+	t.Run("an image without pixels isn't one", func(t *testing.T) {
+		for _, data := range [][]byte{
+			[]byte("GIF89a\x00\x00\x10\x00\x00\x00\x00"),
+			[]byte("GIF89a\x10\x00\x00\x00\x00\x00\x00"),
+			[]byte("GIF89a\x00\x00\x00\x00\x00\x00\x00"),
+		} {
+			if w, h, _, err := p.Dimensions(data); err == nil {
+				t.Errorf("%q sized %d×%d", data, w, h)
+			}
+		}
+		for _, c := range []claims{{-1, 100}, {100, -1}, {0, 100}} {
+			q := &Pipeline{Decoders: []Decoder{c}}
+			if w, h, _, err := q.Dimensions([]byte("claims")); err == nil {
+				t.Errorf("a decoder claiming %d×%d: %d×%d", c.w, c.h, w, h)
+			}
 		}
 	})
 

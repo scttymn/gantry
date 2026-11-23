@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"go/format"
+	"image"
+	"image/jpeg"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -11,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/scttymn/gantry/images"
 	"github.com/scttymn/gantry/internal/testenv"
 )
 
@@ -498,12 +502,34 @@ func TestNewAppBuilds(t *testing.T) {
 			// reads that release's go.mod, which isn't published until it's tagged.
 			mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 			os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-			for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+			for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}, {"go", "build", "-o", "shop", "./cmd/shop"}} {
 				cmd := exec.Command(step[0], step[1:]...)
 				cmd.Dir = dir
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
 				}
+			}
+			// Its binary is its pictures' resizing child (images.Child), with the
+			// app's pipeline and so its pixel limit.
+			var jpg bytes.Buffer
+			jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 400, 200)), nil)
+			os.WriteFile(filepath.Join(dir, "photo.jpg"), jpg.Bytes(), 0o644)
+			os.WriteFile(filepath.Join(dir, "bomb.gif"), []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00"), 0o644)
+			resize := func(src, dst string) (string, error) {
+				cmd := exec.Command(filepath.Join(dir, "shop"), images.ChildCommand, src, dst, "100", "80")
+				cmd.Dir = dir
+				out, err := cmd.CombinedOutput()
+				return string(out), err
+			}
+			if out, err := resize("photo.jpg", "copy.webp"); err != nil {
+				t.Fatalf("resize: %v\n%s", err, out)
+			}
+			data, _ := os.ReadFile(filepath.Join(dir, "copy.webp"))
+			if w, h, ct, err := (&images.Pipeline{}).Dimensions(data); err != nil || w != 100 || h != 50 || ct != "image/webp" {
+				t.Errorf("the child's copy: %d×%d %s %v", w, h, ct, err)
+			}
+			if out, err := resize("bomb.gif", "bomb.webp"); err == nil || !strings.Contains(out, "too many pixels") {
+				t.Errorf("the child resized a bomb: %v\n%s", err, out)
 			}
 		})
 	}
@@ -529,5 +555,54 @@ func gofmted(t *testing.T, rel string, src []byte) {
 	}
 	if f, err := format.Source(src); err != nil || string(f) != string(src) {
 		t.Errorf("%s isn't gofmt'd (%v)", rel, err)
+	}
+}
+
+// A new app's test stage compiles it as its production build does, with
+// nodevcheck, so a call that only development builds have fails at gantry
+// test, not at deploy.
+func TestNewAppProductionBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("-short")
+	}
+	if _, err := exec.LookPath("templ"); err != nil {
+		t.Skip("templ isn't installed: run it in the toolchain (bin/go)")
+	}
+	repo, _ := filepath.Abs("../..")
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston", "--gantry", repo, "--module", "example.com/shop"); code != 0 {
+		t.Fatal(stderr)
+	}
+	dir := filepath.Join(root, "shop")
+	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+	run := func(args ...string) (string, error) {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := run("templ", "generate"); err != nil {
+		t.Fatalf("templ generate: %v\n%s", err, out)
+	}
+	if out, err := run("go", "build", "-tags", "nodynamic,nodevcheck", "./..."); err != nil {
+		t.Fatalf("a new app's production build: %v\n%s", err, out)
+	}
+	os.MkdirAll(filepath.Join(dir, "internal", "devrules"), 0o755)
+	os.WriteFile(filepath.Join(dir, "internal", "devrules", "devrules.go"), []byte(`package devrules
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+)
+
+func Wrap(h http.Handler) http.Handler { return web.DevelopmentWithRules(h, ".", nil, nil) }
+`), 0o644)
+	if out, err := run("go", "vet", "./internal/devrules"); err != nil {
+		t.Fatalf("the development build should compile the call: %v\n%s", err, out)
+	}
+	if out, err := run("go", "build", "-tags", "nodynamic,nodevcheck", "./..."); err == nil || !strings.Contains(out, "undefined: web.DevelopmentWithRules") {
+		t.Fatalf("the production build should fail naming web.DevelopmentWithRules: %v\n%s", err, out)
 	}
 }

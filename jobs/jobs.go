@@ -125,7 +125,8 @@ func (r Retry) wait(attempt int) time.Duration {
 // Limit is at most To of a job at once per Key (Solid Queue's
 // limits_concurrency): one deploy per project, say. A job over the limit
 // waits its turn, or with Discard is dropped. A crashed holder's slot
-// frees after Duration (3 minutes when zero).
+// frees after Duration (3 minutes when zero), and so does a slow one's, so
+// another job may run beside a job that runs longer.
 type Limit[A any] struct {
 	To       int
 	Key      func(A) string

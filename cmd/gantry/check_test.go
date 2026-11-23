@@ -98,6 +98,20 @@ func TestStrictAllowsAdvice(t *testing.T) {
 	}
 }
 
+func TestStaleExceptionIsAdvice(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, ".gantry-check.json"), []byte(`{"exceptions":[{"rule":"asset-url","file":"app/gone.html","reason":"Deleted page."}]}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"check", "--strict"}, root, &out, &out); code != 0 {
+		t.Fatal(code, out.String())
+	}
+	if !strings.Contains(out.String(), ".gantry-check.json: advice [stale-exception]: exception asset-url app/gone.html matched nothing") {
+		t.Fatal(out.String())
+	}
+}
+
 func TestRuleCatalog(t *testing.T) {
 	var out bytes.Buffer
 	if code := run([]string{"check", "--rules"}, t.TempDir(), &out, &out); code != 0 {

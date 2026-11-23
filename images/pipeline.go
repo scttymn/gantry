@@ -58,6 +58,11 @@ type Pipeline struct {
 	// own quality, so changing the copies' doesn't remake it. 32 and 50
 	// when zero.
 	PlaceholderWidth, PlaceholderQuality int
+	// MaxPixels is the most pixels (width × height) an image it reads may
+	// have: decoding takes 4 bytes a pixel whatever the file's size, so a
+	// few bytes claiming 65535×65535 would take 17 GB. DefaultMaxPixels
+	// when zero.
+	MaxPixels int
 
 	// One copy is made at a time, so at most one child's memory is in use,
 	// and a request for a copy another is making waits for it, then finds it.
@@ -182,9 +187,25 @@ func (p *Pipeline) decoderFor(data []byte) Decoder {
 	return nil
 }
 
+// DefaultMaxPixels is a pipeline's MaxPixels when it sets none: 50
+// megapixels, above a 48-megapixel phone's photo.
+const DefaultMaxPixels = 50_000_000
+
+// ErrTooManyPixels is an image larger than the pipeline's MaxPixels:
+// Dimensions refuses it from its header, so it's never decoded.
+var ErrTooManyPixels = errors.New("images: too many pixels")
+
+func (p *Pipeline) maxPixels() int {
+	if p.MaxPixels > 0 {
+		return p.MaxPixels
+	}
+	return DefaultMaxPixels
+}
+
 // Dimensions are an image's width and height as it's shown: a photo a phone
 // saved on its side, with an EXIF orientation of 5 to 8, has them swapped.
-// The content type comes from the bytes, not the name.
+// The content type comes from the bytes, not the name. An image over
+// MaxPixels is ErrTooManyPixels.
 func (p *Pipeline) Dimensions(data []byte) (width, height int, contentType string, err error) {
 	var cfg image.Config
 	if d := p.decoderFor(data); d != nil {
@@ -197,6 +218,12 @@ func (p *Pipeline) Dimensions(data []byte) (width, height int, contentType strin
 	}
 	if err != nil {
 		return 0, 0, "", err
+	}
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, "", fmt.Errorf("images: %d×%d has no pixels", cfg.Width, cfg.Height)
+	}
+	if cfg.Width > p.maxPixels()/cfg.Height { // a product could wrap
+		return 0, 0, "", fmt.Errorf("%w: %d×%d is over %d", ErrTooManyPixels, cfg.Width, cfg.Height, p.maxPixels())
 	}
 	width, height = cfg.Width, cfg.Height
 	if o := orientation(data); o >= 5 && o <= 8 {
@@ -252,7 +279,7 @@ func (p *Pipeline) ResizeFile(src, dst string, width, quality int) error {
 	}
 	q := p
 	if e, ok := encoderFor(dst); ok && e.Ext() != p.encoder().Ext() {
-		q = &Pipeline{Encoder: e, Decoders: p.Decoders, Widths: p.Widths, Quality: p.Quality}
+		q = &Pipeline{Encoder: e, Decoders: p.Decoders, Widths: p.Widths, Quality: p.Quality, MaxPixels: p.MaxPixels}
 	}
 	out, err := q.Resize(data, width, quality)
 	if err != nil {

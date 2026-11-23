@@ -89,17 +89,21 @@ func (d *DB) Close() error {
 }
 
 // Tx runs fn in a transaction on the write pool, committed if fn returns
-// nil and rolled back otherwise, then runs what fn asked to run after the
-// commit (AfterCommit). On SQLite it begins IMMEDIATE, so it holds the write
-// lock from the start and can't fail partway on a busy database.
+// nil and rolled back otherwise (an error or a panic, which goes on up), then
+// runs what fn asked to run after the commit (AfterCommit). On SQLite it
+// begins IMMEDIATE, so it holds the write lock from the start and can't fail
+// partway on a busy database.
 func (d *DB) Tx(ctx context.Context, fn func(*Tx) error) error {
 	sqlTx, err := d.Write.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
+	// After a commit it does nothing. Before one, it frees the write pool,
+	// which a recovered panic would otherwise leave held: on SQLite, its one
+	// connection, and so every write after.
+	defer sqlTx.Rollback()
 	tx := &Tx{Tx: sqlTx}
 	if err := fn(tx); err != nil {
-		sqlTx.Rollback()
 		return err
 	}
 	if err := sqlTx.Commit(); err != nil {
