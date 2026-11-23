@@ -235,15 +235,20 @@ func nextSteps(r Resource) string {
      list and the form in app/%[1]s's layout instead.
 `, r.Namespace, r.Folder)
 	}
+	feature := "  2. In test/features.yaml, add its feature, which bin/gantry verify visits:\n"
+	if r.Namespace != "" {
+		feature = fmt.Sprintf("  2. In test/features.yaml, add its feature, which bin/gantry verify visits as\n     each role: its role is who /%s's filter lets in (public, signed-in or admin):\n", r.Namespace)
+	}
+	feature += featureYAML(strings.TrimPrefix(r.Base, "/"), "public", []string{r.Base, r.Base + "/"}, r.Base, "h1")
 	return fmt.Sprintf(`
 Next:
   1. In app/routes.go, import
        "%s/%s"
        "%s/app/shared/resource"
-%s  2. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
+%s%s  3. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
      and gantry exec go mod tidy.
-  3. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
-%s`, r.Module, r.Folder, r.Module, route, r.Table, own)
+  4. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
+%s`, r.Module, r.Folder, r.Module, route, feature, r.Table, own)
 }
 
 // modulePath is the app's module, from its go.mod.

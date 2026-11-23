@@ -249,6 +249,34 @@ func wire(t *testing.T, dir, out string) {
 	if err := os.WriteFile(path, []byte(routes), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	feature(t, dir, out)
+}
+
+// feature does in test/features.yaml what a generator's next steps say: the
+// feature they print, under the map's features.
+func feature(t *testing.T, dir, out string) {
+	t.Helper()
+	_, step, ok := strings.Cut(out, "In test/features.yaml")
+	_, yaml, found := strings.Cut(step, "\n       - name:")
+	if !ok || !found {
+		t.Fatalf("no feature in\n%s", out)
+	}
+	lines := strings.Split(yaml, "\n")
+	add := "  - name:" + lines[0] + "\n"
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, "         ") {
+			break
+		}
+		add += line[5:] + "\n"
+	}
+	path := filepath.Join(dir, "test", "features.yaml")
+	features, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(features, add...), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 const resourcesTest = `package app_test

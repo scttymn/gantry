@@ -16,6 +16,7 @@ import (
 
 	"github.com/scttymn/gantry/images"
 	"github.com/scttymn/gantry/internal/testenv"
+	"github.com/scttymn/gantry/testkit"
 )
 
 // steps records the commands gantry runs instead of running them; fail
@@ -431,6 +432,12 @@ func TestNewGantryCheckout(t *testing.T) {
 func TestAppCommands(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "cmd", "shop"), 0o755)
+	steps(t, "")
+	if code, _, stderr := gantry(t, root, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") {
+		t.Errorf("verify without a feature map: exit %d: %s", code, stderr)
+	}
+	os.MkdirAll(filepath.Join(root, "test"), 0o755)
+	os.WriteFile(filepath.Join(root, "test", "features.yaml"), []byte("features: []\n"), 0o644)
 	for _, tc := range []struct {
 		args []string
 		want []string
@@ -442,6 +449,8 @@ func TestAppCommands(t *testing.T) {
 		{[]string{"db", "migrate", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "db", "migrate"}},
 		{[]string{"routes"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "routes"}},
 		{[]string{"routes", "--json", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "routes", "--json"}},
+		{[]string{"verify"}, []string{"houston", "exec", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
+		{[]string{"verify", "--local"}, []string{"go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
 		{[]string{"dev", "--as", "login"}, []string{"houston", "dev", "--as", "login"}},
 		{[]string{"test"}, []string{"houston", "test"}},
 		{[]string{"deploy", "--server"}, []string{"houston", "deploy", "--server"}},
@@ -636,5 +645,36 @@ func Wrap(h http.Handler) http.Handler { return web.DevelopmentWithRules(h, ".",
 	}
 	if out, err := run("go", "build", "-tags", "nodynamic,nodevcheck", "./..."); err == nil || !strings.Contains(out, "undefined: web.DevelopmentWithRules") {
 		t.Fatalf("the production build should fail naming web.DevelopmentWithRules: %v\n%s", err, out)
+	}
+}
+
+// A new app's feature map reads, as do the features g resource and g auth
+// print for it once pasted. TestNewAppBuilds and the recipes' and
+// resources' builds run TestFeatures in the app itself, on its routes.
+func TestFeatureMap(t *testing.T) {
+	dir := shopApp(t, "sqlite")
+	path := filepath.Join(dir, "test", "features.yaml")
+	var names []string
+	for _, f := range testkit.Features(t, path) {
+		names = append(names, f.Name)
+	}
+	if want := []string{"home", "health check", "live updates"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("a new app's features: %q, want %q", names, want)
+	}
+	for _, args := range [][]string{{"g", "resource", "posts", "title:string"}, {"g", "resource", "admin/events", "name:string"}, {"g", "auth"}} {
+		code, out, stderr := gantry(t, dir, args...)
+		if code != 0 {
+			t.Fatalf("%q: %s", args, stderr)
+		}
+		feature(t, dir, out)
+	}
+	features := testkit.Features(t, path)
+	want := []testkit.Feature{
+		{Name: "posts", Routes: []string{"/posts", "/posts/"}, Role: testkit.Public, Visit: []testkit.Visit{{Path: "/posts", Selector: "h1"}}},
+		{Name: "admin/events", Routes: []string{"/admin/events", "/admin/events/"}, Role: testkit.Public, Visit: []testkit.Visit{{Path: "/admin/events", Selector: "h1"}}},
+		{Name: "sign-in", Routes: []string{"/login", "/login/", "/logout", "/passwords", "/passwords/"}, Role: testkit.Public, Visit: []testkit.Visit{{Path: "/login", Selector: "form"}}},
+	}
+	if got := features[3:]; !reflect.DeepEqual(got, want) {
+		t.Errorf("the generators' features:\n got %+v\nwant %+v", got, want)
 	}
 }
