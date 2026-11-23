@@ -48,6 +48,9 @@ const (
 	TLSNone
 )
 
+// implicitTLSPort is a variable so tests can serve it on an unprivileged port.
+var implicitTLSPort = 465
+
 func (s SMTP) Send(ctx context.Context, m Message) error {
 	msg, err := m.msg(time.Now())
 	if err != nil {
@@ -58,7 +61,7 @@ func (s SMTP) Send(ctx context.Context, m Message) error {
 	switch {
 	case s.TLS == TLSNone:
 		opts = append(opts, gomail.WithTLSPolicy(gomail.NoTLS))
-	case port == 465:
+	case port == implicitTLSPort:
 		opts = append(opts, gomail.WithSSL())
 	case s.TLS == TLSOpportunistic:
 		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSOpportunistic))

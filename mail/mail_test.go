@@ -59,27 +59,35 @@ func TestLog(t *testing.T) {
 	}
 }
 
-// plainSMTP serves one connection as an SMTP server that never offers
-// STARTTLS, and reports whether a message was handed to it.
-func plainSMTP(t *testing.T) (port int, delivered <-chan bool) {
+// smtpServer serves one connection as an SMTP server, advertising STARTTLS
+// when offerSTARTTLS is set, and reports what the client did: "tls" when it
+// opened with a TLS handshake, "starttls" when it asked to upgrade,
+// "plaintext" when it handed over a message unencrypted, or "nothing".
+func smtpServer(t *testing.T, offerSTARTTLS bool) (port int, saw <-chan string) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
-	got := make(chan bool, 1)
+	// A client that never dials must not leave the test waiting on Accept.
+	l.(*net.TCPListener).SetDeadline(time.Now().Add(2 * time.Second))
+	got := make(chan string, 1)
 	go func() {
+		result := "nothing"
+		defer func() { got <- result }()
 		c, err := l.Accept()
 		if err != nil {
-			got <- false
 			return
 		}
 		defer c.Close()
 		c.SetDeadline(time.Now().Add(time.Second))
-		r, sent := bufio.NewReader(c), false
-		defer func() { got <- sent }()
-		fmt.Fprint(c, "220 plain ESMTP\r\n")
+		fmt.Fprint(c, "220 test ESMTP\r\n")
+		r := bufio.NewReader(c)
+		if b, err := r.Peek(1); err == nil && b[0] == 0x16 {
+			result = "tls"
+			return
+		}
 		for {
 			line, err := r.ReadString('\n')
 			if err != nil {
@@ -87,7 +95,14 @@ func plainSMTP(t *testing.T) (port int, delivered <-chan bool) {
 			}
 			switch strings.ToUpper(strings.Fields(line + " x")[0]) {
 			case "EHLO":
-				fmt.Fprint(c, "250-plain\r\n250 8BITMIME\r\n")
+				if offerSTARTTLS {
+					fmt.Fprint(c, "250-test\r\n250-STARTTLS\r\n250 8BITMIME\r\n")
+				} else {
+					fmt.Fprint(c, "250-test\r\n250 8BITMIME\r\n")
+				}
+			case "STARTTLS":
+				result = "starttls"
+				return
 			case "DATA":
 				fmt.Fprint(c, "354 go on\r\n")
 				for line != ".\r\n" {
@@ -95,7 +110,7 @@ func plainSMTP(t *testing.T) (port int, delivered <-chan bool) {
 						return
 					}
 				}
-				sent = true
+				result = "plaintext"
 				fmt.Fprint(c, "250 queued\r\n")
 			case "QUIT":
 				fmt.Fprint(c, "221 bye\r\n")
@@ -111,32 +126,57 @@ func plainSMTP(t *testing.T) (port int, delivered <-chan bool) {
 var codeMail = Message{From: "app@example.com", To: "rider@example.com", Subject: "Your code", Text: "123456"}
 
 // A server that doesn't offer STARTTLS, or an attacker who strips it, must not
-// receive the message (and the login code or reset link in it) in plaintext.
+// receive the message (and the login code or reset link in it) in plaintext,
+// including from a custom sender that leaves TLS unset.
 func TestSMTPRequiresTLS(t *testing.T) {
-	port, delivered := plainSMTP(t)
+	port, saw := smtpServer(t, false)
 	if err := (SMTP{Host: "127.0.0.1", Port: port}).Send(t.Context(), codeMail); err == nil {
 		t.Error("sent without TLS")
 	}
-	if <-delivered {
-		t.Error("the server received the message in plaintext")
+	if got := <-saw; got != "nothing" {
+		t.Errorf("the server saw %s", got)
 	}
 }
 
-// SMTP_TLS opts out of mandatory TLS explicitly; blank keeps it.
+// SMTP_TLS opts out of mandatory TLS explicitly; blank keeps it. Port 465
+// (implicitTLSPort) opens with TLS unless TLS is off.
 func TestSMTPTLSConfig(t *testing.T) {
-	for setting, plaintext := range map[string]bool{"": false, "mandatory": false, "opportunistic": true, "none": true} {
-		t.Run("SMTP_TLS="+setting, func(t *testing.T) {
-			port, delivered := plainSMTP(t)
+	for _, c := range []struct {
+		setting         string
+		offer, implicit bool
+		want            string
+	}{
+		{setting: "", offer: true, want: "starttls"},
+		{setting: "", want: "nothing"},
+		{setting: "mandatory", offer: true, want: "starttls"},
+		{setting: "mandatory", want: "nothing"},
+		{setting: "opportunistic", offer: true, want: "starttls"},
+		{setting: "opportunistic", want: "plaintext"},
+		{setting: "none", offer: true, want: "plaintext"},
+		{setting: "none", want: "plaintext"},
+		{setting: "", implicit: true, want: "tls"},
+		{setting: "opportunistic", implicit: true, want: "tls"},
+		{setting: "none", implicit: true, want: "plaintext"},
+	} {
+		t.Run(fmt.Sprintf("SMTP_TLS=%s offer=%v implicit=%v", c.setting, c.offer, c.implicit), func(t *testing.T) {
+			port, saw := smtpServer(t, c.offer)
+			if c.implicit {
+				defer func(p int) { implicitTLSPort = p }(implicitTLSPort)
+				implicitTLSPort = port
+			}
 			cfg := LoadConfig(func(name string) string {
-				return map[string]string{"MAIL_FROM": "app@example.com", "SMTP_HOST": "127.0.0.1", "SMTP_PORT": fmt.Sprint(port), "SMTP_TLS": setting}[name]
+				return map[string]string{"MAIL_FROM": "app@example.com", "SMTP_HOST": "127.0.0.1", "SMTP_PORT": fmt.Sprint(port), "SMTP_TLS": c.setting}[name]
 			})
 			m, err := Open(t.Context(), "production", t.TempDir(), cfg, nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			err = m.Send(t.Context(), codeMail)
-			if got := <-delivered; got != plaintext || (err == nil) != plaintext {
-				t.Errorf("delivered in plaintext: %v, want %v (send error: %v)", got, plaintext, err)
+			if got := <-saw; got != c.want {
+				t.Errorf("the server saw %s, want %s", got, c.want)
+			}
+			if (err == nil) != (c.want == "plaintext") {
+				t.Errorf("send error: %v", err)
 			}
 		})
 	}
@@ -150,31 +190,4 @@ func TestSMTPTLSConfig(t *testing.T) {
 		t.Fatal("the development inbox doesn't use SMTP_TLS", err)
 	}
 	dev.Close()
-}
-
-// Port 465 is implicit TLS: the client's first bytes are a TLS handshake, not
-// a wait for the server's plaintext greeting.
-func TestSMTPImplicitTLSOn465(t *testing.T) {
-	l, err := net.Listen("tcp", "127.0.0.1:465")
-	if err != nil {
-		t.Skip("port 465 is unavailable (bin/go runs the tests as root):", err)
-	}
-	defer l.Close()
-	first := make(chan byte, 1)
-	go func() {
-		c, err := l.Accept()
-		if err != nil {
-			first <- 0
-			return
-		}
-		defer c.Close()
-		c.SetReadDeadline(time.Now().Add(2 * time.Second))
-		b := make([]byte, 1)
-		c.Read(b)
-		first <- b[0]
-	}()
-	(SMTP{Host: "127.0.0.1", Port: 465}).Send(t.Context(), codeMail)
-	if b := <-first; b != 0x16 {
-		t.Errorf("first byte %#x, want a TLS handshake record (0x16)", b)
-	}
 }
