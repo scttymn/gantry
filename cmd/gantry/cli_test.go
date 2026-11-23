@@ -23,7 +23,8 @@ func TestUsage(t *testing.T) {
 		"gantry new NAME [--db sqlite|postgres] [--gantry PATH] [--in-module] [--module PATH] [--skip-houston]",
 		"gantry g resource [NAMESPACE/]TABLE FIELD:TYPE[:required]...",
 		"gantry g auth [--email-code] [--signup] [--social]",
-		"gantry check [--rules] [--strict]",
+		"gantry check [--json] [--rules] [--strict]",
+		"gantry routes [--json] [--local]",
 		"gantry secret ",
 		"gantry dev|",
 	} {
@@ -37,7 +38,8 @@ func TestUsage(t *testing.T) {
 	}{
 		{[]string{"new"}, []string{"usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"new", "shop", "--in-modules"}, []string{"-in-modules", "usage: gantry new NAME", "[--in-module]"}},
-		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--rules] [--strict]"}},
+		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--json] [--rules] [--strict]"}},
+		{[]string{"routes", "posts"}, []string{"usage: gantry routes [--json] [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"g", "auth", "--email-codes"}, []string{"-email-codes", "usage: gantry g auth [--email-code] [--signup] [--social]"}},
 		{[]string{"g", "error-pages", "--forced"}, []string{"usage: gantry g error-pages [--force]"}},

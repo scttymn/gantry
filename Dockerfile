@@ -1,7 +1,9 @@
 # The toolchain for working on gantry itself (bin/go): Go, templ and sqlc.
 # An app's Dockerfile has the same stage, then its dev, test and production.
-FROM golang:1.27-bookworm AS toolchain
-COPY --from=sqlc/sqlc:1.31.1 /workspace/sqlc /usr/local/bin/sqlc
+# Images are pinned by digest; internal/pins has them, and its test holds
+# these copies to it.
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS toolchain
+COPY --from=sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537 /workspace/sqlc /usr/local/bin/sqlc
 # Match generated Postgres apps: integration tests dump and compare schemas.
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-common \
  && /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y \
@@ -13,7 +15,7 @@ WORKDIR /src
 
 # Release CLIs. bin/gantry downloads gantry-$os-$arch from the GitHub Release
 # and checks it against SHA256SUMS. The workflow exports this stage.
-FROM golang:1.27-bookworm AS release-build
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS release-build
 # The release's tag, which the binaries say they are (main.releaseVersion): gantry
 # new writes it into an app's go.mod, and bin/gantry downloads that release.
 ARG VERSION

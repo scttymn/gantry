@@ -38,7 +38,11 @@ type App struct {
 }
 
 // Handler is every route, in gantry's middleware.
-func (a *App) Handler() http.Handler {
+func (a *App) Handler() http.Handler { return a.Router().Handler() }
+
+// Router is every route: `shop routes` lists them, and each is in a
+// feature of test/features.yaml (TestFeatures).
+func (a *App) Router() *web.Router {
 	rt := web.NewRouter(a.Log, nil)
 	// Errors are assets/public's pages (404.html, 500.html ...), plain
 	// files, so they show even when the app can't draw a page.
@@ -69,5 +73,5 @@ func (a *App) Handler() http.Handler {
 		a.Mail.Inbox.Routes(rt.Mount, "/dev/inbox")
 	}
 	assets.Routes(rt.Mount)
-	return rt.Handler()
+	return rt
 }

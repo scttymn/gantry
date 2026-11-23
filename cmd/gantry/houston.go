@@ -44,16 +44,22 @@ func appCommand(command string) func(root string, args []string, out, errOut io.
 			}
 			rest = append(rest, a)
 		}
-		name, err := appBinary(root)
-		if err != nil {
-			return err
-		}
-		run := append([]string{"go", "run", "./cmd/" + name}, rest...)
-		if *local {
-			return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=development"}, run...)...))
-		}
-		return houston(root, append([]string{"exec"}, run...), errOut)
+		return runApp(root, rest, *local, errOut)
 	}
+}
+
+// runApp runs the app's command with args (`myapp routes`) in its dev
+// container, or with local on this machine.
+func runApp(root string, args []string, local bool, errOut io.Writer) error {
+	name, err := appBinary(root)
+	if err != nil {
+		return err
+	}
+	run := append([]string{"go", "run", "./cmd/" + name}, args...)
+	if local {
+		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=development"}, run...)...))
+	}
+	return houston(root, append([]string{"exec"}, run...), errOut)
 }
 
 // houston runs houston with args in root: gantry dev, test, console, deploy
