@@ -25,6 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/scttymn/gantry/internal/env"
 )
 
 // Handler is a request handler that can fail. An error it returns before
@@ -192,7 +194,7 @@ func (rt *Router) Handler() http.Handler {
 	h = rt.Recover(h)
 	// Diagnostics are a framework default, including apps created before the
 	// feature existed. Inject before compression; production does no scanning.
-	if os.Getenv("GANTRY_ENV") == "development" {
+	if env.Development() {
 		if os.Getenv("GANTRY_DEV_WARNINGS") == "false" {
 			h = Timing(h, rt.Log)
 		} else {

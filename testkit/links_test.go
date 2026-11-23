@@ -47,7 +47,7 @@ const page = `<!DOCTYPE html><html><head>
 <picture><source media="(max-width: 640px)" srcset="data:image/webp;base64,AAAA">
 <img srcset="/photos/k/160w.webp 160w, /photos/k/320w.webp 320w" src="/photos/k/320w.webp"></picture>
 <div style="--bg:url(/photos/k/bg.webp)"></div>
-<a href="#top">Top</a> <a href="https://example.org/">Elsewhere</a> <a href="mailto:a@b.c">Mail</a>
+<a href="#top">Top</a> <a href="https://example.org/">Elsewhere</a> <a href="mailto:a@example.com">Mail</a>
 <a href="schedule?week=1">Next week</a> <a href="/admin">Admin</a> <a href="/logout">Sign out</a>
 %s
 </body></html>`

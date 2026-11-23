@@ -57,6 +57,7 @@ var commands = []command{
 		run: func(root string, args []string, out, _ io.Writer) error { return generateFonts(root, args, out) }},
 	{name: "importmap", args: "pin|unpin PACKAGE[@VERSION]...", about: "JavaScript packages, into assets/js/vendor",
 		run: func(root string, args []string, out, _ io.Writer) error { return importmapCommand(root, args, out) }},
+	{name: "secret", about: "a new SECRET_KEY: 32 random bytes, in hex", flags: func() *flag.FlagSet { return flagSet("secret") }, run: printSecret},
 	{name: "db", args: "migrate|rollback [N]|status|seed|reset|console", about: "in the app's container, or on this machine", flags: localFlag, run: appCommand("db")},
 	{name: "task", args: "NAME [ARGS...]", about: "the app's tasks, in its container", flags: localFlag, run: appCommand("task")},
 	{name: "tasks", about: "the tasks there are", flags: localFlag, run: appCommand("tasks")},

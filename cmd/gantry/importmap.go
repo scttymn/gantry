@@ -16,9 +16,9 @@ import (
 )
 
 // jspmAPI is jspm.org's generator, which resolves packages to their files,
-// importmap-rails' source; tests point it, and httpClient, elsewhere. A
-// server that stops answering fails a download after a minute rather than
-// hanging the command.
+// importmap-rails' source; tests point it, and httpClient, elsewhere.
+// httpClient gives up on a request after a minute, so a stalled server
+// fails gantry importmap and gantry fonts instead of hanging them.
 var (
 	jspmAPI    = "https://api.jspm.io/generate"
 	httpClient = &http.Client{Timeout: time.Minute}

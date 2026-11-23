@@ -14,9 +14,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/env"
 )
 
 // Signer signs and checks tokens with Key, of at least 32 bytes: a shorter
@@ -27,7 +27,7 @@ type Signer struct{ Key []byte }
 const minKey = 32
 
 // generate is what an error over a short or missing key says to do.
-const generate = "generate one with `openssl rand -hex 32` and set it in the app's environment (a Houston secret)"
+const generate = "generate one with `bin/gantry secret` and set it as the app's Houston secret env var: `bin/gantry secret | houston secrets set SECRET_KEY --project NAME`"
 
 // checkKey panics on a short key, first thing in Sign and Verify, so a
 // misconfigured Signer fails its first use whatever the token.
@@ -84,7 +84,7 @@ func Key(ctx context.Context, d *db.DB, secret string) ([]byte, error) {
 		}
 		return []byte(secret), nil
 	}
-	if env := os.Getenv("GANTRY_ENV"); env != "development" && env != "test" {
+	if !env.Development() && !env.Test() {
 		return nil, errors.New("sign: SECRET_KEY is blank, and outside development and test the signing key can't be kept in the database: " + generate)
 	}
 	if _, err := d.Write.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS gantry_settings (name text PRIMARY KEY, value text NOT NULL)`); err != nil {

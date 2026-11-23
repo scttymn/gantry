@@ -8,7 +8,7 @@ development features. This guide describes the checks currently implemented;
 block the server. Run `bin/gantry check` again after edits, or use
 `bin/gantry check --strict` in CI (exit 1 when unsuppressed violations are found; advice does not fail CI).
 
-The checks read local `.html`, `.templ`, `.js`, and Go source files, without starting a
+The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
 built assets, Git metadata and test fixtures, and do not follow symlinks.
 
@@ -51,6 +51,7 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `read-then-write` | Advice | Save edits without losing one made meanwhile | a Get on the Read pool, then an Update or Delete on the Write pool, in one function; read and write in one c.DB.Tx with models.New(tx) |
 | `get-mutates` | Advice | Keep GETs safe to repeat, as prefetching browsers and crawlers assume | a GET handler (Index, Show, New, Edit, or a GET route's function) writes to the database; route it as POST and send it from a button in a form |
 | `inline-download` | Advice | Send uploads as downloads, so an uploaded HTML or SVG file can't run as the app's own page | http.ServeContent or ServeFile with no Content-Disposition serves a file inline; send uploads with web.Download or storage's routes, and serve inline only types checked to be images |
+| `migration-down` | Violation | Keep rollback and testkit.Migrations checking every migration's undo | migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible |
 
 <!-- /rules -->
 

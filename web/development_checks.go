@@ -26,7 +26,7 @@ func DevelopmentWithRules(next http.Handler, root string, log *slog.Logger, rule
 		if r.URL.Path == developmentStyles && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			io.WriteString(w, developmentCSS)
+			_, _ = io.WriteString(w, developmentCSS) // as ResponseWriter.Write's, excluded in .golangci.yml
 			return
 		}
 		if r.Method == http.MethodGet && WantsHTML(r) {

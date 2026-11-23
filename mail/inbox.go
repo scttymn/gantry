@@ -20,6 +20,7 @@ import (
 
 	"github.com/scttymn/gantry/assets"
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/env"
 	"golang.org/x/net/html"
 )
 
@@ -44,7 +45,7 @@ const inboxLimit = 200
 const inboxMaxBytes = 2 << 20
 
 func NewInbox(ctx context.Context, filename string) (*Inbox, error) {
-	if os.Getenv("GANTRY_ENV") != "development" {
+	if !env.Development() {
 		return nil, errors.New("mail: inbox requires GANTRY_ENV=development")
 	}
 	if filename == "" {
@@ -79,7 +80,7 @@ func NewInbox(ctx context.Context, filename string) (*Inbox, error) {
 func (i *Inbox) Close() error { return i.database.Close() }
 
 func (i *Inbox) Send(ctx context.Context, m Message) error {
-	if os.Getenv("GANTRY_ENV") != "development" {
+	if !env.Development() {
 		return errors.New("mail: inbox capture is disabled outside development")
 	}
 	if len(m.From)+len(m.To)+len(m.ReplyTo)+len(m.Subject)+len(m.Text)+len(m.HTML) > inboxMaxBytes {
@@ -132,7 +133,7 @@ func (i *Inbox) Routes(mount func(string, http.Handler), prefix string) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		// The inbox sets its own policy, for its pages and the mail it shows.
 		w.Header().Del("Content-Security-Policy-Report-Only")
-		if os.Getenv("GANTRY_ENV") != "development" || !localInboxHost(r.Host) {
+		if !env.Development() || !localInboxHost(r.Host) {
 			http.NotFound(w, r)
 			return
 		}

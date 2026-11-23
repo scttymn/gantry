@@ -51,14 +51,17 @@ type movingBody struct {
 	write time.Duration
 }
 
+// A deadline's only error is ErrNotSupported, from a writer that hides the
+// connection (no Unwrap); TestSlowTransfers serves through every one of the
+// router's, and fails if pacing is lost.
 func (b *movingBody) Read(p []byte) (int, error) {
 	by := time.Now()
 	if b.read.timeout > 0 {
 		by = b.read.deadline(by)
-		b.rc.SetReadDeadline(by)
+		_ = b.rc.SetReadDeadline(by)
 	}
 	if b.write > 0 {
-		b.rc.SetWriteDeadline(by.Add(b.write))
+		_ = b.rc.SetWriteDeadline(by.Add(b.write))
 	}
 	n, err := b.ReadCloser.Read(p)
 	b.read.moved += int64(n)
@@ -89,7 +92,7 @@ type movingWriter struct {
 // body in one write.
 func (w *movingWriter) Write(p []byte) (n int, err error) {
 	for len(p) > 0 && err == nil {
-		w.rc.SetWriteDeadline(w.pace.deadline(time.Now()))
+		_ = w.rc.SetWriteDeadline(w.pace.deadline(time.Now())) // as movingBody's
 		var m int
 		m, err = w.ResponseWriter.Write(p[:min(len(p), 32<<10)])
 		n += m
