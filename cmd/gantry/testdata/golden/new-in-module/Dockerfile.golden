@@ -3,8 +3,8 @@
 # development checks, on an empty image). Houston builds dev for gantry dev,
 # test for gantry test, and production to deploy.
 
-FROM golang:1.27-bookworm AS toolchain
-COPY --from=sqlc/sqlc:1.31.1 /workspace/sqlc /usr/local/bin/sqlc
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS toolchain
+COPY --from=sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537 /workspace/sqlc /usr/local/bin/sqlc
 # sqlite3, for db console.
 RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 && rm -rf /var/lib/apt/lists/*
 # cgo: gantry's db has SQLite compiled from C (the production build links
