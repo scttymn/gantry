@@ -109,9 +109,12 @@ Use the existing development server when it is already running.
 
 Use generators for a feature when they fit. Read `bin/gantry --help` and the
 generator's printed next steps. Generated code still needs application-specific
-wiring, validation and tests. The resource generator currently targets
-`admin/<table>` and expects a shared admin controller; inspect those dependencies
-before treating its output as a complete feature.
+wiring, validation and tests. `g resource posts ...` makes a top-level resource
+and `g resource admin/posts ...` one under any namespace. Its controllers share
+`app/shared/resource`, which the first resource writes and the app owns from
+then on. A namespaced resource is routed in its namespace's scope: give that
+scope the filter that guards it, such as `a.Auth.Required` from the `auth`
+recipe, since the generator can't know it.
 
 When the change needs migrations or regenerated queries/views, use the relevant
 steps in the app's container:

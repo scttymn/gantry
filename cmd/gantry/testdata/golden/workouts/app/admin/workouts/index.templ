@@ -1,8 +1,8 @@
 package workouts
 
-import "example.com/gym/app/admin"
+import "example.com/gym/app/shared/resource"
 
 // index is the list: each workout's date and name.
-templ index(p admin.AdminPage, rows []admin.Row) {
-	@admin.ResourceIndex(p, admin.ResourceList{Path: "workouts", Title: title, Singular: singular, Columns: []string{"date", "name"}, Rows: rows})
+templ index(p resource.Page, rows []resource.Row) {
+	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Date", "Name"}, Rows: rows})
 }

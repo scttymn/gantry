@@ -25,5 +25,6 @@ WHERE id = sqlc.arg(id);
 DELETE FROM pillars WHERE id = sqlc.arg(id);
 
 -- A new pillar with no position goes last, as Rails' Positioned.
+-- BIGINT is int64 on both engines, as the position column is.
 -- name: NextPillarPosition :one
-SELECT CAST(COALESCE(MAX(position), 0) + 1 AS INTEGER) AS position FROM pillars;
+SELECT CAST(COALESCE(MAX(position), 0) + 1 AS BIGINT) AS position FROM pillars;

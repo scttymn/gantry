@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"github.com/scttymn/gantry/devcheck"
 	"io"
@@ -8,16 +9,27 @@ import (
 
 var checkDevelopment = devcheck.Scan
 
+// checkFlags are gantry check's: --strict, or --rules.
+func checkFlags() (fs *flag.FlagSet, strict, rules *bool) {
+	fs = flagSet("check")
+	strict = fs.Bool("strict", false, "fail on a violation")
+	rules = fs.Bool("rules", false, "the rules, with their guidance")
+	return fs, strict, rules
+}
+
 func developmentCheck(root string, args []string, out io.Writer) error {
-	if len(args) == 1 && args[0] == "--rules" {
+	fs, strict, rules := checkFlags()
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 || *strict && *rules {
+		return usageError{}
+	}
+	if *rules {
 		for _, rule := range devcheck.DefaultRules() {
 			fmt.Fprintf(out, "%s [%s]: %s\n  %s\n", rule.ID, rule.Severity, rule.Purpose, rule.Guidance)
 		}
 		return nil
-	}
-	strict := len(args) == 1 && args[0] == "--strict"
-	if len(args) > 0 && !strict {
-		return fmt.Errorf("usage: gantry check [--strict|--rules]")
 	}
 	warnings, err := checkDevelopment(root)
 	if err != nil {
@@ -35,7 +47,7 @@ func developmentCheck(root string, args []string, out io.Writer) error {
 		fmt.Fprintf(out, "%s: %s [%s]: %s\n", location, w.Severity, w.Rule, w.Message)
 	}
 	fmt.Fprintf(out, "gantry check: %d violation(s), %d advisory finding(s)\n", failures, len(warnings)-failures)
-	if strict && failures > 0 {
+	if *strict && failures > 0 {
 		return errExit(1)
 	}
 	return nil
