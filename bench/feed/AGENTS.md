@@ -14,7 +14,11 @@ bin/gantry --help          # commands and generators
 bin/gantry check --rules   # the rules this version checks, with their guidance
 bin/gantry check --strict  # nonzero on a violation: run it before you finish
 bin/gantry test            # the tests, in a throwaway copy
+bin/gantry routes --json   # every route, from the app's router
+bin/gantry verify          # each feature in test/features.yaml, visited as each role
 ```
+
+A route needs a feature in `test/features.yaml`, or `TestFeatures` fails.
 
 ## Where things go
 - `app/routes.go`: every route, and the controllers behind them
