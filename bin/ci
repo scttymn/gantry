@@ -42,10 +42,20 @@ fi
 timeout 10 docker ps >/dev/null 2>&1 || { echo "bin/ci: Docker isn't answering (docker ps): start it, then run bin/ci again" >&2; exit 1; }
 
 tmp=$(mktemp -d) postgres=gantry-ci-pg-$$ network=bridge ci=${CI:-}
+# Every checkout's bin/ci shares Go's caches, and cleaning them under another
+# run's build takes files from under it ("open /cache/build/...: no such file
+# or directory"). So a run marks itself in $runs while it runs, and cleans
+# only holding $lock and alone; each run takes $lock before it builds, so
+# none starts during a clean.
+runs=$cache/runs lock=$cache/cleaning
+mkdir -p "$runs"
+: >"$runs/$$"
 cleanup() {
 	timeout 30 docker rm -f "$postgres" >/dev/null 2>&1 || true
 	timeout 30 docker network rm "gantry-ci-$$" >/dev/null 2>&1 || true
+	[ "$(cat "$lock/pid" 2>/dev/null)" != $$ ] || rm -rf "$lock"
 	rm -rf "$tmp"
+	rm -f "${runs:?}/$$"
 }
 trap cleanup EXIT
 
@@ -58,10 +68,36 @@ toolchain() { # [GANTRY_DIR=DIR] toolchain [DOCKER-RUN-OPTION...] -- COMMAND...:
 	timeout 1800 docker run --rm -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" -v "$cache:/cache" \
 		-e GOMODCACHE=/cache/mod -e GOCACHE=/cache/build -e CI="$ci" ${opts[@]+"${opts[@]}"} gantry-toolchain "$@"
 }
+others() { # another bin/ci is running (a mark whose run has gone is removed)
+	local mark
+	for mark in "$runs"/*; do
+		[ -e "$mark" ] && [ "${mark##*/}" != $$ ] || continue
+		kill -0 "${mark##*/}" 2>/dev/null && return 0
+		rm -f "$mark"
+	done
+	return 1
+}
+locked=
+for _ in $(seq 600); do
+	if mkdir "$lock" 2>/dev/null; then
+		echo $$ >"$lock/pid"
+		locked=1
+		break
+	fi
+	owner=$(cat "$lock/pid" 2>/dev/null) || owner=
+	[ -z "$owner" ] || kill -0 "$owner" 2>/dev/null || rm -rf "$lock"
+	sleep 1
+done
+[ -n "$locked" ] || { echo "bin/ci: another bin/ci has been cleaning Go's build cache for 10 minutes ($lock)" >&2; exit 1; }
 if [ -d "$cache/build" ] && [ "$(du -sk "$cache/build" | cut -f1)" -gt $((5 * 1024 * 1024)) ]; then
-	echo "bin/ci: Go's build cache ($cache/build) is over 5 GB: cleaning it" >&2
-	toolchain -- go clean -cache
+	if others; then
+		echo "bin/ci: Go's build cache ($cache/build) is over 5 GB, but another bin/ci is using it: not cleaning it now" >&2
+	else
+		echo "bin/ci: Go's build cache ($cache/build) is over 5 GB: cleaning it" >&2
+		toolchain -- go clean -cache
+	fi
 fi
+rm -rf "$lock"
 
 url=${GANTRY_TEST_POSTGRES_URL:-}
 if [ -z "$url" ] && timeout 30 docker network create "gantry-ci-$$" >/dev/null &&
@@ -93,7 +129,7 @@ db=(--network "$network" -e GANTRY_TEST_POSTGRES_URL="$url")
 cgo=(-e CGO_ENABLED=1 -e CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY")
 tags=-tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4
 static=(-ldflags "-linkmode external -extldflags -static")
-staticcheck=honnef.co/go/tools/cmd/staticcheck@v0.8.2
+golangci=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
 step "Go tests"
@@ -113,11 +149,16 @@ step "gofmt"
 unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
 [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
 
-step "staticcheck"
-toolchain -- go run "$staticcheck" ./...
+step "shellcheck"
+timeout 300 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench bin/ci .githooks/pre-push cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
 
-step "go vet and staticcheck, on the app's build"
-toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $staticcheck ./..."
+step "golangci-lint"
+toolchain -- go run "$golangci" run ./...
+GANTRY_DIR=bench toolchain -- go run "$golangci" run ./...
+GANTRY_DIR=bench/feed toolchain -- go run "$golangci" run ./...
+
+step "go vet and golangci-lint, on the app's build"
+toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $golangci run ./..."
 
 step "govulncheck"
 toolchain -- go run "$govulncheck" -format json ./... >"$tmp/vulns.json"

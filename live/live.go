@@ -136,14 +136,14 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 	// deadline of its own instead, and waiting between them has none.
 	rc := http.NewResponseController(w)
 	write := func(out string) error {
-		rc.SetWriteDeadline(time.Now().Add(h.o.WriteTimeout))
+		_ = rc.SetWriteDeadline(time.Now().Add(h.o.WriteTimeout)) // only ErrNotSupported, which Flush returns too
 		if _, err := io.WriteString(w, out); err != nil {
 			return err
 		}
 		if err := rc.Flush(); err != nil {
 			return err
 		}
-		rc.SetWriteDeadline(time.Time{})
+		_ = rc.SetWriteDeadline(time.Time{})
 		return nil
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
