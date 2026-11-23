@@ -79,7 +79,7 @@ type Views struct {
 // Paths are where the sign-in pages are. Zero values take the defaults.
 type Paths struct {
 	Login      string // "/login": GET the form, POST to sign in
-	Logout     string // "/logout": POST (or DELETE, or GET) to sign out
+	Logout     string // "/logout": POST (or DELETE) to sign out
 	Passwords  string // "/passwords": /new, POST, /{token}/edit, PUT or PATCH /{token}
 	AfterLogin string // "/": where sign-in lands when nothing asked to come back
 }
@@ -114,9 +114,10 @@ type Auth struct {
 	Cookie string
 	// Idle ends a session unused this long (Devise's timeoutable), and
 	// Lifetime one this long after sign-in (Phoenix's session validity,
-	// Django's cookie age). Zero is never, as Rails 8's generator. Use is
-	// written at most hourly, so Idle counts in hours. An ended session is
-	// deleted when it's next shown.
+	// Django's cookie age). Zero is 30 days unused and 90 days after
+	// sign-in; NoLimit is never, as Rails 8's generator. Use is written at
+	// most hourly, so Idle counts in hours. An ended session is deleted
+	// when it's next shown.
 	Idle, Lifetime time.Duration
 	// Bind ties a session to something about the request that made it: the
 	// network it came through, or its address (CodeIgniter's match_ip). A
@@ -143,6 +144,26 @@ const (
 
 // ResetValidity is how long a reset link works, as Rails'.
 const ResetValidity = 15 * time.Minute
+
+// NoLimit, as Idle or Lifetime, never ends a session for that reason: any
+// negative duration does the same.
+const NoLimit time.Duration = -1
+
+const (
+	defaultIdle     = 30 * 24 * time.Hour
+	defaultLifetime = 90 * 24 * time.Hour
+)
+
+// limit is d, its default when zero, and zero (none) when negative.
+func limit(d, fallback time.Duration) time.Duration {
+	switch {
+	case d == 0:
+		return fallback
+	case d < 0:
+		return 0
+	}
+	return d
+}
 
 // bcryptCost is Rails' (has_secure_password's default). Tests lower it:
 // a cost-12 hash takes a quarter of a second.
@@ -338,7 +359,8 @@ func (a *Auth) SetPassword(ctx context.Context, userID int64, password string) e
 }
 
 // StartSession records a new session for the user and sets its cookie,
-// lasting until sign-out (Rails 8's permanent cookie), or for Lifetime.
+// lasting for Lifetime, or until sign-out (Rails 8's permanent cookie) when
+// Lifetime is NoLimit.
 func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Session, error) {
 	key, digest := token.New("")
 	now := a.now()
@@ -352,9 +374,9 @@ func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Ses
 	if err := a.DB.Write.QueryRowContext(r.Context(), query, args...).Scan(&s.ID); err != nil {
 		return Session{}, err
 	}
-	lasts := 20 * 365 * 24 * time.Hour
-	if a.Lifetime > 0 {
-		lasts = a.Lifetime
+	lasts := limit(a.Lifetime, defaultLifetime)
+	if lasts == 0 {
+		lasts = 20 * 365 * 24 * time.Hour
 	}
 	web.SetCookie(w, r, a.cookie(), key, lasts)
 	return s, nil
@@ -362,7 +384,8 @@ func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Ses
 
 // ended is a session past Idle or Lifetime.
 func (a *Auth) ended(created, seen, now time.Time) bool {
-	return (a.Lifetime > 0 && !now.Before(created.Add(a.Lifetime))) || (a.Idle > 0 && !now.Before(seen.Add(a.Idle)))
+	lifetime, idle := limit(a.Lifetime, defaultLifetime), limit(a.Idle, defaultIdle)
+	return (lifetime > 0 && !now.Before(created.Add(lifetime))) || (idle > 0 && !now.Before(seen.Add(idle)))
 }
 
 // touchEvery is how often a session's last_seen_at is written: often
@@ -494,9 +517,10 @@ func (a *Auth) Routes(rt web.Routes) {
 			rt.Handle("POST "+p.Login+"/setup", a.setupUser)
 		}
 	}
-	for _, m := range []string{"GET", "POST", "DELETE"} {
-		rt.Handle(m+" "+p.Logout, a.logout)
-	}
+	// Not GET: cross-origin protection guards only the methods that change
+	// state, and a link or redirect from any site could sign its visitors out.
+	rt.Handle("POST "+p.Logout, a.logout)
+	rt.Handle("DELETE "+p.Logout, a.logout)
 	if a.Mail == nil || a.EmailCodes != nil {
 		return
 	}
@@ -585,6 +609,7 @@ func (a *Auth) logout(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *Auth) forgotPassword(w http.ResponseWriter, r *http.Request) error {
+	resetHeaders(w)
 	return a.views().ForgotPassword(w, r, a.page(w, r))
 }
 
@@ -625,28 +650,59 @@ func (a *Auth) UserByResetToken(ctx context.Context, token string) (User, error)
 	return u, nil
 }
 
-// sendReset emails a reset link to a user with that address. Anyone else
-// gets the same answer, so the form can't be used to find out who has an
-// account.
+// resets are the reset emails still being looked up and sent. It isn't a
+// field: an Auth is copied, and a WaitGroup mustn't be.
+var resets sync.WaitGroup
+
+// Wait waits for the password reset emails being sent, every Auth's: for a
+// test that reads them, or a server shutting down.
+func (a *Auth) Wait() { resets.Wait() }
+
+// sendReset answers at once, and then emails a reset link if the address is
+// a user's. Anyone else gets the same answer, as fast, so the form can't be
+// used to find out who has an account. The link isn't queued as a job: the
+// jobs table would keep a working reset link in the database.
 func (a *Auth) sendReset(w http.ResponseWriter, r *http.Request) error {
 	p := a.paths()
 	if !a.allow(r, "passwords") {
 		a.flash().Redirect(w, r, p.Passwords+"/new", "alert", msgTooMany)
 		return nil
 	}
-	if u, err := a.FindByEmail(r.Context(), r.PostFormValue("email_address")); err == nil {
-		link := a.URL(p.Passwords + "/" + url.PathEscape(a.ResetToken(u)) + "/edit")
-		msg := mail.Message{From: a.From, To: u.EmailAddress, Subject: "Reset your password",
-			Text: fmt.Sprintf("You can reset your password on\n%s\n\nThis link will expire in %d minutes.\n", link, int(ResetValidity/time.Minute))}
-		if err := a.Mail.Send(r.Context(), msg); err != nil && a.Log != nil {
-			a.Log.Error("auth: password reset email", "err", err)
-		}
-	}
+	email := r.PostFormValue("email_address")
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Minute)
+	resets.Go(func() {
+		defer cancel()
+		a.mailReset(ctx, email)
+	})
 	a.flash().Redirect(w, r, p.Login, "notice", msgResetSent)
 	return nil
 }
 
+func (a *Auth) mailReset(ctx context.Context, email string) {
+	u, err := a.FindByEmail(ctx, email)
+	if err != nil {
+		if !errors.Is(err, ErrNoUser) && a.Log != nil {
+			a.Log.Error("auth: password reset lookup", "err", err)
+		}
+		return
+	}
+	link := a.URL(a.paths().Passwords + "/" + url.PathEscape(a.ResetToken(u)) + "/edit")
+	msg := mail.Message{From: a.From, To: u.EmailAddress, Subject: "Reset your password",
+		Text: fmt.Sprintf("You can reset your password on\n%s\n\nThis link will expire in %d minutes.\n", link, int(ResetValidity/time.Minute))}
+	if err := a.Mail.Send(ctx, msg); err != nil && a.Log != nil {
+		a.Log.Error("auth: password reset email", "err", err)
+	}
+}
+
+// resetHeaders keep the reset pages out of caches, and the token in the
+// edit page's address out of the Referer of anything it loads or links to.
+func resetHeaders(w http.ResponseWriter) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+}
+
 func (a *Auth) editPassword(w http.ResponseWriter, r *http.Request) error {
+	resetHeaders(w)
 	token := r.PathValue("token")
 	if _, err := a.UserByResetToken(r.Context(), token); err != nil {
 		a.flash().Redirect(w, r, a.paths().Passwords+"/new", "alert", msgResetInvalid)
