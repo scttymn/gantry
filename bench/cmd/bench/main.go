@@ -215,7 +215,7 @@ func write(w io.Writer, r report.Report) {
 // ownCPU is the CPU time this process, the load, has had.
 func ownCPU() time.Duration {
 	var ru syscall.Rusage
-	syscall.Getrusage(syscall.RUSAGE_SELF, &ru)
+	_ = syscall.Getrusage(syscall.RUSAGE_SELF, &ru) // fails only for a bad who or address
 	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano())
 }
 

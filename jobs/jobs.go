@@ -196,7 +196,7 @@ func (j *Job[A]) exhausted(ctx context.Context, raw []byte, err error) {
 		return
 	}
 	var a A
-	json.Unmarshal(raw, &a)
+	_ = json.Unmarshal(raw, &a) // arguments that don't read reach it as A's zero value
 	j.opts.OnExhausted(ctx, a, err)
 }
 
@@ -321,7 +321,7 @@ func (q *Queue) Retry(ctx context.Context, id int64) error {
 		return errors.New("jobs: no failed job with that id")
 	}
 	var queue string
-	q.d.Read.QueryRowContext(ctx, `SELECT queue FROM gantry_jobs WHERE id = $1`, id).Scan(&queue)
+	_ = q.d.Read.QueryRowContext(ctx, `SELECT queue FROM gantry_jobs WHERE id = $1`, id).Scan(&queue)
 	q.signal(queue)
 	return nil
 }

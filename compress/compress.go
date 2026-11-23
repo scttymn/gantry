@@ -70,7 +70,7 @@ func Compressible(contentType string) bool {
 func Bytes(data []byte) []byte {
 	var b bytes.Buffer
 	w, _ := gzip.NewWriterLevel(&b, gzip.BestCompression)
-	w.Write(data)
+	_, _ = w.Write(data) // into memory, which can't fail
 	w.Close()
 	return b.Bytes()
 }
