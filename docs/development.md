@@ -52,6 +52,25 @@ conventions, not every possible path through a program. It cannot prove that a
 custom layout is wrong or that a data fetch delays rendering; those remain
 review/performance-measurement questions.
 
+`bin/gantry check --json` prints the same scan as one JSON object, for tools
+and agents. Its field names are stable:
+
+```json
+{
+  "violations": 1,
+  "advisories": 0,
+  "findings": [
+    {"file": "app/editor.html", "line": 2, "rule": "asset-url", "severity": "error", "message": "local script or stylesheet uses a literal URL; ..."}
+  ]
+}
+```
+
+`findings` is in the order the text lists them, and empty, not null, when
+there are none. `line` is 0 for a finding about a file as a whole, and
+`severity` is `error` (a violation) or `advice`. With `--strict` it still exits
+1 on a violation, after printing. `check --rules --json` is the catalog: an
+array of objects with `id`, `severity`, `purpose` and `guidance`.
+
 For an intentional departure, add an exception to `.gantry-check.json` in the
 project root. A new app has the file, with no exceptions:
 
