@@ -40,7 +40,11 @@ type App struct {
 }
 
 // Handler is every route, in gantry's middleware.
-func (a *App) Handler() http.Handler {
+func (a *App) Handler() http.Handler { return a.Router().Handler() }
+
+// Router is every route: `feed routes` lists them, and each is in a
+// feature of test/features.yaml (TestFeatures).
+func (a *App) Router() *web.Router {
 	// The app is an API: a path with no route is answered as JSON too.
 	rt := web.NewRouter(a.Log, func(w http.ResponseWriter, r *http.Request, status int) {
 		web.JSON(w, status, map[string]string{"error": strings.ToLower(http.StatusText(status))})
@@ -70,5 +74,5 @@ func (a *App) Handler() http.Handler {
 		a.Mail.Inbox.Routes(rt.Mount, "/dev/inbox")
 	}
 	assets.Routes(rt.Mount)
-	return rt.Handler()
+	return rt
 }
