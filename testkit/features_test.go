@@ -187,6 +187,69 @@ features:
 	}
 }
 
+// A page's references are requested as the visitor who saw the page: with
+// its headers (a bearer token) and the cookies for that page's path.
+func TestVerifyLinksAsTheVisitor(t *testing.T) {
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	token := func(w http.ResponseWriter, r *http.Request) error {
+		if r.Header.Get("Authorization") != "Bearer ok" {
+			return web.Status(http.StatusUnauthorized, nil)
+		}
+		return nil
+	}
+	admin := func(w http.ResponseWriter, r *http.Request) error {
+		if c, err := r.Cookie("admin"); err != nil || c.Value != "yes" {
+			return web.Status(http.StatusForbidden, nil)
+		}
+		return nil
+	}
+	page := func(ref string) web.Handler {
+		return func(w http.ResponseWriter, r *http.Request) error {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprintf(w, `<!DOCTYPE html><h1>Page</h1><img src="%s">`, ref)
+			return nil
+		}
+	}
+	file := func(w http.ResponseWriter, r *http.Request) error { return nil }
+	rt.Handle("GET /admin/login", func(w http.ResponseWriter, r *http.Request) error {
+		http.SetCookie(w, &http.Cookie{Name: "admin", Value: "yes", Path: "/admin"})
+		return nil
+	})
+	rt.Scope("/reports", web.Pipeline{token}, func(s *web.Scope) {
+		s.Handle("GET /{$}", page("/reports/chart.png"))
+		s.Handle("GET /chart.png", file)
+	})
+	rt.Scope("/admin", web.Pipeline{token, admin}, func(s *web.Scope) {
+		s.Handle("GET /{$}", page("/admin/logo.png"))
+		s.Handle("GET /logo.png", file)
+	})
+	signIn := Roles{
+		SignedIn: func(v *Visitor, n int) string { v.Header.Set("Authorization", "Bearer ok"); return "" },
+		Admin: func(v *Visitor, n int) string {
+			v.Header.Set("Authorization", "Bearer ok")
+			v.Get("/admin/login")
+			return ""
+		},
+	}
+	r := verify(t, rt, `
+features:
+  - name: health
+    routes: [GET /up, GET /admin/login]
+    role: public
+  - name: reports
+    routes: [/reports/]
+    role: signed-in
+    visit: [{path: /reports/, selector: h1}]
+  - name: admin
+    routes: [/admin/]
+    role: admin
+    visit: [{path: /admin/, selector: h1}]
+`, signIn)
+	if len(r.errors) > 0 {
+		t.Errorf("reported:\n%s", strings.Join(r.errors, "\n"))
+	}
+}
+
 func TestProbe(t *testing.T) {
 	for path, want := range map[string]string{
 		"/news":              "/news?gantry-verify=admin",

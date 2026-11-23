@@ -224,7 +224,7 @@ func visitAs(t testing.TB, h http.Handler, f Feature, visit Visit, role Role, si
 		t.Errorf("%s: GET %s has no %q", as, visit.Path, visit.Selector)
 	}
 	if p.Code == http.StatusOK && strings.HasPrefix(p.Header.Get("Content-Type"), "text/html") {
-		links(t, h, Page{Path: visit.Path, Header: v.cookies()})
+		links(t, h, Page{Path: visit.Path, Header: v.headers(visit.Path)})
 	}
 	t.Logf("%s: GET %s %d", as, visit.Path, p.Code)
 }
@@ -291,10 +291,14 @@ func probe(t testing.TB, path string, role Role) string {
 	return u.String()
 }
 
-// cookies are the visitor's, as a request's header.
-func (v *Visitor) cookies() http.Header {
+// headers are what the visitor sends with a request for path: its Header,
+// and the cookies it has for that path (one may be scoped to /admin), for
+// Links to request a page's references as the visitor who saw it.
+func (v *Visitor) headers(path string) http.Header {
 	u, _ := url.Parse(origin)
-	header := http.Header{"Host": {u.Host}}
+	u, _ = u.Parse(path)
+	header := v.Header.Clone()
+	header.Set("Host", u.Host)
 	for _, c := range v.jar.Cookies(u) {
 		header.Add("Cookie", c.String())
 	}
