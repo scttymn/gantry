@@ -58,7 +58,7 @@ catalog. See [the purpose and extension contract](docs/strict.md) and
 | `sign`, `mail`, `compress` | Signed tokens, email, and gzip. |
 
 ## Working on gantry
-Everything runs in Docker: `bin/go go test ./...`. The plan, with what was measured and found: [`docs/plans/gantry.md`](docs/plans/gantry.md). Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says, not in an issue.
+Everything runs in Docker: `bin/go go test ./...`, and `bin/ci` for what CI runs (`git config core.hooksPath .githooks` runs it before every push; see [CONTRIBUTING.md](CONTRIBUTING.md)). The plan, with what was measured and found: [`docs/plans/gantry.md`](docs/plans/gantry.md). Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says, not in an issue.
 
 ## License
 MIT: see [LICENSE](LICENSE). The Turbo and Stimulus that new apps vendor are MIT too, each file carrying its own notice.
