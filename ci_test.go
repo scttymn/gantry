@@ -5,7 +5,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -96,6 +98,7 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 		"docker": fakeDocker,
 		"df":     "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
 		"jq":     "#!/bin/sh\n",
+		"du":     "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
 	}
 	for _, tool := range []string{"docker", "df", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
 		if slices.Contains(without, tool) {
@@ -147,7 +150,7 @@ func TestBinCIPostgres(t *testing.T) {
 				t.Errorf("a test ran without the throwaway Postgres: docker %s", c)
 			}
 		}
-		if len(called(calls, "staticcheck")) > 0 {
+		if len(called(calls, "golangci-lint")) > 0 {
 			t.Errorf("bin/ci went on after go vet failed:\n%s", out)
 		}
 		if len(called(calls, "rm -f gantry-ci-pg-")) == 0 || len(called(calls, "network rm gantry-ci-")) == 0 {
@@ -174,6 +177,56 @@ func TestBinCIPostgres(t *testing.T) {
 			t.Errorf("bin/ci in GitHub Actions without a Postgres: err %v, tests %q\n%s", err, called(calls, "go test"), out)
 		}
 	})
+}
+
+// Every checkout's bin/ci shares Go's build cache: one over 5 GB is cleaned,
+// but not under another bin/ci's build, whose files it would take.
+func TestBinCICleansTheCacheAlone(t *testing.T) {
+	gone := exec.Command("true")
+	if err := gone.Run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		other  int // another run's mark, by pid
+		cleans bool
+	}{
+		{"alone", 0, true},
+		{"beside a run that has gone", gone.Process.Pid, true},
+		{"beside another running", os.Getpid(), false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			home := t.TempDir()
+			cache := filepath.Join(home, ".cache/gantry")
+			if runtime.GOOS == "darwin" {
+				cache = filepath.Join(home, "Library/Caches/gantry")
+			}
+			for _, dir := range []string{"build", "runs"} {
+				if err := os.MkdirAll(filepath.Join(cache, dir), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if c.other != 0 {
+				if err := os.WriteFile(filepath.Join(cache, "runs", strconv.Itoa(c.other)), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, calls, err := binCI(t, []string{"HOME=" + home, "FAKE_DU_KB=6000000"})
+			if err != nil {
+				t.Fatalf("bin/ci: %v\n%s", err, out)
+			}
+			if cleaned := len(called(calls, "go clean -cache")) > 0; cleaned != c.cleans {
+				t.Errorf("bin/ci cleaned the cache: %v, want %v\n%s", cleaned, c.cleans, out)
+			}
+			marks, _ := os.ReadDir(filepath.Join(cache, "runs"))
+			if want := map[bool]int{true: 0, false: 1}[c.cleans]; len(marks) != want {
+				t.Errorf("%d marks left in runs/, want %d (its own and a gone run's removed)", len(marks), want)
+			}
+			if _, err := os.Stat(filepath.Join(cache, "cleaning")); err == nil {
+				t.Error("bin/ci left the cleaning lock")
+			}
+		})
+	}
 }
 
 // bin/ci stops before it starts what it can't finish.
