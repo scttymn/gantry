@@ -2,11 +2,15 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -364,6 +368,286 @@ func testLimitExpires(t *testing.T, engine string) {
 	}
 }
 
+// A job that runs past its limit's Duration loses its slot to the next one;
+// once both finish, the limit is still To at once, not one more.
+func TestLimitOutlived(t *testing.T) { onEngines(t, testLimitOutlived) }
+
+func testLimitOutlived(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, clock := queue(t, engine, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	for range 4 {
+		deploy.Enqueue(ctx, "shop")
+	}
+	long, ok, _ := q.claim(ctx, "default", "test")
+	if !ok {
+		t.Fatal("nothing claimed")
+	}
+	clock.Advance(3*time.Minute + time.Second)
+	if err := q.maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	next, ok, _ := q.claim(ctx, "default", "test")
+	if !ok {
+		t.Fatal("the outlived slot didn't expire")
+	}
+	q.execute(ctx, long)
+	if _, ok, _ := q.claim(ctx, "default", "test"); ok {
+		t.Fatal("claimed beside the running one: the outlived one freed its slot")
+	}
+	q.execute(ctx, next)
+	if _, ok, _ := q.claim(ctx, "default", "test"); !ok {
+		t.Fatal("nothing claimed once both finished")
+	}
+	if _, ok, _ := q.claim(ctx, "default", "test"); ok {
+		t.Error("two claimed at once with a limit of one")
+	}
+}
+
+// Workers claiming at once take no more than a limit's To between them.
+func TestLimitConcurrentClaims(t *testing.T) { onEngines(t, testLimitConcurrentClaims) }
+
+func testLimitConcurrentClaims(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, _ := queue(t, engine, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	for range 100 {
+		deploy.Enqueue(ctx, "shop")
+	}
+	var wg sync.WaitGroup
+	var n atomic.Int32
+	for i := range 5 {
+		wg.Go(func() {
+			_, ok, err := q.claim(ctx, "default", fmt.Sprint("worker ", i))
+			if err != nil {
+				t.Error(err)
+			}
+			if ok {
+				n.Add(1)
+			}
+		})
+	}
+	wg.Wait()
+	if n.Load() != 1 {
+		t.Errorf("%d claimed at once with a limit of one", n.Load())
+	}
+}
+
+// However many jobs over a discarding limit are ahead, they're dropped and
+// the job behind them runs.
+func TestLimitDiscardsMany(t *testing.T) { onEngines(t, testLimitDiscardsMany) }
+
+func testLimitDiscardsMany(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, _ := queue(t, engine, Options{})
+	var ran []string
+	mirror := Define(q, "mirror", func(ctx context.Context, s string) error { ran = append(ran, s); return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }, Discard: true}})
+	for range 22 {
+		mirror.Enqueue(ctx, "a")
+	}
+	mirror.Enqueue(ctx, "b")
+	if _, ok, _ := q.claim(ctx, "default", "busy"); !ok {
+		t.Fatal("nothing claimed")
+	}
+	drain(t, q)
+	if !slices.Equal(ran, []string{"b"}) {
+		t.Errorf("ran %q; want b, behind 21 dropped", ran)
+	}
+	if failed, _ := q.Failed(ctx); len(failed) != 21 {
+		t.Errorf("%d dropped; want 21", len(failed))
+	}
+}
+
+// A stalled worker whose job was claimed again doesn't free the slot the new
+// claim holds.
+func TestStaleWorkerLimit(t *testing.T) { onEngines(t, testStaleWorkerLimit) }
+
+func testStaleWorkerLimit(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, clock := queue(t, engine, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	deploy.Enqueue(ctx, "shop")
+	deploy.Enqueue(ctx, "shop")
+	stale, ok, _ := q.claim(ctx, "default", "stalled")
+	if !ok {
+		t.Fatal("nothing claimed")
+	}
+	clock.Advance(6 * time.Minute)
+	q.maintain(ctx)
+	q.beat(ctx, "alive")
+	if _, ok, _ := q.claim(ctx, "default", "alive"); !ok {
+		t.Fatal("the stalled worker's job didn't go back")
+	}
+	q.execute(ctx, stale)
+	if _, ok, _ := q.claim(ctx, "default", "alive"); ok {
+		t.Error("claimed beside the new claim: the stalled worker freed its slot")
+	}
+}
+
+// A job whose failure can't be saved stays claimed, to be run again, so it
+// isn't given up on: OnExhausted doesn't run.
+func TestSettleFails(t *testing.T) { onEngines(t, testSettleFails) }
+
+func testSettleFails(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, _ := queue(t, engine, Options{})
+	var exhausted atomic.Int32
+	Define(q, "work", func(ctx context.Context, s string) error { return errors.New("no") },
+		Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }}).Enqueue(ctx, "x")
+	failWrites(t, d, "UPDATE", "NEW.state = 'failed'")
+	drain(t, q)
+	if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "claimed" || exhausted.Load() != 0 {
+		t.Errorf("pending %+v, exhausted %d; want it claimed, and OnExhausted not run", p, exhausted.Load())
+	}
+}
+
+// failWrites makes the database refuse event (INSERT or UPDATE) on
+// gantry_jobs where when holds, until it's undone.
+func failWrites(t *testing.T, d *db.DB, event, when string) (undo func()) {
+	t.Helper()
+	ctx := context.Background()
+	stmts := []string{`CREATE TRIGGER fail BEFORE ` + event + ` ON gantry_jobs FOR EACH ROW WHEN (` + when + `) BEGIN SELECT RAISE(ABORT, 'disk full'); END`}
+	drop := `DROP TRIGGER fail`
+	if d.Engine == db.Postgres {
+		stmts = []string{`CREATE FUNCTION fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$`,
+			`CREATE TRIGGER fail BEFORE ` + event + ` ON gantry_jobs FOR EACH ROW WHEN (` + when + `) EXECUTE FUNCTION fail()`}
+		drop = `DROP TRIGGER fail ON gantry_jobs`
+	}
+	for _, stmt := range stmts {
+		if _, err := d.Write.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return func() {
+		if _, err := d.Write.ExecContext(ctx, drop); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// Jobs waiting on their limit don't hold up the ones behind them, however
+// many wait.
+func TestLimitHeadOfLine(t *testing.T) { onEngines(t, testLimitHeadOfLine) }
+
+func testLimitHeadOfLine(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, _ := queue(t, engine, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	for range 25 {
+		deploy.Enqueue(ctx, "shop")
+	}
+	deploy.Enqueue(ctx, "blog")
+	if c, ok, _ := q.claim(ctx, "default", "test"); !ok || string(c.Args) != `"shop"` {
+		t.Fatalf("claimed %q, %v; want the first shop deploy", c.Args, ok)
+	}
+	if c, ok, err := q.claim(ctx, "default", "test"); err != nil || !ok || string(c.Args) != `"blog"` {
+		t.Errorf("claimed %q, %v, %v; want the blog deploy, behind 24 waiting for shop's limit", c.Args, ok, err)
+	}
+}
+
+// A worker that stalls past Dead, its job gone back and claimed again (by
+// another process, or another worker of its own), ends late: what it ends
+// with is dropped, not written over the new claim.
+func TestStaleWorker(t *testing.T) { onEngines(t, testStaleWorker) }
+
+func testStaleWorker(t *testing.T, engine string) {
+	for _, again := range []string{"alive", "stalled"} {
+		t.Run("claimed again by "+again, func(t *testing.T) {
+			ctx := context.Background()
+			q, _, clock := queue(t, engine, Options{})
+			var calls, exhausted atomic.Int32
+			work := Define(q, "work", func(ctx context.Context, s string) error {
+				if calls.Add(1) == 1 {
+					return errors.New("too late")
+				}
+				return nil
+			}, Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }})
+			work.Enqueue(ctx, "x")
+			stale, ok, _ := q.claim(ctx, "default", "stalled")
+			if !ok {
+				t.Fatal("nothing claimed")
+			}
+			clock.Advance(6 * time.Minute)
+			q.maintain(ctx)
+			q.beat(ctx, again)
+			fresh, ok, _ := q.claim(ctx, "default", again)
+			if !ok {
+				t.Fatal("the stalled worker's job didn't go back")
+			}
+			q.execute(ctx, stale)
+			if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "claimed" {
+				t.Fatalf("the stalled worker settled a job claimed again: %+v", p)
+			}
+			if failed, _ := q.Failed(ctx); len(failed) != 0 || exhausted.Load() != 0 {
+				t.Fatalf("failed %+v, exhausted %d; want neither", failed, exhausted.Load())
+			}
+			q.execute(ctx, fresh)
+			if p, _ := q.Pending(ctx); len(p) != 0 {
+				t.Errorf("the new claim's run didn't finish the job: %+v", p)
+			}
+		})
+	}
+}
+
+var errReset = errors.New("connection reset")
+
+// brokenRead is a database whose read of jobs fails after its first row, as
+// a dropped connection does; other queries find nothing.
+type brokenRead struct{}
+
+func (brokenRead) Connect(context.Context) (driver.Conn, error) { return brokenRead{}, nil }
+func (brokenRead) Driver() driver.Driver                        { return nil }
+func (brokenRead) Prepare(string) (driver.Stmt, error)          { return nil, errors.New("not prepared") }
+func (brokenRead) Close() error                                 { return nil }
+func (brokenRead) Begin() (driver.Tx, error)                    { return brokenRead{}, nil }
+func (brokenRead) Commit() error                                { return nil }
+func (brokenRead) Rollback() error                              { return nil }
+func (brokenRead) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+func (brokenRead) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
+	if strings.HasPrefix(query, "SELECT id, name, args") {
+		return &rows{cols: []string{"id", "name", "args", "attempts", "limit_key"},
+			row: []driver.Value{int64(1), "work", `"x"`, int64(0), ""}, end: errReset}, nil
+	}
+	return &rows{end: io.EOF}, nil
+}
+
+type rows struct {
+	cols []string
+	row  []driver.Value
+	end  error
+}
+
+func (r *rows) Columns() []string { return r.cols }
+func (r *rows) Close() error      { return nil }
+func (r *rows) Next(dest []driver.Value) error {
+	if r.row == nil {
+		return r.end
+	}
+	copy(dest, r.row)
+	r.row = nil
+	return nil
+}
+
+// A claim whose read fails partway fails, rather than claiming from what it
+// read before the failure.
+func TestClaimReadFails(t *testing.T) {
+	broken := sql.OpenDB(brokenRead{})
+	defer broken.Close()
+	q := &Queue{d: &db.DB{Engine: db.SQLite, Read: broken, Write: broken},
+		o: Options{Log: slog.New(slog.DiscardHandler), Now: time.Now}, defs: map[string]runner{}}
+	Define(q, "work", func(ctx context.Context, s string) error { return nil }, Opts[string]{})
+	if c, ok, err := q.claim(context.Background(), "default", "test"); !errors.Is(err, errReset) {
+		t.Errorf("claimed %+v, %v, %v; want the read's error", c, ok, err)
+	}
+}
+
 func TestRecurring(t *testing.T) { onEngines(t, testRecurring) }
 
 func testRecurring(t *testing.T, engine string) {
@@ -403,6 +687,82 @@ func testRecurring(t *testing.T, engine string) {
 	}
 	if err := Define(q, "bad", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Cron("not cron", time.UTC, "x"); err == nil {
 		t.Error("a bad cron expression")
+	}
+}
+
+// A tick whose job isn't saved isn't recorded either: the next tick enqueues
+// the run, rather than finding it taken.
+func TestRecurringInsertFails(t *testing.T) { onEngines(t, testRecurringInsertFails) }
+
+func testRecurringInsertFails(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, clock := queue(t, engine, Options{})
+	var runs atomic.Int32
+	Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(10*time.Minute, "x")
+	undo := failWrites(t, d, "INSERT", "true")
+	clock.Advance(10 * time.Minute)
+	if err := q.Drain(ctx); err == nil {
+		t.Fatal("the job wasn't saved, and the tick didn't say so")
+	}
+	undo()
+	drain(t, q)
+	if runs.Load() != 1 {
+		t.Errorf("%d runs after the failed tick; want 1", runs.Load())
+	}
+}
+
+// A process whose ticker stalls past Keep doesn't enqueue the run it missed:
+// that run's tick may be cleared by then, and another process ran it.
+func TestRecurringStalledPastKeep(t *testing.T) { onEngines(t, testRecurringStalledPastKeep) }
+
+func testRecurringStalledPastKeep(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, clock := queue(t, engine, Options{})
+	var runs atomic.Int32
+	sweep := func(q *Queue) {
+		Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(time.Hour, "x")
+	}
+	sweep(q)
+	stalled, err := New(ctx, d, Options{Now: clock.Now, Log: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep(stalled)
+	clock.Advance(time.Hour)
+	drain(t, q)
+	clock.Advance(25 * time.Hour)
+	q.maintain(ctx)
+	if err := stalled.Drain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if runs.Load() != 1 {
+		t.Errorf("the 13:00 sweep ran %d times; want 1", runs.Load())
+	}
+}
+
+// A recurring job's ticks are kept as long as finished jobs, then cleared.
+func TestTicksCleared(t *testing.T) { onEngines(t, testTicksCleared) }
+
+func testTicksCleared(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, clock := queue(t, engine, Options{})
+	Define(q, "sweep", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Every(time.Hour, "x")
+	clock.Advance(time.Hour)
+	drain(t, q)
+	ticks := func() int {
+		var n int
+		d.Read.QueryRow(`SELECT COUNT(*) FROM gantry_job_ticks`).Scan(&n)
+		return n
+	}
+	clock.Advance(23 * time.Hour)
+	q.maintain(ctx)
+	if ticks() != 1 {
+		t.Fatalf("%d ticks before a day; want 1", ticks())
+	}
+	clock.Advance(2 * time.Hour)
+	q.maintain(ctx)
+	if ticks() != 0 {
+		t.Errorf("%d ticks after a day; want 0", ticks())
 	}
 }
 

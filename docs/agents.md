@@ -1,4 +1,3 @@
-| Link previews and search descriptions | `meta.Tags` in `app/shared/layout`, with `layout.Site` (name, `SITE_URL`, default image) and each page's `Title`, `Description`, `Path` | Absolute addresses from the configured site address, not the request's host (pages are cached) |
 # Building an app with Gantry: a guide for agents
 
 You're an AI agent building or maintaining a Gantry application. This guide
@@ -46,6 +45,7 @@ an older CLI may not have `check`.
 | --- | --- | --- |
 | Routes and middleware | `web.NewRouter`, scopes and pipelines in `app/routes.go` | Shared error handling, authentication filters and the standard HTTP middleware |
 | Views | `.templ` views beside their resource's controller, rendered with `web.Render`, inside `app/shared/layout` | One page shell for navigation, metadata and assets |
+| Link previews and search descriptions | `meta.Tags` in `app/shared/layout`, with `layout.Site` (name, `SITE_URL`, default image) and each page's `Title`, `Description`, `Path` | Absolute addresses from the configured site address, not the request's host (pages are cached) |
 | Styles and scripts | The app's `assets` package: `Styles.Tag`, `ImportMap.Tag`, `Path`, and `Routes` | Gantry's inline-or-linked styles, content fingerprints, compression and caching |
 | Browser interactions | The generated Turbo and Stimulus setup; controllers in `assets/js/controllers` | Normal links and forms first, enhancements scoped to their own elements |
 | Public page caching | `web.PageCache` for explicitly selected pages identical for every visitor | Data-version invalidation, bounded cache size and a suitable maximum age |
