@@ -16,7 +16,8 @@ const (
 	// SqlcImage is where the toolchain stage copies sqlc from.
 	SqlcImage = "sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537"
 	// PostgresImage is a Postgres app's database, and the workflows' for
-	// gantry's tests; psql and pg_dump are its major's.
+	// gantry's tests; psql and pg_dump are its major's. Dependabot bumps it in
+	// this package's Dockerfile, which isn't built.
 	PostgresImage = "postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf"
 	// SQLiteCFlags is CGO_CFLAGS for SQLite compiled from C: Go's own, and the options SQLiteTags don't give.
 	SQLiteCFlags = "-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY"
