@@ -245,7 +245,7 @@ func installBinstub(t *testing.T, dir string) string {
 func stubEnv(gantryBase, houstonBase string, extra ...string) []string {
 	skip := map[string]bool{
 		"GANTRY_BIN": true, "HOUSTON_BIN": true, "GANTRY_OS": true, "GANTRY_ARCH": true,
-		"GANTRY_RELEASE_BASE": true, "HOUSTON_RELEASE_BASE": true,
+		"GANTRY_RELEASE_BASE": true, "HOUSTON_RELEASE_BASE": true, "GANTRY_REQUIRE_PROVENANCE": true,
 	}
 	var env []string
 	for _, e := range os.Environ() {
@@ -505,6 +505,88 @@ func TestBinstubSkipsProvenanceBeforeItWasPublished(t *testing.T) {
 	}
 	if n := rs.hitsOn("/gantry/v0.17.0/provenance.sigstore.json"); n != 0 || rs.ghCalls() != "" {
 		t.Errorf("v0.17.0's provenance was fetched %d times; gh calls %q", n, rs.ghCalls())
+	}
+}
+
+// GANTRY_REQUIRE_PROVENANCE=1 makes each download bin/gantry can't trace to
+// gantry's release workflow a refusal, not a warning: nothing is installed
+// or run.
+func TestBinstubRequiresProvenance(t *testing.T) {
+	osName, arch := platform(t)
+	houston := []byte("#!/bin/sh\necho houston-good\n")
+	sum := sha256.Sum256(houston)
+	pins := hex.EncodeToString(sum[:]) + "  houston-" + osName + "-" + arch + "\n"
+	for _, tc := range []struct {
+		name    string
+		version string
+		gantry  []byte
+		env     func(t *testing.T, rs *releaseServer) []string
+		want    string
+		refused string // the CLI not installed: "gantry" or "houston"; "" when it all ran
+	}{
+		{"attested, Houston pinned", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
+		}, "houston-good", ""},
+		{"gh too old", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			rs.gh(t, false)
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
+		{"true requires it too", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			rs.gh(t, false)
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=true")
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
+		{"0 doesn't", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			rs.gh(t, false)
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=0")
+		}, "SHA256SUMS only", ""},
+		{"a value it doesn't know", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=yes")
+		}, "GANTRY_REQUIRE_PROVENANCE=yes", "gantry"},
+		{"no gh", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			for _, d := range []string{"/usr/bin", "/bin"} {
+				if _, err := os.Stat(filepath.Join(d, "gh")); err == nil {
+					t.Skipf("gh is in %s", d)
+				}
+			}
+			return rs.env("PATH=/usr/bin:/bin", "GANTRY_REQUIRE_PROVENANCE=1")
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
+		{"published before provenance", "v0.17.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
+		}, "GANTRY_REQUIRE_PROVENANCE refuses it", "gantry"},
+		{"gantry pins no Houston digests", "v0.20.0", gantryNaming("v9.9.9"), func(t *testing.T, rs *releaseServer) []string {
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
+		}, "GANTRY_REQUIRE_PROVENANCE refuses it", "houston"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeMod(t, dir, tc.version, "")
+			installBinstub(t, dir)
+			rs := newReleaseServer(t)
+			rs.put("gantry", tc.version, "gantry-"+osName+"-"+arch, tc.gantry, "")
+			rs.put("houston", "v9.9.9", "houston-"+osName+"-"+arch, houston, "")
+			code, out := runStub(t, dir, tc.env(t, rs), "dev")
+			if (code == 0) != (tc.refused == "") || !strings.Contains(out, tc.want) {
+				t.Fatalf("exit %d\n%s", code, out)
+			}
+			// Houston comes after gantry: refusing gantry installs neither.
+			for kept, want := range map[string]bool{
+				"gantry-" + tc.version: tc.refused != "gantry",
+				"houston-v9.9.9":       tc.refused == "",
+			} {
+				_, err := os.Stat(filepath.Join(dir, ".gantry", "bin", kept+"-"+osName+"-"+arch))
+				if installed := err == nil; installed != want {
+					t.Errorf("%s installed = %v:\n%s", kept, installed, out)
+				}
+			}
+			if tc.refused != "" && strings.Contains(out, "gantry-ok") {
+				t.Errorf("ran gantry after refusing a download:\n%s", out)
+			}
+			// What's refused is known before the download, which doesn't happen.
+			release := map[string]string{"gantry": tc.version, "houston": "v9.9.9"}[tc.refused]
+			if asset := "/" + tc.refused + "/" + release + "/" + tc.refused + "-" + osName + "-" + arch; tc.refused != "" && rs.hitsOn(asset) != 0 {
+				t.Errorf("downloaded %s before refusing it:\n%s", asset, out)
+			}
+		})
 	}
 }
 

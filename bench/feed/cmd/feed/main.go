@@ -25,6 +25,7 @@ import (
 	"github.com/scttymn/gantry/sign"
 
 	"feed/app"
+	"feed/app/shared/layout"
 	"feed/assets"
 	"feed/config"
 	"feed/db/migrations"
@@ -32,6 +33,13 @@ import (
 )
 
 func main() {
+	// Started as a picture's resizing child, it makes the copy and exits.
+	if images.IsChild(os.Args) {
+		os.Exit(app.Pictures.RunChild(os.Args))
+	}
+	if exe, err := os.Executable(); err == nil {
+		app.Pictures.Maker = images.Child{Exe: exe}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -130,6 +138,8 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 			mailer.Close()
 		}
 	}()
+	// Link previews are made from the site's address (meta.Site).
+	layout.Site.URL = cfg.SiteURL
 	signer := sign.Signer{Key: key}
 	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
 		Secret: []byte(cfg.JWTSecret), Started: time.Now()}

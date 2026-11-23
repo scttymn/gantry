@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"text/template"
+
+	"github.com/scttymn/gantry/internal/pins"
 )
 
 // NewApp is what `gantry new` fills its templates with.
@@ -29,7 +31,8 @@ type NewApp struct {
 	Engine   string // sqlc's: "sqlite" or "postgresql"
 	Gantry   string // the gantry release go.mod requires
 	Houston  string // the Houston release bin/gantry downloads
-	Templ    string // templ's version, the one gantry builds with
+	// The versions and build flags gantry builds with (internal/pins).
+	Templ, Go, GolangImage, SqlcImage, PostgresImage, SQLiteCFlags, SQLiteTags string
 	// With --gantry: the checkout, relative to the app (go.work and the dev
 	// container's mount), and where the container sees it.
 	GantryPath, GantryMount string
@@ -68,8 +71,6 @@ const houstonSHA256SUMS = `b4e55360b44347fa7ab2c5d61a6e58bc6f5c75dccdc38339a8511
 182c451d07db313dd28c3e370fafd72fa35484c34bb4563d35168f1703edc4d8  houston-linux-amd64
 03bd4046a5042c7fa502fe93cbd578160650abed5455d8f466a6ef4d00aa018e  houston-linux-arm64
 `
-
-const templVersion = "v0.3.1020"
 
 var appName = regexp.MustCompile(`\A[a-z][a-z0-9-]{0,62}\z`)
 
@@ -132,7 +133,9 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("%s is there already, and isn't empty", name)
 	}
 
-	a := NewApp{Name: name, Title: title(name), Module: o.module, Postgres: o.db == "postgres", Engine: "sqlite", Templ: templVersion, Work: "/app"}
+	a := NewApp{Name: name, Title: title(name), Module: o.module, Postgres: o.db == "postgres", Engine: "sqlite", Work: "/app",
+		Templ: pins.Templ, Go: pins.Go, GolangImage: pins.GolangImage, SqlcImage: pins.SqlcImage, PostgresImage: pins.PostgresImage,
+		SQLiteCFlags: pins.SQLiteCFlags, SQLiteTags: pins.SQLiteTags}
 	if o.inModule {
 		if o.gantry != "" {
 			return errors.New("--in-module and --gantry: point the module's go.mod at a gantry checkout with a replace instead")
@@ -285,7 +288,7 @@ func writeApp(dir string, a NewApp) error {
 		return err
 	}
 	if a.GantryPath != "" {
-		work := fmt.Sprintf("go 1.27.1\n\nuse (\n\t.\n\t%s\n)\n", a.GantryPath)
+		work := fmt.Sprintf("go %s\n\nuse (\n\t.\n\t%s\n)\n", a.Go, a.GantryPath)
 		if err := write(filepath.Join(dir, "go.work"), []byte(work)); err != nil {
 			return err
 		}
