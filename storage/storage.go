@@ -313,9 +313,9 @@ func (s *Storage) deleteBlob(ctx context.Context, tx *db.Tx, b Blob) error {
 	}
 	tx.AfterCommit(func() {
 		os.Remove(s.Path(b.Key))
-		s.Images.Forget(b.Key)
+		_ = s.Images.Forget(b.Key)
 		if s.AVIF != nil {
-			s.AVIF.Forget(b.Key)
+			_ = s.AVIF.Forget(b.Key)
 		}
 	})
 	return nil
@@ -573,7 +573,7 @@ func (s *Storage) WarmLater() {
 	if !s.queued.CompareAndSwap(false, true) {
 		return
 	}
-	s.background.Go(func() { s.Warm(context.Background()) })
+	s.background.Go(func() { _, _ = s.Warm(context.Background()) }) // Warm logs what it made and why it stopped
 }
 
 // Wait waits for the background warmings to finish.
@@ -596,7 +596,9 @@ func (s *Storage) analyze(ctx context.Context, b *Blob) error {
 	}
 	var raw string
 	var metadata map[string]any
-	s.DB.Write.QueryRowContext(ctx, `SELECT COALESCE(metadata, '') FROM active_storage_blobs WHERE id = $1`, b.ID).Scan(&raw)
+	if err := s.DB.Write.QueryRowContext(ctx, `SELECT COALESCE(metadata, '') FROM active_storage_blobs WHERE id = $1`, b.ID).Scan(&raw); err != nil {
+		return err // else the update below would replace the blob's metadata with ours alone
+	}
 	if json.Unmarshal([]byte(raw), &metadata) != nil || metadata == nil {
 		metadata = map[string]any{}
 	}

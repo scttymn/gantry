@@ -76,11 +76,9 @@ func (a *Auth) socialRoutes(rt web.Routes) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, query := range []string{`SELECT provider,subject,user_id,email_address,verified_at FROM auth_identities LIMIT 0`, `SELECT state_digest,provider,browser_digest,nonce,verifier,link_session_id,expires_at FROM auth_oauth_states LIMIT 0`} {
-		rows, err := a.DB.Read.QueryContext(ctx, query)
-		if err != nil {
+		if _, err := a.DB.Read.ExecContext(ctx, query); err != nil {
 			panic("auth: apply the social identities migration before enabling Social")
 		}
-		rows.Close()
 	}
 	rt.Handle("GET "+a.paths().Login+"/identities", a.identitiesPage)
 }

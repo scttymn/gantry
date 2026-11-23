@@ -39,7 +39,9 @@ func appCommand(command string) func(root string, args []string, out, errOut io.
 		rest := []string{command}
 		for _, a := range args {
 			if name, ok := strings.CutPrefix(a, "--"); ok && fs.Lookup(name) != nil {
-				fs.Set(name, "true")
+				if err := fs.Set(name, "true"); err != nil {
+					return err
+				}
 				continue
 			}
 			rest = append(rest, a)

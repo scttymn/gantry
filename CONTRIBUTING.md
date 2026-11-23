@@ -38,13 +38,28 @@ Without it they skip, except under `CI=true`, where they fail.
 
 Every pull request and push to `main` runs the `ci` workflow: both passes on
 SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
-staticcheck and govulncheck (`go vet`, staticcheck and govulncheck on the cgo
-build too), shellcheck on `bin/go`, `bin/bench` and an app's `bin/gantry`, the
-bench modules' tests (below), and the release's build and its
-probe on a made-up tag. Run staticcheck and govulncheck with
-`bin/go go run honnef.co/go/tools/cmd/staticcheck@<version> ./...` and
+golangci-lint and govulncheck (`go vet`, golangci-lint and govulncheck on the
+cgo build too, golangci-lint on the bench modules), shellcheck on `bin/go`,
+`bin/bench`, `bin/ci`, the pre-push hook and an app's `bin/gantry`, the bench
+modules' tests (below), and the release's build and its probe on a made-up
+tag. Run
+golangci-lint and govulncheck with
+`bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@<version> run ./...`
+(`GANTRY_DIR=bench` or `bench/feed` before it for a bench module) and
 `bin/go go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`, at the
 versions [`ci.yml`](.github/workflows/ci.yml) pins.
+
+golangci-lint's linters ([`.golangci.yml`](.golangci.yml)) are staticcheck's
+checks (`staticcheck.conf`'s, which gopls reads) and one for each bug class
+gantry has had: errors dropped (errcheck), `rows.Err` and `Close`
+(rowserrcheck, sqlclosecheck) and response bodies left open (bodyclose), none
+of them in tests yet, and three calls with one right place (forbidigo).
+GANTRY_ENV is read by `env.Development` and `env.Test` (`internal/env`),
+forwarding headers by `web/proxies.go`, and HTTP goes through a client with a
+timeout, never `http.DefaultClient`.
+depguard keeps `devcheck` out of the packages an app links (#34) and holds
+`bench/feed` to an app's import boundaries (#33). An exception names the
+file, the linter and why, in `.golangci.yml` or a `//nolint:<linter> // why`.
 
 `bin/ci` runs those checks here, step by step under the workflow's names, and
 stops at the first that fails; `bin/ci --fast` leaves out the race detector and
@@ -52,8 +67,9 @@ the release's build. Its Postgres is `GANTRY_TEST_POSTGRES_URL`'s, or a
 throwaway `postgres:17` it removes when it's done; with neither, it says loudly
 that the Postgres tests skipped. Go's caches are one for every checkout
 (`~/Library/Caches/gantry` on macOS, `~/.cache/gantry` elsewhere), cleaned once
-the build cache passes 5 GB, and `bin/ci` won't start with less than 20 GB free
-there. It needs Docker running, `jq`, `timeout` and `curl` on the PATH, and
+the build cache passes 5 GB, though never while another checkout's `bin/ci`
+is running (a clean under a build takes its files), and `bin/ci` won't start
+with less than 20 GB free there. It needs Docker running, `jq`, `timeout` and `curl` on the PATH, and
 checks for them before it starts; every Docker call it makes has a time limit.
 Have every push run it first, once per clone:
 

@@ -312,7 +312,8 @@ func (q *Queue) Run(ctx context.Context) error {
 	if err := q.beat(bg, process); err != nil {
 		return err
 	}
-	defer q.d.Write.ExecContext(bg, `DELETE FROM gantry_job_processes WHERE id = $1`, process)
+	// A row this leaves behind stops beating, and maintain clears it.
+	defer func() { _, _ = q.d.Write.ExecContext(bg, `DELETE FROM gantry_job_processes WHERE id = $1`, process) }()
 
 	// Jobs run under their own context, which ends after the grace.
 	jobCtx, endJobs := context.WithCancel(bg)
