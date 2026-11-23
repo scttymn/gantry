@@ -3,7 +3,7 @@ module github.com/scttymn/gantry/bench/sqlite3way
 go 1.27.4
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.52
+	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/ncruces/go-sqlite3 v0.35.6
 	modernc.org/sqlite v1.59.0
 )
