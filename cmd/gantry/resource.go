@@ -43,9 +43,11 @@ type Resource struct {
 	Photos    []Field // photo slots (Active Storage attachments), not columns
 	List      []Field // the list's columns: the first two that read as text
 	Position  bool
-	Postgres  bool   // the app's engine: its queries bind dates differently
-	Base      string // "/admin/membership_options", or "/membership_options"
-	Folder    string // "app/admin/membershipoptions", or "app/membershipoptions"
+	// Postgres: sqlc.yaml's engine. Its queries bind dates differently, and
+	// Get…ForUpdate locks the row there.
+	Postgres bool
+	Base     string // "/admin/membership_options", or "/membership_options"
+	Folder   string // "app/admin/membershipoptions", or "app/membershipoptions"
 	// NamespaceCode: app/<namespace> has code of its own (an admin package
 	// with its layout, say), not only resources' folders, which g resource
 	// writes. The resource doesn't use it.
@@ -327,7 +329,7 @@ func Humanize(s string) string {
 // imports, which its record's variable would shadow (a resources table's
 // "resource" is the shared package's name).
 var controllerNames = map[string]bool{
-	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strings": true,
+	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strings": true, "db": true, "maps": true,
 	"path": true, "param": true, "title": true, "singular": true, "recordType": true, "fields": true,
 }
 

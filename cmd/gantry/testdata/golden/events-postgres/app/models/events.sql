@@ -7,6 +7,11 @@ SELECT * FROM events ORDER BY position, id;
 -- name: GetEvent :one
 SELECT * FROM events WHERE id = sqlc.arg(id);
 
+-- The row, read in the transaction that changes it, so no other change
+-- lands between the read and the write: it stays locked until the commit.
+-- name: GetEventForUpdate :one
+SELECT * FROM events WHERE id = sqlc.arg(id) FOR UPDATE;
+
 -- name: CreateEvent :one
 INSERT INTO events (name, starts_on, position, created_at, updated_at)
 VALUES (sqlc.arg(name), CAST(CAST(sqlc.narg(starts_on) AS TEXT) AS DATE), sqlc.arg(position), sqlc.arg(now), sqlc.arg(now))

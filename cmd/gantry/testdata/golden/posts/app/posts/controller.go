@@ -2,11 +2,13 @@
 package posts
 
 import (
+	"maps"
 	"net/http"
 	"strings"
 
 	"github.com/a-h/templ"
 
+	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
 
 	"example.com/gym/app/models"
@@ -57,8 +59,11 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	if errs := post.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
 	}
-	q := models.New(c.DB.Write)
-	_, err := q.CreatePost(r.Context(), models.CreatePostParams{Title: post.Title, Body: post.Body, PublishedOn: resource.DateParam(post.PublishedOn), Now: c.Now()})
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
+		_, err = q.CreatePost(r.Context(), models.CreatePostParams{Title: post.Title, Body: post.Body, PublishedOn: resource.DateParam(post.PublishedOn), Now: c.Now()})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -73,19 +78,35 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, post.ID, formValues(post), nil)
 }
 
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
-	was, err := models.New(c.DB.Read).GetPost(r.Context(), web.ID(r, "id"))
+	sent := resource.Overlay(r, param, map[string]string{})
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.GetPostForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
+		post := fromForm(v)
+		if errs = post.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.UpdatePost(r.Context(), models.UpdatePostParams{Title: post.Title, Body: post.Body, PublishedOn: resource.DateParam(post.PublishedOn), Now: c.Now(), ID: id})
+	})
 	if err != nil {
 		return err
 	}
-	v := resource.Overlay(r, param, formValues(was))
-	post := fromForm(v)
-	if errs := post.Errors(); len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
-	}
-	err = models.New(c.DB.Write).UpdatePost(r.Context(), models.UpdatePostParams{Title: post.Title, Body: post.Body, PublishedOn: resource.DateParam(post.PublishedOn), Now: c.Now(), ID: was.ID})
-	if err != nil {
-		return err
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
 	}
 	return c.Saved(w, r, path, singular)
 }

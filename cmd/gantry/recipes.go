@@ -178,7 +178,8 @@ Next:
        a.Auth.URL = func(p string) string { return "https://example.com" + p }
        a.Auth.Routes(rt)
        rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
-     Set Idle/Lifetime for session expiry and FirstUser.CreateUser for app-specific roles.
+     Adjust session Idle/Lifetime (30/90 days) and set FirstUser.CreateUser for app-specific roles.
+     In serve (cmd/.../main.go), call a.Auth.Wait() after server.Shutdown, so reset emails in flight are sent.
   3. Open /login to finish first-install setup. In your terminal, retrieve its code:
        gantry task auth:setup-code
      On production, with Houston v0.5.10 or newer (houston login, no SSH):
@@ -217,23 +218,21 @@ func generateStorage(root string, args []string, out io.Writer) error {
 	fmt.Fprintf(out, `
 Next:
   1. gantry db migrate.
-  2. In cmd/<app>/main.go, before anything else, let the binary be its own
-     resizing child (pictures' copies are made in one, out of the server's way):
-       pictures := &images.Pipeline{}
-       if images.IsChild(os.Args) {
-           os.Exit(pictures.RunChild(os.Args))
-       }
-       exe, _ := os.Executable()
-       pictures.Maker = images.Child{Exe: exe}
-  3. Give App a Storage, on the data volume, and serve it:
+  2. Give App a Storage, on the data volume, and serve it. Its pictures'
+     copies are app.Pictures', which main has made in a child process, out of
+     the server's way (an app made before gantry had app/pictures.go: copy
+     that file and the start of main() from a new app's):
        a.Storage = &storage.Storage{DB: a.DB, Root: filepath.Join(dataDir, "storage"),
-           Images: pictures, Log: a.Log}
+           Images: app.Pictures, Log: a.Log}
        a.Storage.WarmLater()  // the copies not made yet
        rt.Mount("GET /storage/", a.Storage)
-  4. Attach a form's file to a record, and draw it:
+  3. Attach a form's file to a record, and draw it:
        f, ok := storage.FileFrom(r, "clip[thumbnail]")
        a.Storage.Attach(ctx, storage.Ref{RecordType: "Clip", RecordID: id, Name: "thumbnail"}, f)
        @a.Storage.Img(blob, images.Img{Alt: "…", Sizes: "240px"})
+     A picture too large to read (over the pipeline's MaxPixels) is the
+     uploader's to fix: when errors.Is(err, images.ErrTooManyPixels), show
+     the form again at 422 with "That picture is too large."
 `)
 	return nil
 }
@@ -270,7 +269,7 @@ Next:
        a.Auth.Routes(rt)
        rt.Scope("/account", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
      Routes validates the mail and key configuration at startup.
-  4. Set session Idle/Lifetime and optional EmailCodes.DailyLimit for your app.
+  4. Adjust session Idle/Lifetime (30/90 days) and set optional EmailCodes.DailyLimit for your app.
      Schedule a.Auth.PruneLoginCodes(ctx), e.g. hourly, using Gantry jobs.
   5. gantry check --strict, then gantry test.
 

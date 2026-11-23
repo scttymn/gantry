@@ -185,7 +185,12 @@ func run(args []string, root string, out, errOut io.Writer) int {
 	}
 	if args[0] == "houston-release" {
 		// What bin/gantry asks: the Houston release this gantry runs apps
-		// with. Nothing else happens first.
+		// with, and with --sha256 its CLIs' digests. Nothing else happens
+		// first.
+		if len(args) > 1 && args[1] == "--sha256" {
+			fmt.Fprint(out, houstonSHA256SUMS)
+			return 0
+		}
 		fmt.Fprintln(out, houstonRelease)
 		return 0
 	}

@@ -7,6 +7,11 @@ SELECT * FROM pillars ORDER BY position, id;
 -- name: GetPillar :one
 SELECT * FROM pillars WHERE id = sqlc.arg(id);
 
+-- The row, read in the transaction that changes it, so no other change
+-- lands between the read and the write: SQLite's transaction holds the write lock already.
+-- name: GetPillarForUpdate :one
+SELECT * FROM pillars WHERE id = sqlc.arg(id);
+
 -- name: CreatePillar :one
 INSERT INTO pillars (title, body, position, created_at, updated_at)
 VALUES (sqlc.arg(title), sqlc.arg(body), sqlc.arg(position), sqlc.arg(now), sqlc.arg(now))
