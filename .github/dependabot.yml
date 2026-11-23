@@ -1,0 +1,27 @@
+# Weekly bumps for every Go module here, the workflows' actions and the
+# Docker images. A version that's also copied by hand (internal/pins and
+# the copies its test checks) fails that test on the bump's pull request,
+# which says where else to change it. bench/feed's Dockerfile is gantry new's,
+# so go test ./cmd/gantry -update brings it along; it isn't listed.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/bench", "/bench/sqlite3way", "/bench/feed"]
+    schedule:
+      interval: weekly
+    ignore:
+      # bench/feed builds against the gantry it's in (replace => ../..).
+      - dependency-name: github.com/scttymn/gantry
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    # internal/pins/Dockerfile isn't built: it carries Postgres's image.
+    directories: ["/", "/internal/pins"]
+    schedule:
+      interval: weekly
+    ignore:
+      # A new major needs an app's data upgraded, and psql's client with it.
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]

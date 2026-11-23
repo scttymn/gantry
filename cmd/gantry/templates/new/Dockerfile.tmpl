@@ -3,8 +3,8 @@
 # development checks, on an empty image). Houston builds dev for gantry dev,
 # test for gantry test, and production to deploy.
 
-FROM golang:1.27-bookworm AS toolchain
-COPY --from=sqlc/sqlc:1.31.1 /workspace/sqlc /usr/local/bin/sqlc
+FROM {{.GolangImage}} AS toolchain
+COPY --from={{.SqlcImage}} /workspace/sqlc /usr/local/bin/sqlc
 {{- if .Postgres}}
 # Postgres 17's client (psql for db console, pg_dump for db/schema.sql),
 # from PostgreSQL's own apt repository: Debian's is older than the server.
@@ -24,8 +24,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 && rm -
 # nodynamic: gantry's image codecs run as WASM. netgo, osusergo and
 # timetzdata: Go's own name lookups and time zones, not the C library's, as
 # a static binary on an empty image needs.
-ENV CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
-    GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4"
+ENV CGO_ENABLED=1 CGO_CFLAGS="{{.SQLiteCFlags}}" \
+    GOFLAGS="-buildvcs=false -tags={{.SQLiteTags}}"
 RUN go install github.com/a-h/templ/cmd/templ@{{.Templ}}
 WORKDIR /app
 
