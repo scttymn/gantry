@@ -57,7 +57,8 @@ var matrixApps = []struct {
 				"//go:embed css js public all:built", "//go:embed css fonts js public all:built",
 				`var Styles = All.Styles("application.css")`, `var Styles = All.Styles("fonts.css", "application.css").Preload(gantry.Face{Family: "Work Sans"})`)
 		}},
-		{args: []string{"g", "auth"}, then: func(t *testing.T, dir, _ string) {
+		{args: []string{"g", "auth"}, then: func(t *testing.T, dir, out string) {
+			feature(t, dir, out)
 			edit(t, filepath.Join(dir, "app", "routes.go"),
 				"\t\"net/http\"\n", "\t\"net/http\"\n\t\"path/filepath\"\n",
 				"\t\"example.com/shop/app/home\"\n", "\t\"example.com/shop/app/auth\"\n\t\"example.com/shop/app/home\"\n\t\"example.com/shop/config\"\n",
@@ -283,7 +284,8 @@ func routed(testCase string) func(t *testing.T, dir, out string) {
 }
 
 // wire does in app/routes.go what g resource's next steps say: their
-// imports (each once, as a person adds one), and their code, in Handler.
+// imports (each once, as a person adds one), and their code, in Router;
+// and its feature in test/features.yaml.
 func wire(t *testing.T, dir, out string) {
 	t.Helper()
 	_, next, ok := strings.Cut(out, "\nNext:\n")
@@ -312,6 +314,34 @@ func wire(t *testing.T, dir, out string) {
 	}
 	routes = strings.Replace(routes, "\thomePage :=", strings.Join(code, "\n")+"\n\thomePage :=", 1)
 	if err := os.WriteFile(path, []byte(routes), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	feature(t, dir, out)
+}
+
+// feature does in test/features.yaml what a generator's next steps say: the
+// feature they print, under the map's features.
+func feature(t *testing.T, dir, out string) {
+	t.Helper()
+	_, step, ok := strings.Cut(out, "In test/features.yaml")
+	_, yaml, found := strings.Cut(step, "\n       - name:")
+	if !ok || !found {
+		t.Fatalf("no feature in\n%s", out)
+	}
+	lines := strings.Split(yaml, "\n")
+	add := "  - name:" + lines[0] + "\n"
+	for _, line := range lines[1:] {
+		if !strings.HasPrefix(line, "         ") {
+			break
+		}
+		add += line[5:] + "\n"
+	}
+	path := filepath.Join(dir, "test", "features.yaml")
+	features, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, append(features, add...), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

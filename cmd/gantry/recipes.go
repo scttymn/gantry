@@ -184,7 +184,8 @@ Next:
        rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
      Adjust session Idle/Lifetime (30/90 days) and set FirstUser.CreateUser for app-specific roles.
      In serve (cmd/.../main.go), call a.Auth.Wait() after server.Shutdown, so reset emails in flight are sent.
-  3. Open /login to finish first-install setup. In your terminal, retrieve its code:
+     In test/features.yaml, add sign-in's feature:
+%s  3. Open /login to finish first-install setup. In your terminal, retrieve its code:
        gantry task auth:setup-code
      On production, with Houston v0.5.10 or newer (houston login, no SSH):
        houston exec --server /app task auth:setup-code
@@ -196,7 +197,7 @@ Next:
 Password login: /login and /logout. Reset links: /passwords.
 Existing apps: adopt shared Auth deliberately; never regenerate over custom auth.
 Documentation: https://github.com/scttymn/gantry/blob/main/docs/auth.md
-`)
+`, signInFeature)
 	return nil
 }
 
@@ -273,7 +274,8 @@ Next:
        a.Auth.Routes(rt)
        rt.Scope("/account", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
      Routes validates the mail and key configuration at startup.
-  4. Adjust session Idle/Lifetime (30/90 days) and set optional EmailCodes.DailyLimit for your app.
+     In test/features.yaml, add sign-in's feature:
+`+signInFeature+`  4. Adjust session Idle/Lifetime (30/90 days) and set optional EmailCodes.DailyLimit for your app.
      Schedule a.Auth.PruneLoginCodes(ctx), e.g. hourly, using Gantry jobs.
   5. gantry check --strict, then gantry test.
 

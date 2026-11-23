@@ -107,6 +107,7 @@ type Router struct {
 	TimeZone             *time.Location
 	mux                  *http.ServeMux
 	root                 *Scope        // the router's own routes
+	routes               []Route       // every route, as declared (Routes)
 	constraints          []constrained // tried in order, before them
 	crossOriginCallbacks []string      // exact POST callbacks that check their own proof
 }
@@ -116,7 +117,7 @@ type Router struct {
 func NewRouter(log *slog.Logger, page ErrorPage) *Router {
 	rt := &Router{Log: log, ErrorPage: page, mux: http.NewServeMux()}
 	rt.root = &Scope{rt: rt, mux: rt.mux}
-	rt.mux.HandleFunc("GET /up", Up)
+	rt.root.add("GET /up", http.HandlerFunc(Up), Route{})
 	return rt
 }
 
