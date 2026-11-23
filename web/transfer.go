@@ -25,7 +25,8 @@ type pace struct {
 }
 
 func (p *pace) deadline(now time.Time) time.Time {
-	earned := p.start.Add(p.timeout + time.Duration(p.moved*int64(time.Second)/minRate))
+	// Whole seconds first: moved*time.Second overflows past 8.6 GiB.
+	earned := p.start.Add(p.timeout + time.Duration(p.moved/minRate)*time.Second + time.Duration(p.moved%minRate)*time.Second/minRate)
 	if idle := now.Add(p.timeout); idle.Before(earned) {
 		return idle
 	}

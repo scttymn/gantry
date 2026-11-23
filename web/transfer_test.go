@@ -121,6 +121,21 @@ func TestSlowTransfers(t *testing.T) {
 	}
 }
 
+// A transfer past 8.6 GiB earns its time as any other: the deadline doesn't
+// overflow into the past and cut it off.
+func TestPaceOfAHugeTransfer(t *testing.T) {
+	start := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
+	p := pace{start: start, timeout: time.Minute, moved: 10 << 30}
+	if got, want := p.deadline(start), start.Add(time.Minute); !got.Equal(want) {
+		t.Errorf("at the start: %v, want the timeout from now, %v", got, want)
+	}
+	later := start.Add(1000 * time.Hour)
+	earned := start.Add(time.Minute + time.Duration(10<<30/minRate)*time.Second)
+	if got := p.deadline(later); !got.Equal(earned) {
+		t.Errorf("later: %v, want what 10 GiB earns, %v", got, earned)
+	}
+}
+
 // A download from memory (a bytes.Reader hands io.Copy all of itself in one
 // write) is paced as it's read too, not cut off at the timeout.
 func TestSlowDownloadFromMemory(t *testing.T) {
