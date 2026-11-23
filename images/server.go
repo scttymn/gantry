@@ -14,6 +14,8 @@ import (
 	"sync"
 
 	"github.com/a-h/templ"
+
+	"github.com/scttymn/gantry/web"
 )
 
 // Server serves an app's copies at Prefix<key>/<name> (/photos/<key>/720w-q80.webp,
@@ -159,7 +161,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Set("Content-Disposition", disposition)
 		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	}
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	// A large original to a slow client can outlast the server's
+	// WriteTimeout while it's still being read.
+	http.ServeContent(web.Moving(w, r), r, "", info.ModTime(), f)
 }
 
 // URL is a copy's address.

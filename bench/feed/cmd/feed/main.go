@@ -162,7 +162,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 		return err
 	}
 	defer closeDB()
-	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	// A client that's slow to send or to read can't hold a connection open:
+	// a request has 30 s to arrive and 60 s to be answered, and an idle
+	// connection is closed after 2 minutes. Live streams, and uploads and
+	// downloads still moving, go on past them.
+	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 2 * time.Minute}
 	server.RegisterOnShutdown(a.Live.Close) // live streams end, so shutting down doesn't wait on them
 
 	ln, err := net.Listen("tcp", cfg.Addr)

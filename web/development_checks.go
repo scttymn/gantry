@@ -4,6 +4,7 @@ package web
 
 import (
 	"context"
+	"io"
 	"log/slog"
 	"net/http"
 
@@ -22,6 +23,12 @@ func Development(next http.Handler, root string, log *slog.Logger) http.Handler 
 // extended compiled rule registry. Enable only inside a development guard.
 func DevelopmentWithRules(next http.Handler, root string, log *slog.Logger, rules []devcheck.Rule) http.Handler {
 	return Timing(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == developmentStyles && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			w.Header().Set("Content-Type", "text/css; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			io.WriteString(w, developmentCSS)
+			return
+		}
 		if r.Method == http.MethodGet && WantsHTML(r) {
 			warnings, err := devcheck.ScanWithRules(root, rules)
 			if err != nil {

@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/netip"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // Proxies is which peers are proxies the app trusts, and which header one
@@ -21,7 +23,13 @@ import (
 type Proxies struct {
 	// Trusted are the proxies' addresses; nil (with no Names) is
 	// PrivateNetworks, Rails' default, which trusts whatever reaches the app
-	// from a private or loopback address.
+	// from a private or loopback address. That's right when the only way in
+	// is through the proxy; when anything else can reach the app from a
+	// private address (another container on its network, a Docker gateway,
+	// a host on the same LAN), it can name any visitor's address and slip
+	// past per-address rate limits. List the proxies then (ParseProxies
+	// reads them from the environment), or an empty, non-nil list when
+	// there's no proxy at all.
 	Trusted []netip.Prefix
 	// Names are proxies by their name in DNS: a container's on a Docker
 	// network ("cloudflared"), whose address changes as it restarts. Each is
@@ -109,18 +117,52 @@ func (p Proxies) origin(r *http.Request) (origin, bool) {
 			}
 		}
 	}
-	if proto := strings.ToLower(strings.TrimSpace(firstValue(r.Header.Get("X-Forwarded-Proto")))); proto == "https" || proto == "http" {
+	// The last value of each, the nearest proxy's: one that appends puts it
+	// after whatever the visitor sent.
+	if proto := strings.ToLower(lastValue(r.Header, "X-Forwarded-Proto")); proto == "https" || proto == "http" {
 		o.scheme = proto
 	}
-	if host := strings.TrimSpace(lastValue(r.Header.Get("X-Forwarded-Host"))); host != "" && p.ForwardedHost {
+	if host := lastValue(r.Header, "X-Forwarded-Host"); host != "" && p.ForwardedHost {
 		o.host = cleanHost(host)
 	}
 	return o, true
 }
 
-func firstValue(s string) string { v, _, _ := strings.Cut(s, ","); return v }
+// lastValue is the last of a header's comma-separated values, across all
+// its lines.
+func lastValue(h http.Header, name string) string {
+	values := h.Values(name)
+	if len(values) == 0 {
+		return ""
+	}
+	s := values[len(values)-1]
+	return strings.TrimSpace(s[strings.LastIndex(s, ",")+1:])
+}
 
-func lastValue(s string) string { return s[strings.LastIndex(s, ",")+1:] }
+// ParseProxies is a list of proxies' addresses and CIDR ranges, separated
+// by commas or spaces ("10.0.1.5, 172.18.0.0/16"), for Proxies.Trusted:
+// nil when s is blank, so the default (PrivateNetworks) holds, and none at
+// all for "none", for an app that no proxy is in front of.
+func ParseProxies(s string) ([]netip.Prefix, error) {
+	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	if len(fields) == 1 && fields[0] == "none" {
+		return []netip.Prefix{}, nil
+	}
+	prefixes := make([]netip.Prefix, 0, len(fields))
+	for _, f := range fields {
+		if p, err := netip.ParsePrefix(f); err == nil {
+			prefixes = append(prefixes, p.Masked())
+		} else if a, err := netip.ParseAddr(f); err == nil {
+			prefixes = append(prefixes, netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen()))
+		} else {
+			return nil, fmt.Errorf("web: trusted proxy %q is neither an address nor a CIDR range", f)
+		}
+	}
+	return prefixes, nil
+}
 
 // arrive works out where each request comes from, keeps it in Current, and
 // refuses a host the app doesn't answer to.
