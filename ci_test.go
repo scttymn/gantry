@@ -60,6 +60,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"new app probe":          `new probe --skip-houston`,
 		"Houston's digests":      `houston-release --sha256`,
 		"vulnerabilities' check": `jq -rs ('[^']+')`,
+		"shellcheck and files":   `(koalaman/shellcheck:\S+(?: [\w./-]+)+)`,
 	} {
 		found := regexp.MustCompile(re).FindAllStringSubmatch(workflow, -1)
 		if len(found) == 0 {

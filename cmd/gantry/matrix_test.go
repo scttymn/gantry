@@ -33,10 +33,11 @@ type matrixRow struct {
 // can't (an app has one auth recipe) have their own. Each starts as a new
 // app; the first one's is a row too.
 var matrixApps = []struct {
-	name string
-	rows []matrixRow
+	name     string
+	inModule bool // made with gantry new --in-module, in a module's apps/control
+	rows     []matrixRow
 }{
-	{"shop", []matrixRow{
+	{name: "shop", rows: []matrixRow{
 		{args: []string{"g", "resource", "posts", "title:string", "position:position", "published_on:date"}, then: routed(`
 		{path: "/posts", create: map[string]string{"post[title]": "First", "post[published_on]": "2026-11-22"}, update: map[string]string{"post[title]": "Second"},
 			listed: []string{"First", "2026-11-22"}, editing: map[string]string{"post[position]": "1", "post[published_on]": "2026-11-22"}},`)},
@@ -66,12 +67,18 @@ var matrixApps = []struct {
 		}},
 		{args: []string{"g", "auth", "--social"}},
 	}},
-	{"codes", []matrixRow{
+	{name: "codes", rows: []matrixRow{
 		{args: []string{"g", "auth", "--email-code"}},
 	}},
-	{"signup", []matrixRow{
+	{name: "signup", rows: []matrixRow{
 		{args: []string{"g", "auth", "--email-code", "--signup"}},
 		{args: []string{"g", "auth", "--social"}},
+	}},
+	// Its packages are under the module's path, which Strict's layer rules
+	// must still tell apart from everything else's.
+	{name: "in-module", inModule: true, rows: []matrixRow{
+		{args: []string{"g", "api-tokens", "--prefix", "control_"}},
+		{args: []string{"g", "storage"}},
 	}},
 }
 
@@ -116,14 +123,22 @@ func TestGeneratorMatrix(t *testing.T) {
 		for i, a := range matrixApps {
 			t.Run(engine+"/"+a.name, func(t *testing.T) {
 				t.Parallel()
-				root := t.TempDir()
-				gantryAt(t, root, start, "new", "shop", "--db", engine, "--module", "example.com/shop", "--skip-houston", "--gantry", repo)
-				dir := filepath.Join(root, "shop")
-				// This checkout, not the release go.mod requires: go.work alone
-				// still reads that release's go.mod, which isn't published until
-				// it's tagged.
-				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-				os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+				var dir string
+				if a.inModule {
+					// The module's go.mod points gantry at this checkout.
+					root := big(t, repo)
+					gantryAt(t, filepath.Join(root, "apps"), start, "new", "control", "--db", engine, "--in-module", "--skip-houston")
+					dir = filepath.Join(root, "apps", "control")
+				} else {
+					root := t.TempDir()
+					gantryAt(t, root, start, "new", "shop", "--db", engine, "--module", "example.com/shop", "--skip-houston", "--gantry", repo)
+					dir = filepath.Join(root, "shop")
+					// This checkout, not the release go.mod requires: go.work alone
+					// still reads that release's go.mod, which isn't published until
+					// it's tagged.
+					mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+					os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+				}
 
 				cell := func(name string, generate, after func(t *testing.T)) bool {
 					return t.Run(name, func(t *testing.T) {

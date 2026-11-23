@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/scttymn/gantry/internal/gomod"
 )
 
 const (
@@ -37,19 +39,28 @@ type Rule struct {
 
 // Source is one project-relative file. A scan shares its lazy Go parse across
 // applicable rules, avoiding repeated parsing. It is scoped to this scan only.
+// Module is the scan root's import path, from the nearest go.mod at or above
+// it ("" without one; an --in-module app's is under its module's path), so a
+// rule can tell the app's own packages by import path.
 type Source struct {
-	Path, Text string
-	parsed     bool
-	set        *token.FileSet
-	file       *ast.File
-	parseErr   error
+	Path, Text, Module string
+	parsed             bool
+	set                *token.FileSet
+	file               *ast.File
+	parseErr           error
 }
 
+// GoAST parses a Go file; a .templ file's Go header (its package and imports)
+// only, since templ's components aren't Go.
 func (s *Source) GoAST() (*token.FileSet, *ast.File, error) {
 	if !s.parsed {
 		s.parsed = true
 		s.set = token.NewFileSet()
-		s.file, s.parseErr = parser.ParseFile(s.set, s.Path, s.Text, 0)
+		var mode parser.Mode
+		if strings.HasSuffix(s.Path, ".templ") {
+			mode = parser.ImportsOnly
+		}
+		s.file, s.parseErr = parser.ParseFile(s.set, s.Path, s.Text, mode)
 	}
 	return s.set, s.file, s.parseErr
 }
@@ -93,6 +104,7 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 			extensions[ext] = append(extensions[ext], r)
 		}
 	}
+	module, _ := gomod.ImportPath(root)
 	var warnings []Warning
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -114,7 +126,7 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 			return err
 		}
 		name, _ := filepath.Rel(root, path)
-		source := &Source{Path: filepath.ToSlash(name), Text: string(data)}
+		source := &Source{Path: filepath.ToSlash(name), Text: string(data), Module: module}
 		for _, rule := range selected {
 			var reportErr error
 			report := func(offset int, message string) {

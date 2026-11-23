@@ -102,7 +102,7 @@ myapp/
 - **A resource's folder is its controller and its views,** and it mirrors the URL. Views share the controller's package, so they use its unexported helpers, and every resource has the same names (`Controller.Index`, `index.templ`). An agent copies that pattern reliably, where one flat folder would need a prefix on everything.
 - **A page that shows another resource's part imports that resource.** The home page draws the schedule's week and the lead form, so `home` imports `schedule` and `leads`; they never import `home`. A nested resource loads its parent through `models`, not by importing it. A partial used by several resources moves to `shared/ui`.
 - **A service is a package of its own** (`services/photos`, `services/schedule`), because a service has an API: types and functions others call. One `services` package would make their names collide (every service has a `Store` or a `Week`) and need a prefix on each.
-- **Imports go one way:** `routes.go` → resources → services → models, and anything → `shared`. Go forbids import cycles, so the compiler enforces the layering.
+- **Imports go one way:** `routes.go` → resources → services → models, and anything but models → `shared` (models import no other app package). Go forbids import cycles, so the compiler enforces the layering.
 - **Controllers name their dependencies** (`Controller{Q *models.Queries; Mail mail.Sender}`), and `routes.go` builds them, so a test can pass fakes. The generator writes these few lines.
 - **Views never touch the database.** A controller loads what the page needs and passes plain values to a component.
 - **Tests sit beside the code,** as Go does it.

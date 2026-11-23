@@ -1,0 +1,10 @@
+{
+  "requireIssue": true,
+  "exceptions": [
+    {
+      "rule": "raw-html",
+      "file": "images/server.go",
+      "reason": "Img writes the <img> tag itself, so a photo is one component, and imgHTML escapes every value in it with templ.EscapeString (#33)."
+    }
+  ]
+}
