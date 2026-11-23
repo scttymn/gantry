@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 var (
@@ -140,10 +140,7 @@ func TestParseKeys(t *testing.T) {
 }
 
 func TestRoundTripPostgres(t *testing.T) {
-	url := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-	}
+	url := testenv.Postgres(t)
 	use(t, newKey)
 	d, err := db.Open(context.Background(), url)
 	if err != nil {

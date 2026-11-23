@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 // steps records the commands gantry runs instead of running them; fail
@@ -439,7 +441,7 @@ func TestNewInModuleBuilds(t *testing.T) {
 }
 
 // A new app builds, vets clean and passes its own tests, against this
-// checkout. It needs the toolchain (templ, and Go's
+// checkout, on each engine. It needs the toolchain (templ, and Go's
 // module cache or the network): bin/go go test ./cmd/gantry runs it.
 func TestNewAppBuilds(t *testing.T) {
 	if testing.Short() {
@@ -449,21 +451,28 @@ func TestNewAppBuilds(t *testing.T) {
 		t.Skip("templ isn't installed: run it in the toolchain (bin/go)")
 	}
 	repo, _ := filepath.Abs("../..")
-	root := t.TempDir()
-	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston", "--gantry", repo, "--module", "example.com/shop"); code != 0 {
-		t.Fatal(stderr)
-	}
-	dir := filepath.Join(root, "shop")
-	// This checkout, not the release go.mod requires: go.work alone still
-	// reads that release's go.mod, which isn't published until it's tagged.
-	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-	for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
-		cmd := exec.Command(step[0], step[1:]...)
-		cmd.Dir = dir
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
-		}
+	for _, engine := range []string{"sqlite", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			if engine == "postgres" {
+				t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
+			}
+			root := t.TempDir()
+			if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--skip-houston", "--gantry", repo, "--module", "example.com/shop"); code != 0 {
+				t.Fatal(stderr)
+			}
+			dir := filepath.Join(root, "shop")
+			// This checkout, not the release go.mod requires: go.work alone still
+			// reads that release's go.mod, which isn't published until it's tagged.
+			mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
+			os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
+			for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+				cmd := exec.Command(step[0], step[1:]...)
+				cmd.Dir = dir
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
+				}
+			}
+		})
 	}
 }
 

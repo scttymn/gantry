@@ -1,9 +1,10 @@
 # Every pull request and every push to main: gantry's tests as the release runs
-# them (pure Go, then as an app builds: with cgo, linked statically), that build
-# again under the race detector, testkit and jobs on Postgres, then vet, gofmt,
+# them (pure Go, then as an app builds: with cgo, linked statically) on SQLite
+# and Postgres, that build again under the race detector, then vet, gofmt,
 # staticcheck and govulncheck (vet, staticcheck and govulncheck on the app's
-# build too) and the bench modules' tests. A broken main shows here, not once
-# the tag exists.
+# build too), the bench modules' tests, and the release's build and probe. A
+# broken main shows here, not once the tag exists. CI reaches the tests, so a
+# missing Postgres fails them rather than skipping (internal/testenv).
 # No path is ignored: a required check has to report on every pull request.
 # Actions are pinned by commit, and no checkout keeps the token in .git/config.
 name: ci
@@ -49,7 +50,7 @@ jobs:
           mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
-            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache -e CI \
             gantry-toolchain sh -c 'go test ./... &&
               echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically" &&
               CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
@@ -58,17 +59,8 @@ jobs:
         run: |
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
-            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache -e CI \
             gantry-toolchain sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -race -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
-      - name: testkit and jobs on Postgres
-        # They take Postgres from TEST_DATABASE_URL, an app's variable, and run
-        # on SQLite without it, as in the passes above: testkit.Postgres and
-        # jobs' Postgres queries (FOR UPDATE SKIP LOCKED) run only here.
-        run: |
-          docker run --rm --network host -v "$PWD:/src" -w /src \
-            -e TEST_DATABASE_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
-            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
-            gantry-toolchain go test ./testkit ./jobs
 
   check:
     runs-on: ubuntu-24.04
@@ -107,3 +99,25 @@ jobs:
         run: |
           GANTRY_DIR=bench bin/go go test ./...
           GANTRY_DIR=bench/feed bin/go go test ./...
+
+  # The release job's build and probe, on a made-up tag: the four CLI binaries
+  # cross-compiled by the Dockerfile, and the tag set in them by -X
+  # main.releaseVersion, which no test reaches. That a new app builds and
+  # passes its tests against the checkout is TestNewAppBuilds'.
+  release-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      VERSION: v99.99.99
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: CLI binaries
+        run: docker build --build-arg VERSION="$VERSION" --target release --output type=local,dest=dist .
+      - name: The binary's new app requires its release
+        run: |
+          probe=$(mktemp -d)
+          (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
+          grep -qx "	github.com/scttymn/gantry $VERSION" "$probe/probe/go.mod" \
+            || { echo "a new app's go.mod doesn't require $VERSION:"; cat "$probe/probe/go.mod"; exit 1; }

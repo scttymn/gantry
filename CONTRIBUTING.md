@@ -18,11 +18,16 @@ root). The tags and C flags are an app's Dockerfile's: without the tags a cgo
 build has the translated SQLite, without the flags the C one doesn't start, and
 `TestSQLiteCCompileOptions` fails on any other difference between the two.
 
-Every pull request and push to `main` runs the `ci` workflow: both passes,
-the cgo one again with `-race`, `testkit` and `jobs` on Postgres
-(`TEST_DATABASE_URL`), `go vet`, gofmt, staticcheck and govulncheck (`go vet`,
-staticcheck and govulncheck on the cgo build too) and the bench modules'
-tests (below). Run staticcheck and govulncheck with
+Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
+passes in (`internal/testenv`), e.g.
+`GANTRY_TEST_POSTGRES_URL=postgres://postgres:pw@host.docker.internal:5432/postgres?sslmode=disable bin/go go test ./...`.
+Without it they skip, except under `CI=true`, where they fail.
+
+Every pull request and push to `main` runs the `ci` workflow: both passes on
+SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
+staticcheck and govulncheck (`go vet`, staticcheck and govulncheck on the cgo
+build too), the bench modules' tests (below), and the release's build and its
+probe on a made-up tag. Run staticcheck and govulncheck with
 `bin/go go run honnef.co/go/tools/cmd/staticcheck@<version> ./...` and
 `bin/go go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`, at the
 versions [`ci.yml`](.github/workflows/ci.yml) pins.
