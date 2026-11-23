@@ -172,11 +172,19 @@ func TestSessions(t *testing.T) {
 			t.Fatalf("%d %v sessions %d", rec.Code, rec.Header(), a.count("sessions"))
 		}
 	})
-	t.Run("the session cookie is a random token, HttpOnly, Lax, lasting and Secure", func(t *testing.T) {
+	t.Run("GET /logout signs nobody out", func(t *testing.T) {
+		a := newApp(t)
+		a.signIn("one@example.com", password)
+		a.do("GET", "/logout", nil)
+		if a.cookie("session") == nil || a.count("sessions") != 1 || a.do("GET", "/admin", nil).Code != 200 {
+			t.Fatal("a GET, which any site's <img> can send, ended the session")
+		}
+	})
+	t.Run("the session cookie is a random token, HttpOnly, Lax, lasting 90 days and Secure", func(t *testing.T) {
 		a := newApp(t)
 		a.signIn("one@example.com", password)
 		c := a.cookie("session")
-		if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge < 10*365*24*3600 || len(c.Value) < 40 {
+		if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge != 90*24*3600 || len(c.Value) < 40 {
 			t.Fatalf("%+v", c)
 		}
 		var stored string
@@ -361,6 +369,55 @@ func TestPasswords(t *testing.T) {
 			t.Fatalf("%+v", a.mail.sent)
 		}
 	})
+	t.Run("the answer doesn't wait for the email, so its time can't tell who has an account", func(t *testing.T) {
+		a := newApp(t)
+		slow := &slowMail{release: make(chan struct{})}
+		a.auth.Mail = slow
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequestWithContext(ctx, "POST", "https://example.com/passwords", strings.NewReader("email_address=one%40example.com"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		answered := make(chan *httptest.ResponseRecorder)
+		go func() {
+			rec := httptest.NewRecorder()
+			a.h.ServeHTTP(rec, req)
+			answered <- rec
+		}()
+		select {
+		case rec := <-answered:
+			if rec.Code != 303 || rec.Header().Get("Location") != "/login" {
+				t.Errorf("%d %v", rec.Code, rec.Header())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the answer waited for the email")
+		}
+		cancel()
+		close(slow.release)
+	})
+	t.Run("the reset pages are never stored, and never pass on their address", func(t *testing.T) {
+		a := newApp(t)
+		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
+		for _, path := range []string{"/passwords/new", a.resetLink()} {
+			rec := a.do("GET", path, nil)
+			if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+				t.Errorf("%s: %d %v", path, rec.Code, rec.Header())
+			}
+		}
+	})
+}
+
+// slowMail holds each email until release closes, and records whether the
+// context it was given had ended by then.
+type slowMail struct {
+	fakeMail
+	release chan struct{}
+	ended   []error
+}
+
+func (s *slowMail) Send(ctx context.Context, m mail.Message) error {
+	<-s.release
+	s.ended = append(s.ended, ctx.Err())
+	return s.fakeMail.Send(ctx, m)
 }
 
 func TestRequire(t *testing.T) {
@@ -545,12 +602,34 @@ func TestSessionEnds(t *testing.T) {
 			t.Fatalf("lifetime: %d, %d sessions", rec.Code, a.count("sessions"))
 		}
 	})
-	t.Run("never, by default", func(t *testing.T) {
+	t.Run("30 days unused, by default", func(t *testing.T) {
 		a := newApp(t)
 		a.signIn("one@example.com", password)
-		a.now = a.now.Add(5 * 365 * 24 * time.Hour)
+		a.now = a.now.Add(29 * 24 * time.Hour)
 		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
-			t.Fatal("ended")
+			t.Fatal("ended within 30 days")
+		}
+		a.now = a.now.Add(29 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("use didn't keep it")
+		}
+		a.now = a.now.Add(30 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("idle: %d, %d sessions", rec.Code, a.count("sessions"))
+		}
+	})
+	t.Run("90 days after sign-in, however used, by default", func(t *testing.T) {
+		a := newApp(t)
+		a.signIn("one@example.com", password)
+		for range 89 {
+			a.now = a.now.Add(24 * time.Hour)
+			if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+				t.Fatalf("ended at %v", a.now)
+			}
+		}
+		a.now = a.now.Add(24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("lifetime: %d, %d sessions", rec.Code, a.count("sessions"))
 		}
 	})
 }
