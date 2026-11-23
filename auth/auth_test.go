@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -32,9 +34,14 @@ CREATE TABLE sessions (id integer PRIMARY KEY, user_id integer NOT NULL REFERENC
   bound_to text NOT NULL DEFAULT '');
 `)}}
 
-type fakeMail struct{ sent []mail.Message }
+type fakeMail struct {
+	mu   sync.Mutex
+	sent []mail.Message
+}
 
 func (f *fakeMail) Send(_ context.Context, m mail.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sent = append(f.sent, m)
 	return nil
 }
@@ -249,18 +256,21 @@ func TestSessions(t *testing.T) {
 // sent is the email sent so far, once every reset asked for is sent.
 func (a *app) sent() []mail.Message {
 	a.auth.Wait()
+	a.mail.mu.Lock()
+	defer a.mail.mu.Unlock()
 	return a.mail.sent
 }
 
 // resetLink is the path in the last reset email.
 func (a *app) resetLink() string {
 	a.t.Helper()
-	if len(a.sent()) == 0 {
+	sent := a.sent()
+	if len(sent) == 0 {
 		a.t.Fatal("no email")
 	}
-	m := regexp.MustCompile(`https://example\.com(/passwords/\S+/edit)`).FindStringSubmatch(a.mail.sent[len(a.mail.sent)-1].Text)
+	m := regexp.MustCompile(`https://example\.com(/passwords/\S+/edit)`).FindStringSubmatch(sent[len(sent)-1].Text)
 	if m == nil {
-		a.t.Fatalf("no link in %q", a.mail.sent[len(a.mail.sent)-1].Text)
+		a.t.Fatalf("no link in %q", sent[len(sent)-1].Text)
 	}
 	return m[1]
 }
@@ -274,10 +284,11 @@ func TestPasswords(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		a := newApp(t)
 		rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
-		if rec.Code != 303 || rec.Header().Get("Location") != "/login" || len(a.sent()) != 1 {
-			t.Fatalf("%d %v sent %d", rec.Code, rec.Header(), len(a.mail.sent))
+		sent := a.sent()
+		if rec.Code != 303 || rec.Header().Get("Location") != "/login" || len(sent) != 1 {
+			t.Fatalf("%d %v sent %d", rec.Code, rec.Header(), len(sent))
 		}
-		m := a.mail.sent[0]
+		m := sent[0]
 		if m.To != "one@example.com" || m.Subject != "Reset your password" || m.From != "Site <no-reply@example.com>" || !strings.Contains(m.Text, "15 minutes") {
 			t.Errorf("%+v", m)
 		}
@@ -372,19 +383,19 @@ func TestPasswords(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		a.h.ServeHTTP(httptest.NewRecorder(), req)
-		if len(a.sent()) != 1 || !strings.Contains(a.mail.sent[0].Text, "https://example.com/passwords/") || strings.Contains(a.mail.sent[0].Text, "evil") {
-			t.Fatalf("%+v", a.mail.sent)
+		sent := a.sent()
+		if len(sent) != 1 || !strings.Contains(sent[0].Text, "https://example.com/passwords/") || strings.Contains(sent[0].Text, "evil") {
+			t.Fatalf("%+v", sent)
 		}
 	})
 	t.Run("the answer doesn't wait for the email, so its time can't tell who has an account", func(t *testing.T) {
 		a := newApp(t)
-		slow := &slowMail{release: make(chan struct{})}
-		a.auth.Mail = slow
+		slow := a.slowMail()
 		ctx, cancel := context.WithCancel(context.Background())
 		req := httptest.NewRequestWithContext(ctx, "POST", "https://example.com/passwords", strings.NewReader("email_address=one%40example.com"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
-		answered := make(chan *httptest.ResponseRecorder)
+		answered := make(chan *httptest.ResponseRecorder, 1)
 		go func() {
 			rec := httptest.NewRecorder()
 			a.h.ServeHTTP(rec, req)
@@ -399,37 +410,112 @@ func TestPasswords(t *testing.T) {
 			t.Fatal("the answer waited for the email")
 		}
 		cancel()
-		close(slow.release)
+		slow.free()
 		a.auth.Wait()
+		slow.mu.Lock()
+		defer slow.mu.Unlock()
 		if len(slow.sent) != 1 || slow.ended[0] != nil {
 			t.Fatalf("sent %d, the context ended: %v", len(slow.sent), slow.ended)
 		}
 	})
 	t.Run("the reset pages are never stored, and never pass on their address", func(t *testing.T) {
 		a := newApp(t)
+		check := func(what string, rec *httptest.ResponseRecorder) {
+			t.Helper()
+			if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+				t.Errorf("%s: %d %v", what, rec.Code, rec.Header())
+			}
+		}
+		check("POST /passwords", a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}}))
+		link := a.resetLink()
+		for _, path := range []string{"/passwords/new", link} {
+			check("GET "+path, a.do("GET", path, nil))
+		}
+		check("PATCH", update(a, link, "a new password", "another one"))
+	})
+	t.Run("a panicking sender or a missing URL logs, and the server stays up", func(t *testing.T) {
+		a := newApp(t)
+		var logged bytes.Buffer
+		a.auth.Log = slog.New(slog.NewTextHandler(&logged, nil))
+		a.auth.Mail = panicMail{}
 		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
-		for _, path := range []string{"/passwords/new", a.resetLink()} {
-			rec := a.do("GET", path, nil)
-			if rec.Code != 200 || rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
-				t.Errorf("%s: %d %v", path, rec.Code, rec.Header())
+		a.auth.Wait()
+		a.auth.Mail, a.auth.URL = a.mail, nil
+		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
+		a.auth.Wait()
+		if out := logged.String(); !strings.Contains(out, "the sender broke") || !strings.Contains(out, "Auth.URL") {
+			t.Errorf("logged %q", out)
+		}
+	})
+	t.Run("at most 100 reset emails are in flight, and the rest are dropped", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Limits = nil
+		slow := a.slowMail()
+		for range 101 {
+			if rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}}); rec.Header().Get("Location") != "/login" {
+				t.Fatalf("%d %v", rec.Code, rec.Header())
+			}
+		}
+		slow.free()
+		a.auth.Wait()
+		slow.mu.Lock()
+		defer slow.mu.Unlock()
+		if len(slow.sent) != 100 {
+			t.Errorf("sent %d", len(slow.sent))
+		}
+	})
+	t.Run("Wait can run while resets are still being asked for", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Limits = nil
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for range 200 {
+				a.do("POST", "/passwords", url.Values{"email_address": {"nobody@example.com"}})
+			}
+		}()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				a.auth.Wait()
 			}
 		}
 	})
 }
 
-// slowMail holds each email until release closes, and records whether the
-// context it was given had ended by then.
+// slowMail holds each email until free, and records whether the context it
+// was given had ended by then.
 type slowMail struct {
 	fakeMail
 	release chan struct{}
+	once    sync.Once
 	ended   []error
 }
 
+// slowMail makes the app's sender a slowMail, freed when the test ends if
+// not before, so Wait can't hang.
+func (a *app) slowMail() *slowMail {
+	s := &slowMail{release: make(chan struct{})}
+	a.auth.Mail = s
+	a.t.Cleanup(s.free)
+	return s
+}
+
+func (s *slowMail) free() { s.once.Do(func() { close(s.release) }) }
+
 func (s *slowMail) Send(ctx context.Context, m mail.Message) error {
 	<-s.release
+	s.mu.Lock()
 	s.ended = append(s.ended, ctx.Err())
+	s.mu.Unlock()
 	return s.fakeMail.Send(ctx, m)
 }
+
+type panicMail struct{}
+
+func (panicMail) Send(context.Context, mail.Message) error { panic("the sender broke") }
 
 func TestRequire(t *testing.T) {
 	t.Run("sends you to sign in, and back after", func(t *testing.T) {
