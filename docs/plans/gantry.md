@@ -33,7 +33,7 @@
 - **Measured, not hoped for.** Every batch ends with the numbers.
 
 ## Decisions
-Libraries are named by module path, and go.mod requires each one (`docs_test.go` checks). A decision since replaced keeps its row, marked **Superseded** with what's used instead.
+Libraries are named by module path, and go.mod requires each one (`docs_test.go` checks). A decision since replaced keeps its row, its Choice marked **Superseded** with what's used instead.
 
 | Need | Choice | Why |
 |---|---|---|
@@ -41,7 +41,7 @@ Libraries are named by module path, and go.mod requires each one (`docs_test.go`
 | Handlers | `func(w, r) error` | One place turns errors into pages: `sql.ErrNoRows` → 404, validation errors → 422 |
 | Views | templ (`github.com/a-h/templ`), with Turbo and Stimulus by default (changed from htmx on 2026-09-29: see `mission-control.md`, G3); htmx stays supported | Compiled and type-safe, so a wrong field is a compile error; no Node. Turbo and Stimulus are Rails' default, and give fast navigation, live updates and a convention for an app's own JavaScript |
 | Postgres | pgx (`github.com/jackc/pgx/v5`) through `database/sql` (its `stdlib` package) | The fastest driver, behind the same interface SQLite uses |
-| SQLite | `modernc.org/sqlite` | Pure Go, so the static binary runs on `scratch` |
+| SQLite | `modernc.org/sqlite`. **Superseded in part:** an app builds with cgo, linking SQLite's C (`github.com/mattn/go-sqlite3`'s amalgamation) statically through gantry's own binding, `db/sqlite_c.go`, so it still runs on `scratch`; `modernc.org/sqlite` is the build without cgo (`bin/go`, the `gantry` CLI) | Pure Go, so the static binary runs on `scratch` |
 | IDs | `int64` by default; UUIDv7 per table when asked (`gantry g resource post --uuid`). **Superseded in part:** UUIDv7 wasn't built; there's no `--uuid`, and every table's ID is `int64` | `int64` is the least code, the smallest index, and SQLite's own rowid. UUIDv7 is for rows whose URLs shouldn't reveal a count: made in Go (`github.com/google/uuid`) so both engines behave alike, stored as `uuid` on Postgres and a 16-byte blob on SQLite |
 | Queries | sqlc, with `sql_package: database/sql` for both engines | You write SQL and get typed Go, with generated code the same shape on either engine |
 | Migrations | goose (`github.com/pressly/goose/v3`), with migrations embedded | Works on both; the framework's migrations and the app's each have their own version table |
