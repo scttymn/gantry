@@ -219,7 +219,10 @@ func (p *Pipeline) Dimensions(data []byte) (width, height int, contentType strin
 	if err != nil {
 		return 0, 0, "", err
 	}
-	if int64(cfg.Width)*int64(cfg.Height) > int64(p.maxPixels()) {
+	if cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0, "", fmt.Errorf("images: %d×%d has no pixels", cfg.Width, cfg.Height)
+	}
+	if cfg.Width > p.maxPixels()/cfg.Height { // a product could wrap
 		return 0, 0, "", fmt.Errorf("%w: %d×%d is over %d", ErrTooManyPixels, cfg.Width, cfg.Height, p.maxPixels())
 	}
 	width, height = cfg.Width, cfg.Height

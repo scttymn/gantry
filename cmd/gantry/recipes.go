@@ -226,6 +226,9 @@ Next:
        f, ok := storage.FileFrom(r, "clip[thumbnail]")
        a.Storage.Attach(ctx, storage.Ref{RecordType: "Clip", RecordID: id, Name: "thumbnail"}, f)
        @a.Storage.Img(blob, images.Img{Alt: "…", Sizes: "240px"})
+     A picture too large to read (over the pipeline's MaxPixels) is the
+     uploader's to fix: when errors.Is(err, images.ErrTooManyPixels), show
+     the form again at 422 with "That picture is too large."
 `)
 	return nil
 }
