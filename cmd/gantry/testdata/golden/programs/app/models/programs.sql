@@ -7,6 +7,11 @@ SELECT * FROM programs ORDER BY position, id;
 -- name: GetProgram :one
 SELECT * FROM programs WHERE id = sqlc.arg(id);
 
+-- The row, read in the transaction that changes it, so no other change
+-- lands between the read and the write: SQLite's transaction holds the write lock already.
+-- name: GetProgramForUpdate :one
+SELECT * FROM programs WHERE id = sqlc.arg(id);
+
 -- name: CreateProgram :one
 INSERT INTO programs (name, blurb, cta, position, created_at, updated_at)
 VALUES (sqlc.arg(name), sqlc.arg(blurb), sqlc.arg(cta), sqlc.arg(position), sqlc.arg(now), sqlc.arg(now))

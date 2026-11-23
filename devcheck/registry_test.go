@@ -26,7 +26,7 @@ func TestExtendedRegistry(t *testing.T) {
 	if len(got) != 2 || got[0].Rule != "asset-url" || got[1].Rule != "example-feature" || got[1].Line != 2 || got[1].Message != "Use the provided helper" {
 		t.Fatal(got)
 	}
-	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"example-feature","file":"feature.example","reason":"Migration example"}]}`)
+	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"example-feature","file":"feature.example","reason":"Migration example (#7)"}]}`)
 	got, err = ScanWithRules(root, rules)
 	if err != nil || len(got) != 1 {
 		t.Fatal(got, err)

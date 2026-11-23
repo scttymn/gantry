@@ -6,6 +6,11 @@ SELECT * FROM workouts ORDER BY id DESC;
 -- name: GetWorkout :one
 SELECT * FROM workouts WHERE id = sqlc.arg(id);
 
+-- The row, read in the transaction that changes it, so no other change
+-- lands between the read and the write: SQLite's transaction holds the write lock already.
+-- name: GetWorkoutForUpdate :one
+SELECT * FROM workouts WHERE id = sqlc.arg(id);
+
 -- name: CreateWorkout :one
 INSERT INTO workouts (date, name, rx, created_at, updated_at)
 VALUES (CAST(sqlc.narg(date) AS TEXT), sqlc.arg(name), sqlc.arg(rx), sqlc.arg(now), sqlc.arg(now))

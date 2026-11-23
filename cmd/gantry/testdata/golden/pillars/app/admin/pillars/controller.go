@@ -2,11 +2,13 @@
 package pillars
 
 import (
+	"maps"
 	"net/http"
 	"strings"
 
 	"github.com/a-h/templ"
 
+	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
 
 	"example.com/gym/app/admin"
@@ -57,15 +59,20 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	if errs := pillar.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
 	}
-	q := models.New(c.DB.Write)
-	if !pillar.Position.Valid {
-		next, err := q.NextPillarPosition(r.Context())
-		if err != nil {
-			return err
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
+		// On Postgres two at once can still take the same position; the
+		// list orders by position, then id.
+		if !pillar.Position.Valid {
+			next, err := q.NextPillarPosition(r.Context())
+			if err != nil {
+				return err
+			}
+			pillar.Position.Int64, pillar.Position.Valid = next, true
 		}
-		pillar.Position.Int64, pillar.Position.Valid = next, true
-	}
-	_, err := q.CreatePillar(r.Context(), models.CreatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now()})
+		_, err = q.CreatePillar(r.Context(), models.CreatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now()})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -80,19 +87,35 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, pillar.ID, formValues(pillar), nil)
 }
 
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
-	was, err := models.New(c.DB.Read).GetPillar(r.Context(), web.ID(r, "id"))
+	sent := admin.Overlay(r, param, map[string]string{})
+	var (
+		id   int64
+		v    map[string]string
+		errs []string
+	)
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q := models.New(tx)
+		was, err := q.GetPillarForUpdate(r.Context(), web.ID(r, "id"))
+		if err != nil {
+			return err
+		}
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
+		pillar := fromForm(v)
+		if errs = pillar.Errors(); len(errs) > 0 {
+			return nil
+		}
+		return q.UpdatePillar(r.Context(), models.UpdatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now(), ID: id})
+	})
 	if err != nil {
 		return err
 	}
-	v := admin.Overlay(r, param, formValues(was))
-	pillar := fromForm(v)
-	if errs := pillar.Errors(); len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
-	}
-	err = models.New(c.DB.Write).UpdatePillar(r.Context(), models.UpdatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now(), ID: was.ID})
-	if err != nil {
-		return err
+	if len(errs) > 0 {
+		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
 	}
 	return c.Saved(w, r, path, singular)
 }
