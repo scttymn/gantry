@@ -81,8 +81,9 @@ scope's filters before the cache on every request, so `auth.Required` still
 turns away whoever it would, but everyone it lets in shares one copy of the
 page: cache a page behind it only when it's the same for every member, never
 one that reads `auth.Current`. Requests with an `Authorization` header and
-responses that set a cookie bypass the cache; a session cookie alone does not,
-so a public cached page must not change for signed-in visitors
+responses that set a cookie bypass the cache. A session cookie alone does
+not, unless the app sets `rt.Cache.Skip = a.Auth.HasSessionCookie`; do that
+when a public cached page looks different to signed-in visitors
 (`auth.SignedIn`). Use `db.DB.Version` for database-driven invalidation where
 appropriate, and account for other data sources and time-dependent content. A
 clean Strict scan does not check this for you yet.

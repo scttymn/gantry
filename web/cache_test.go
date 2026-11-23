@@ -36,6 +36,10 @@ func newCached(t *testing.T) *cached {
 	c.cache = &PageCache{
 		Version: func(context.Context) (int64, error) { return c.version.Load(), nil },
 		Now:     func() time.Time { return c.now },
+		Skip: func(r *http.Request) bool {
+			_, err := r.Cookie("session")
+			return err == nil
+		},
 	}
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Cache = c.cache
@@ -175,17 +179,30 @@ func TestPageCache(t *testing.T) {
 			t.Fatalf("anonymous: %d %v", anonymous.Code, anonymous.Header())
 		}
 	})
-	t.Run("a request with credentials neither fills nor reads the cache", func(t *testing.T) {
-		c := newCached(t)
-		signedIn := c.get("/page", "Authorization", "Bearer ada")
-		anonymous := c.get("/page")
-		if c.renders.Load() != 2 || anonymous.Body.String() == signedIn.Body.String() {
-			t.Fatalf("an anonymous visitor got the signed-in render: renders %d", c.renders.Load())
-		}
-		if c.get("/page", "Authorization", "Bearer ada"); c.renders.Load() != 3 {
-			t.Fatalf("a request with credentials was served the kept page: renders %d", c.renders.Load())
-		}
-	})
+	for name, header := range map[string]http.Header{
+		"an Authorization header":                {"Authorization": {"Bearer ada"}},
+		"an Authorization header after an empty": {"Authorization": {"", "Bearer ada"}},
+		"what Skip names (a session cookie)":     {"Cookie": {"session=ada"}},
+	} {
+		t.Run("a request with "+name+" neither fills nor reads the cache", func(t *testing.T) {
+			c := newCached(t)
+			signedIn := func() *httptest.ResponseRecorder {
+				r := httptest.NewRequest("GET", "/page", nil)
+				r.Header = header.Clone()
+				w := httptest.NewRecorder()
+				c.h.ServeHTTP(w, r)
+				return w
+			}
+			first := signedIn()
+			anonymous := c.get("/page")
+			if c.renders.Load() != 2 || anonymous.Body.String() == first.Body.String() {
+				t.Fatalf("an anonymous visitor got the signed-in render: renders %d", c.renders.Load())
+			}
+			if signedIn(); c.renders.Load() != 3 {
+				t.Fatalf("a signed-in request was served the kept page: renders %d", c.renders.Load())
+			}
+		})
+	}
 	t.Run("a response a filter set a cookie on is never kept", func(t *testing.T) {
 		c := newCached(t)
 		flashed := c.get("/flash/page", "X-Flash", "saved")

@@ -24,12 +24,12 @@ import (
 // Only 200s are kept, never a response that sets a cookie, and never one to
 // a request with an Authorization header. Browsers are told no-cache with
 // an ETag and a Last-Modified, so they check back each time and get a 304
-// when nothing changed. Last-Modified is when the page
-// last changed: its first render since the app started (a deploy), or the
-// first render that came out different from the one before (an edit in the
-// admin, say). Rendered again the same, it keeps its date. It's there for
-// what's between a browser and the app: a proxy that may rewrite HTML
-// (Cloudflare) drops ETags, and passes Last-Modified on.
+// when nothing changed. Last-Modified is when the page last changed: its
+// first render since the app started (a deploy), or the first render that
+// came out different from the one before (an edit in the admin, say).
+// Rendered again the same, it keeps its date. It's there for what's
+// between a browser and the app: a proxy that may rewrite HTML (Cloudflare)
+// drops ETags, and passes Last-Modified on.
 type PageCache struct {
 	// Version changes whenever the data does (db.DB.Version); a page made
 	// under another version is stale. nil, or an error: pages go by MaxAge
@@ -43,6 +43,11 @@ type PageCache struct {
 	MaxEntries int
 	// Now is time.Now when nil; tests set it.
 	Now func() time.Time
+	// Skip names more requests that go straight to the handler, neither
+	// served from the cache nor kept in it: auth.Auth.HasSessionCookie, so
+	// a page that looks different to someone signed in (auth.SignedIn)
+	// isn't kept for, or served to, the wrong visitor. nil: none.
+	Skip func(*http.Request) bool
 
 	mu      sync.Mutex
 	entries map[string]*cachedPage
@@ -92,7 +97,8 @@ func (c *PageCache) maxEntries() int {
 func (c *PageCache) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
-			r.Header.Get("Authorization") != "" || w.Header().Get("Set-Cookie") != "" {
+			len(r.Header.Values("Authorization")) > 0 || len(w.Header().Values("Set-Cookie")) > 0 ||
+			(c.Skip != nil && c.Skip(r)) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -148,7 +154,7 @@ func (c *PageCache) make(key string, version int64, next http.Handler, r *http.R
 	rec := &recorder{header: http.Header{}, status: http.StatusOK}
 	next.ServeHTTP(rec, r.Clone(context.WithoutCancel(r.Context())))
 	page := &cachedPage{status: rec.status, header: rec.header, body: rec.body.Bytes(), version: version, made: c.now()}
-	if rec.status != http.StatusOK || rec.header.Get("Set-Cookie") != "" || rec.header.Get("Content-Encoding") != "" {
+	if rec.status != http.StatusOK || len(rec.header.Values("Set-Cookie")) > 0 || rec.header.Get("Content-Encoding") != "" {
 		return page // replayed to whoever waited on it, never kept
 	}
 	page.kept = true
