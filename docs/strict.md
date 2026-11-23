@@ -83,7 +83,8 @@ extensions require a compiled caller rather than arbitrary code in JSON.
 Registries reject duplicate IDs, unknown severities and missing metadata or
 checks. Invalid source offsets and rule execution errors fail the scan with the
 rule and file named. Exception validation uses the supplied registry, so a
-custom rule gets the same exact-file, reason-required exception policy.
+custom rule gets the same exact-file, reason-required exception policy, and an
+exception for it that matches nothing is reported stale.
 
 ## Current coverage
 

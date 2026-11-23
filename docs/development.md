@@ -72,6 +72,29 @@ and empty reasons are rejected. Keep exceptions narrow and review this file
 alongside code changes. They suppress all findings of that rule in the named
 file; line numbers are intentionally not used because edits move lines.
 
+An exception that suppresses nothing, because the file was fixed, moved or
+deleted, or an upgrade stopped the rule firing there, is reported as
+`stale-exception` advice on `.gantry-check.json`. Remove it: left in place, it
+would hide the next violation of that rule in that file. It is advice so that
+an upgrade doesn't fail CI.
+
+To make every exception point at where it was decided, set `"requireIssue": true`.
+Each reason must then cite an issue (`#123`) or link an issue or decision record
+(`https://...`), and the scan fails on one that doesn't:
+
+```json
+{
+  "requireIssue": true,
+  "exceptions": [
+    {
+      "rule": "raw-assets",
+      "file": "app/downloads.go",
+      "reason": "This authenticated route serves exports, not scripts or styles (#214)."
+    }
+  ]
+}
+```
+
 ## Browser warnings
 
 Gantry's router automatically injects a full-width bottom warnings panel when
