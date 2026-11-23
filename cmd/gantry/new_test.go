@@ -166,6 +166,35 @@ func TestNewGolden(t *testing.T) {
 	}
 }
 
+// The JavaScript a new app vendors is MIT, which asks that every copy carry
+// its copyright and permission notice: the app's copy does, in a /*! */
+// comment the build's minifying keeps.
+func TestNewVendorLicenses(t *testing.T) {
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	for file, copyright := range map[string]string{
+		"@hotwired--turbo.js":    "Copyright (c) 37signals",
+		"@hotwired--stimulus.js": "Copyright © 2021 Basecamp, LLC.",
+	} {
+		got, err := os.ReadFile(filepath.Join(root, "shop", "assets", "js", "vendor", file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		license, _, ok := strings.Cut(string(got), "*/")
+		if _, license, ok = strings.Cut(license, "\n\n/*!\n"); !ok {
+			t.Errorf("%s has no license comment after its first line", file)
+			continue
+		}
+		for _, want := range []string{copyright, "Permission is hereby granted, free of charge", "included in all copies or substantial portions of the Software"} {
+			if !strings.Contains(license, want) {
+				t.Errorf("%s's license is missing %q", file, want)
+			}
+		}
+	}
+}
+
 func TestNewPostgresEnv(t *testing.T) {
 	root := t.TempDir()
 	gantry(t, root, "new", "shop", "--db", "postgres", "--skip-houston")
