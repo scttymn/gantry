@@ -9,6 +9,7 @@ services:
     expose: ["8080"]
     environment:
       GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true} # development panel; false hides it
+      GANTRY_DEV_RELOAD: ${GANTRY_DEV_RELOAD:-true} # pages reload on save; false turns it off
       MAIL_DRIVER: ${MAIL_DRIVER:-} # blank: local inbox in development, configured SMTP elsewhere
       MAIL_FROM: ${MAIL_FROM:-}
       SMTP_HOST: ${SMTP_HOST:-}
@@ -16,12 +17,11 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
-      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (openssl rand -hex 32, a Houston secret); blank in development
+      SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
     volumes:
       - .:/app                     # the code, rebuilt on change
-      # gantry beside it, for go.work (ignored by git): changes to both at once.
-      # Dev only; tests and deploys build against the gantry go.mod pins.
-      - ../..:/
       - data:/data                 # the SQLite database and uploads
 
 volumes:

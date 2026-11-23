@@ -30,7 +30,7 @@ type Field struct {
 // Resource is what the templates are filled with.
 type Resource struct {
 	Module    string  // the app's module path
-	Namespace string  // "admin", or "" for none
+	Namespace string  // "admin", or "" for a top-level resource
 	Table     string  // "membership_options"
 	Package   string  // "membershipoptions": the folder's package name
 	Param     string  // "membership_option": the form's key
@@ -43,12 +43,21 @@ type Resource struct {
 	Photos    []Field // photo slots (Active Storage attachments), not columns
 	List      []Field // the list's columns: the first two that read as text
 	Position  bool
-	Dates     bool
-	Postgres  bool   // sqlc.yaml's engine: Get…ForUpdate locks the row there
-	Base      string // "/admin/membership_options"
+	// Postgres: sqlc.yaml's engine. Its queries bind dates differently, and
+	// Get…ForUpdate locks the row there.
+	Postgres bool
+	Base     string // "/admin/membership_options", or "/membership_options"
+	Folder   string // "app/admin/membershipoptions", or "app/membershipoptions"
+	// NamespaceCode: app/<namespace> has code of its own (an admin package
+	// with its layout, say), not only resources' folders, which g resource
+	// writes. The resource doesn't use it.
+	NamespaceCode bool
 }
 
 var columnName = regexp.MustCompile(`\A[a-z][a-z0-9_]*\z`)
+
+// appFolders are the app's own folders in app/, which no resource's may be.
+var appFolders = map[string]bool{"models": true, "shared": true}
 
 // parseResource reads `[namespace/]table field:type[:required]...`.
 func parseResource(root string, args []string) (Resource, error) {
@@ -58,6 +67,9 @@ func parseResource(root string, args []string) (Resource, error) {
 	var r Resource
 	name := args[0]
 	if ns, table, ok := strings.Cut(name, "/"); ok {
+		if !columnName.MatchString(ns) {
+			return r, fmt.Errorf("%q isn't a namespace", ns)
+		}
 		r.Namespace, name = ns, table
 	}
 	if !columnName.MatchString(name) {
@@ -84,9 +96,6 @@ func parseResource(root string, args []string) (Resource, error) {
 		default:
 			return r, fmt.Errorf("%s: type %q isn't string, text, int, position, date or photo", f.Column, f.Type)
 		}
-		if f.Type == "date" {
-			r.Dates = true
-		}
 		for _, mod := range parts[2:] {
 			if mod != "required" {
 				return r, fmt.Errorf("%s: %q isn't a modifier (required is)", f.Column, mod)
@@ -103,17 +112,36 @@ func parseResource(root string, args []string) (Resource, error) {
 			r.List = append(r.List, f)
 		}
 	}
-	if r.Namespace != "admin" {
-		return r, errors.New("resources are admin resources for now: admin/" + name)
+	r.Base, r.Folder = "/"+r.Table, "app/"+r.Package
+	top := r.Package // its folder in app/
+	if r.Namespace != "" {
+		r.Base = "/" + r.Namespace + r.Base
+		r.Folder = "app/" + r.Namespace + "/" + r.Package
+		top = r.Namespace
+		for _, pattern := range []string{"*.go", "*.templ"} {
+			if found, _ := filepath.Glob(filepath.Join(root, "app", r.Namespace, pattern)); len(found) > 0 {
+				r.NamespaceCode = true
+			}
+		}
 	}
-	r.Base = "/" + r.Namespace + "/" + r.Table
+	if appFolders[top] {
+		return r, fmt.Errorf("app/%s is the app's own folder: name the resource something else", top)
+	}
+	r.Postgres = sqlcEngine(root) == "postgresql"
 	mod, err := modulePath(root)
 	if err != nil {
 		return r, err
 	}
 	r.Module = mod
-	r.Postgres = sqlcEngine(root) == "postgresql"
 	return r, nil
+}
+
+// sharedFiles are the helpers every resource's controller uses, in the
+// app's app/shared/resource: written by the first resource and the app's
+// from then on, so they're never written over.
+var sharedFiles = map[string]string{
+	"app/shared/resource/resource.go": "resource.go.tmpl",
+	"app/shared/resource/pages.templ": "pages.templ.tmpl",
 }
 
 func generateResource(root string, args []string, out io.Writer) error {
@@ -121,32 +149,43 @@ func generateResource(root string, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	folder := filepath.Join("app", r.Package)
-	if r.Namespace != "" {
-		folder = filepath.Join("app", r.Namespace, r.Package)
-	}
 	files := map[string]string{
-		filepath.Join("app", "models", r.Table+".sql"): "resource/model.sql.tmpl",
-		filepath.Join("app", "models", r.Table+".go"):  "resource/model.go.tmpl",
-		filepath.Join(folder, "controller.go"):         "resource/controller.go.tmpl",
-		filepath.Join(folder, "index.templ"):           "resource/index.templ.tmpl",
-		filepath.Join(folder, "form.templ"):            "resource/form.templ.tmpl",
+		"app/models/" + r.Table + ".sql": "model.sql.tmpl",
+		"app/models/" + r.Table + ".go":  "model.go.tmpl",
+		r.Folder + "/controller.go":      "controller.go.tmpl",
+		r.Folder + "/index.templ":        "index.templ.tmpl",
+		r.Folder + "/form.templ":         "form.templ.tmpl",
 	}
 	for path := range files {
 		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
 			return fmt.Errorf("%s is there already: move it aside to generate it again", path)
 		}
 	}
-	t := template.Must(template.New("").Funcs(funcs(r)).ParseFS(templates, "templates/resource/*.tmpl"))
-	for path, name := range files {
+	t := template.Must(template.New("").Funcs(funcs(r)).ParseFS(templates, "templates/resource/*.tmpl", "templates/resource/shared/*.tmpl"))
+	render := func(path, name string) error {
 		var b bytes.Buffer
-		if err := t.ExecuteTemplate(&b, filepath.Base(name), r); err != nil {
+		if err := t.ExecuteTemplate(&b, name, r); err != nil {
 			return err
 		}
 		if err := write(filepath.Join(root, path), b.Bytes()); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "  wrote", path)
+		return nil
+	}
+	for path, name := range files {
+		if err := render(path, name); err != nil {
+			return err
+		}
+	}
+	for path, name := range sharedFiles {
+		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
+			fmt.Fprintln(out, "  kept", path)
+			continue
+		}
+		if err := render(path, name); err != nil {
+			return err
+		}
 	}
 	// Its table, as a migration: every field but photos, which aren't
 	// columns. Required is the form's rule (the model's Errors), not NOT
@@ -158,15 +197,58 @@ func generateResource(root string, args []string, out io.Writer) error {
 	if err := generateMigration(root, cols, out); err != nil {
 		return err
 	}
-	base, pkg := r.Base, r.Package
-	fmt.Fprintf(out, `
-Next:
-  1. In app/routes.go, import %s/%s and add:
-       rt.Resources(%q, %s.Controller{Controller: adm}, requireAdmin)
-  2. Migrate, then regenerate: gantry db migrate, sqlc generate, and templ generate.
-  3. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
-`, r.Module, filepath.ToSlash(folder), base, pkg, r.Table)
+	fmt.Fprint(out, nextSteps(r))
 	return nil
+}
+
+// nextSteps are what wires a resource into the app, as code to paste: a
+// top-level one in Router (Rails' resources :posts), a namespaced one in
+// its namespace's scope (namespace :admin), behind the filter that guards
+// it, which the generator can't know.
+func nextSteps(r Resource) string {
+	shared := "DB: a.DB, Flash: web.Flash{Signer: a.Signer}"
+	if len(r.Photos) > 0 {
+		shared += ", Photos: a.Storage"
+	}
+	route := fmt.Sprintf(`     and route it, in Router:
+       rt.Resources(%q, %s.Controller{Controller: resource.Controller{
+           %s}}, nil)
+`, r.Base, r.Package, shared)
+	if r.Namespace != "" {
+		route = fmt.Sprintf(`     and route it in Router, in /%[1]s's scope (one for every %[1]s resource):
+       rt.Scope("/%[1]s", web.Pipeline{}, func(s *web.Scope) {
+           s.Resources("/%[2]s", %[3]s.Controller{Controller: resource.Controller{
+               %[4]s}}, nil)
+       })
+     The scope's pipeline is who may use /%[1]s: until it has a filter (g auth's
+     a.Auth.Required, once App has an Auth), anyone can.
+`, r.Namespace, r.Table, r.Package, shared)
+	}
+	if len(r.Photos) > 0 {
+		route += "     Its photos are kept in App's Storage, a.Storage: g storage and its next\n     steps give App one.\n"
+	}
+	var own string
+	if r.NamespaceCode {
+		own = fmt.Sprintf(`     app/%[1]s has code of its own, which this resource doesn't use: its pages are
+     app/shared/resource's, drawn in app/shared/layout. For the look of
+     app/%[1]s's own pages, have %[2]s/index.templ and form.templ draw the
+     list and the form in app/%[1]s's layout instead.
+`, r.Namespace, r.Folder)
+	}
+	feature := "  2. In test/features.yaml, add its feature, which bin/gantry verify visits:\n"
+	if r.Namespace != "" {
+		feature = fmt.Sprintf("  2. In test/features.yaml, add its feature, which bin/gantry verify visits as\n     each role: its role is who /%s's filter lets in (public, signed-in or admin):\n", r.Namespace)
+	}
+	feature += featureYAML(strings.TrimPrefix(r.Base, "/"), "public", []string{r.Base, r.Base + "/"}, r.Base, "h1")
+	return fmt.Sprintf(`
+Next:
+  1. In app/routes.go, import
+       "%s/%s"
+       "%s/app/shared/resource"
+%s%s  3. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
+     and gantry exec go mod tidy.
+  4. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
+%s`, r.Module, r.Folder, r.Module, route, feature, r.Table, own)
 }
 
 // modulePath is the app's module, from its go.mod.
@@ -248,12 +330,23 @@ func Humanize(s string) string {
 	return string(r)
 }
 
+// controllerNames are the names a resource's controller declares or
+// imports, which its record's variable would shadow (a resources table's
+// "resource" is the shared package's name).
+var controllerNames = map[string]bool{
+	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strings": true, "db": true, "maps": true,
+	"path": true, "param": true, "title": true, "singular": true, "recordType": true, "fields": true,
+}
+
 // funcs are the templates' helpers: how each type of field is read, shown,
 // listed and saved.
 func funcs(r Resource) template.FuncMap {
 	v := lowerFirst(goName(r.Param, nil)) // "membershipOption": the record's variable
 	if r.Model != goName(r.Param, nil) {
 		v = lowerFirst(r.Model)
+	}
+	if controllerNames[v] {
+		v = "record"
 	}
 	return template.FuncMap{
 		"lower": strings.ToLower,
@@ -262,54 +355,59 @@ func funcs(r Resource) template.FuncMap {
 		"field": func(f Field) string {
 			switch f.Type {
 			case "text":
-				return fmt.Sprintf("admin.F(%q, admin.Type(\"text\"))", f.Column)
+				return fmt.Sprintf("resource.F(%q, resource.Type(\"textarea\"))", f.Column)
 			case "int":
-				return fmt.Sprintf("admin.F(%q, admin.Type(\"number\"))", f.Column)
+				return fmt.Sprintf("resource.F(%q, resource.Type(\"number\"))", f.Column)
 			case "position":
-				return "admin.Position"
+				return "resource.Position"
 			case "date":
-				return fmt.Sprintf("admin.F(%q, admin.Type(\"date\"))", f.Column)
+				return fmt.Sprintf("resource.F(%q, resource.Type(\"date\"))", f.Column)
 			case "photo":
-				return fmt.Sprintf("admin.F(%q, admin.Type(\"file\"))", f.Column)
+				return fmt.Sprintf("resource.F(%q, resource.Type(\"file\"))", f.Column)
 			}
-			return fmt.Sprintf("admin.F(%q)", f.Column)
+			return fmt.Sprintf("resource.F(%q)", f.Column)
 		},
 		"toText": func(f Field) string {
 			switch f.Type {
 			case "int", "position":
-				return "admin.IntText(" + v + "." + f.Go + ")"
+				return "resource.IntText(" + v + "." + f.Go + ")"
 			case "date":
-				return "admin.DateValue(" + v + "." + f.Go + ")"
+				return "resource.DateText(" + v + "." + f.Go + ")"
 			}
 			return v + "." + f.Go
 		},
 		"fromText": func(f Field) string {
 			switch f.Type {
 			case "int", "position":
-				return fmt.Sprintf("admin.OptionalInt(v[%q])", f.Column)
+				return fmt.Sprintf("resource.OptionalInt(v[%q])", f.Column)
 			case "date":
-				return fmt.Sprintf("admin.OptionalDate(v[%q])", f.Column)
+				return fmt.Sprintf("resource.OptionalDate(v[%q])", f.Column)
 			}
 			return fmt.Sprintf("v[%q]", f.Column)
 		},
 		"cell": func(f Field) string {
 			if f.Type == "date" {
-				return "admin.DateText(" + v + "." + f.Go + ")"
+				return "resource.DateText(" + v + "." + f.Go + ")"
 			}
-			return "admin.ListText(" + v + "." + f.Go + ")"
+			return "resource.ListText(" + v + "." + f.Go + ")"
 		},
 		"param": func(f Field) string {
 			if f.Type == "date" {
-				return "admin.DateParam(" + v + "." + f.Go + ")"
+				return "resource.DateParam(" + v + "." + f.Go + ")"
 			}
 			return v + "." + f.Go
 		},
-		// Dates are text on SQLite ("2006-01-02"), so they're bound as text.
+		// Dates are bound as text ("2006-01-02"), as SQLite keeps them (its
+		// CAST AS DATE would make "2026-11-22" the number 2026). Postgres
+		// won't put text in a date column, so there the text is cast to one.
 		"arg": func(f Field) string {
-			if f.Type == "date" {
-				return "CAST(sqlc.narg(" + f.Column + ") AS TEXT)"
+			if f.Type != "date" {
+				return "sqlc.arg(" + f.Column + ")"
 			}
-			return "sqlc.arg(" + f.Column + ")"
+			if r.Postgres {
+				return "CAST(CAST(sqlc.narg(" + f.Column + ") AS TEXT) AS DATE)"
+			}
+			return "CAST(sqlc.narg(" + f.Column + ") AS TEXT)"
 		},
 	}
 }

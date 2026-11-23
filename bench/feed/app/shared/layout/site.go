@@ -1,0 +1,9 @@
+package layout
+
+import "github.com/scttymn/gantry/meta"
+
+// Site is what every page's link preview shares (gantry's meta): its name,
+// its address (SITE_URL, set at start) and the picture a shared link shows.
+// For one, put a 1200×630 picture in assets/images and set
+// Image: assets.Path("social.png") here.
+var Site = meta.Site{Name: "Feed"}

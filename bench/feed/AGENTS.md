@@ -1,0 +1,34 @@
+# Feed: notes for agents
+
+A [Gantry](https://github.com/scttymn/gantry) app on SQLite. It was made with Gantry v0.17.0; `go.mod` says which version it uses now. Read the docs for that version, not `main`, which may describe newer features:
+
+- [Building an app with Gantry](https://github.com/scttymn/gantry/blob/v0.17.0/docs/agents.md): the order of work and how to verify it
+- [Gantry Strict](https://github.com/scttymn/gantry/blob/v0.17.0/docs/strict.md): what `bin/gantry check` enforces, and why
+
+After raising Gantry in `go.mod`, read them at the new version's tag.
+
+Use `bin/gantry`, which runs the CLI that matches `go.mod`. Ask the tools rather than relying on rules written down here:
+
+```sh
+bin/gantry --help          # commands and generators
+bin/gantry check --rules   # the rules this version checks, with their guidance
+bin/gantry check --strict  # nonzero on a violation: run it before you finish
+bin/gantry test            # the tests, in a throwaway copy
+bin/gantry routes --json   # every route, from the app's router
+bin/gantry verify          # each feature in test/features.yaml, visited as each role
+```
+
+A route needs a feature in `test/features.yaml`, or `TestFeatures` fails.
+
+## Where things go
+- `app/routes.go`: every route, and the controllers behind them
+- `app/<name>/`: a controller and its views (`.templ`), one folder per resource
+- `app/models/`: each table's queries (`<table>.sql`, turned into Go by sqlc) and rules (`<table>.go`)
+- `app/jobs.go`: background jobs, run by the server (or `feed jobs`, with `JOBS_IN_SERVER=false`)
+- `app/tasks.go`: the app's own commands, run with `bin/gantry task NAME`
+- `db/migrations/`: schema changes, written by `gantry g migration`; `db/schema.sql` is what they leave
+- `db/seeds/`: what a fresh database starts with
+- `assets/`: stylesheets, scripts, fonts and images; `assets/public/` is served at the root (robots.txt, the error pages)
+- `assets/js/`: JavaScript, through an import map with no build step: Turbo and Stimulus, the app's Stimulus controllers in `js/controllers/`, and packages from `gantry importmap pin NAME` in `js/vendor/`
+- `config/config.go`: settings, from the environment
+- `test/`: what the tests share

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +26,7 @@ import (
 	"github.com/scttymn/gantry/sign"
 
 	"feed/app"
+	"feed/app/shared/layout"
 	"feed/assets"
 	"feed/config"
 	"feed/db/migrations"
@@ -32,6 +34,13 @@ import (
 )
 
 func main() {
+	// Started as a picture's resizing child, it makes the copy and exits.
+	if images.IsChild(os.Args) {
+		os.Exit(app.Pictures.RunChild(os.Args))
+	}
+	if exe, err := os.Executable(); err == nil {
+		app.Pictures.Maker = images.Child{Exe: exe}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
@@ -45,6 +54,7 @@ const usage = `usage:
   feed db migrate|rollback [N]|status|seed|reset|console
   feed tasks                  the app's own tasks (app/tasks.go)
   feed task NAME [ARGS...]    run one
+  feed routes [--json]        the app's routes (app/routes.go), or as JSON
 `
 
 // command runs the command args name, and is its exit code.
@@ -84,6 +94,9 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 		return 0
 	case "task":
 		err = task(ctx, cfg, logger, args, out)
+	case "routes":
+		// Its log on errOut: out is the list, which may be JSON.
+		err = routes(ctx, cfg, slog.New(slog.NewTextHandler(errOut, nil)), args, out)
 	default:
 		fmt.Fprint(errOut, usage)
 		return 2
@@ -130,6 +143,8 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 			mailer.Close()
 		}
 	}()
+	// Link previews are made from the site's address (meta.Site).
+	layout.Site.URL = cfg.SiteURL
 	signer := sign.Signer{Key: key}
 	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
 		Secret: []byte(cfg.JWTSecret), Started: time.Now()}
@@ -152,7 +167,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 		return err
 	}
 	defer closeDB()
-	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second}
+	// A client that's slow to send or to read can't hold a connection open:
+	// a request has 30 s to arrive and 60 s to be answered, and an idle
+	// connection is closed after 2 minutes. Live streams, and uploads and
+	// downloads still moving, go on past them.
+	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 2 * time.Minute}
 	server.RegisterOnShutdown(a.Live.Close) // live streams end, so shutting down doesn't wait on them
 
 	ln, err := net.Listen("tcp", cfg.Addr)
@@ -198,6 +218,27 @@ func runJobs(ctx context.Context, cfg config.Config, logger *slog.Logger) error 
 	defer closeDB()
 	logger.Info("running jobs", "env", cfg.Env)
 	return a.Jobs.Run(ctx)
+}
+
+// routes prints the app's routes, as its router has them, one a line, or
+// with --json as a JSON array of web.Route: what `gantry routes` shows.
+func routes(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
+	if len(args) > 1 || len(args) == 1 && args[0] != "--json" {
+		return errors.New("usage: feed routes [--json]")
+	}
+	a, closeDB, err := build(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
+	defer closeDB()
+	list := a.Router().Routes()
+	if len(args) == 1 {
+		return json.NewEncoder(out).Encode(list)
+	}
+	for _, r := range list {
+		fmt.Fprintln(out, r)
+	}
+	return nil
 }
 
 // task runs one of app.Tasks, on the migrated database.

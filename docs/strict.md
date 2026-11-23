@@ -96,3 +96,11 @@ exception syntax. Page-cache eligibility, image-pipeline adoption and
 render-blocking data fetches are future coverage areas, not checks that exist
 today. Some will need runtime measurement or richer analysis instead of static
 source matching.
+
+The [feature map](development.md#the-feature-map) is one such check. A route
+with no feature fails an app's tests, not `check --strict`. Routes are what the
+running router has, including those a package's `Routes` adds, and Strict reads
+source without running the app. `testkit.Verify` checks the map against
+`Router.Routes` in the app's `TestFeatures`. `bin/gantry verify` runs that test
+to check each feature's pages, its caching headers, and that cached pages
+aren't shown across users.

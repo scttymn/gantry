@@ -1,0 +1,35 @@
+# {{.Title}}'s features: what each is, the routes it's made of, who it's for,
+# and the pages to check it by. TestFeatures (app/features_test.go) fails on a
+# route that's in none, and bin/gantry verify visits each feature's pages as
+# each role.
+#
+#   routes:    as bin/gantry routes lists them: "GET /posts", or "/posts" for
+#              any method; one ending in / is every route under it too
+#              ("/posts/"). Mounted routes (files, the development inbox)
+#              needn't be in one.
+#   role:      who it's for: public, signed-in or admin.
+#   cacheable: its routes are Cached, and its pages are the same for everyone
+#              its role lets in.
+#   visit:     pages to request: a path, the status it answers (200 if not
+#              given) and a CSS selector for an element the page has.
+#
+# g resource and g auth add theirs. The guide:
+# https://github.com/scttymn/gantry/blob/{{.Gantry}}/docs/development.md#the-feature-map
+features:
+  - name: home
+    routes:
+      - GET /{$}
+    role: public
+    visit:
+      - path: /
+        selector: h1
+  - name: health check
+    routes:
+      - GET /up
+    role: public
+    visit:
+      - path: /up
+  - name: live updates
+    routes:
+      - GET /live
+    role: public

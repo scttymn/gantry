@@ -30,7 +30,7 @@ var vendorDir = filepath.Join("assets", "js", "vendor")
 // assets/js/vendor/, served from the app, never a CDN; unpin removes them.
 func importmapCommand(root string, args []string, out io.Writer) error {
 	if len(args) < 2 {
-		return errExit(2)
+		return usageError{}
 	}
 	if _, err := os.Stat(filepath.Join(root, "assets")); err != nil {
 		return errors.New("no assets/ here: run gantry at the app's root")
@@ -48,7 +48,7 @@ func importmapCommand(root string, args []string, out io.Writer) error {
 		}
 		return nil
 	}
-	return errExit(2)
+	return usageError{}
 }
 
 // packageName is a package without its version: "@hotwired/turbo@8" is

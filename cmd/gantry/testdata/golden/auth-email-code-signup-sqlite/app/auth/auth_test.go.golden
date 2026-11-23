@@ -9,7 +9,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
+	gantryauth "github.com/scttymn/gantry/auth"
 	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/web"
@@ -27,7 +29,7 @@ func (c *capture) Send(_ context.Context, m mail.Message) error {
 func TestEmailCodeSignIn(t *testing.T) {
 	d := test.DB(t)
 	m := &capture{}
-	a := New(d, sign.Signer{Key: []byte("test cookies")}, m, "login@example.com", []byte(strings.Repeat("k", 32)))
+	a := New(d, sign.Signer{Key: []byte(strings.Repeat("c", 32))}, m, "login@example.com", []byte(strings.Repeat("k", 32)))
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	a.Routes(rt)
 	h := rt.Handler()
@@ -64,6 +66,30 @@ func TestEmailCodeSignIn(t *testing.T) {
 		t.Fatalf("code form: %d %s", verifyPage.Code, verifyPage.Body)
 	}
 	code := regexp.MustCompile(`\b[0-9]{6}\b`).FindString(m.sent[0].Text)
+	rejected := func(guess string) {
+		t.Helper()
+		w := post("/login/verify", url.Values{"code": {guess}}, requested.Result().Cookies())
+		if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/login/verify" {
+			t.Fatalf("code %s: %d %s", guess, w.Code, w.Header().Get("Location"))
+		}
+		again := httptest.NewRequest("GET", "https://example.com/login/verify", nil)
+		for _, c := range append(requested.Result().Cookies(), w.Result().Cookies()...) {
+			again.AddCookie(c)
+		}
+		form := httptest.NewRecorder()
+		h.ServeHTTP(form, again)
+		if !strings.Contains(form.Body.String(), `role="alert"`) {
+			t.Fatalf("code %s: no alert on the code form: %s", guess, form.Body)
+		}
+	}
+	wrong := "000000"
+	if code == wrong {
+		wrong = "111111"
+	}
+	rejected(wrong)
+	a.Now = func() time.Time { return time.Now().Add(gantryauth.CodeValidity + time.Minute) }
+	rejected(code)
+	a.Now = nil
 	verified := post("/login/verify", url.Values{"code": {code}}, requested.Result().Cookies())
 	if verified.Code != http.StatusSeeOther || verified.Header().Get("Location") != "/" {
 		t.Fatalf("verify: %d %s", verified.Code, verified.Body)
@@ -76,5 +102,22 @@ func TestEmailCodeSignIn(t *testing.T) {
 	}
 	if !a.SignedIn(r) {
 		t.Fatal("verified browser has no session")
+	}
+}
+
+// gantry sets Page.Status (422) when it redraws a form with errors.
+func TestViewsKeepPageStatus(t *testing.T) {
+	a := New(nil, sign.Signer{}, nil, "", nil)
+	views := map[string]func(http.ResponseWriter, *http.Request, gantryauth.Page) error{
+		"RequestCode": a.Views.RequestCode,
+		"VerifyCode":  a.Views.VerifyCode,
+	}
+	for name, view := range views {
+		for status, want := range map[int]int{0: http.StatusOK, http.StatusUnprocessableEntity: http.StatusUnprocessableEntity} {
+			w := httptest.NewRecorder()
+			if err := view(w, httptest.NewRequest("GET", "/login", nil), gantryauth.Page{Status: status}); err != nil || w.Code != want {
+				t.Errorf("%s with Status %d: %d, want %d (%v)", name, status, w.Code, want, err)
+			}
+		}
 	}
 }

@@ -1,22 +1,47 @@
 #!/bin/sh
 # Downloads this app's gantry (the release go.mod requires) and the Houston
-# release pinned below, then runs gantry. A gantry checkout in go.mod's
+# release that gantry names, then runs gantry. A gantry checkout in go.mod's
 # replace, or in go.work, uses that checkout's bin/gantry instead.
-# Assets are gantry-$os-$arch and houston-$os-$arch, checked against the
-# release's SHA256SUMS. Both land in .gantry/bin, which git ignores.
+# Assets are gantry-$os-$arch and houston-$os-$arch, downloaded over https.
+# gantry is checked against its release's SHA256SUMS and, when gh (2.70 or
+# later) is installed, its build provenance: an attestation that gantry's
+# release workflow built that binary at that tag. Houston is checked against
+# the digests that gantry pins for it. Both land in .gantry/bin, which git
+# ignores. Without gh 2.70 or later, or with a gantry that pins no digests for
+# its Houston, bin/gantry says what it couldn't check and goes on; a gantry
+# release up to v0.17.0 has no provenance to check. GANTRY_REQUIRE_PROVENANCE=1
+# (or true) refuses each of those instead, before downloading anything. It
+# applies to downloads: a CLI already in .gantry/bin is used as it is, so
+# delete .gantry/bin to have them checked again.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cd "$root"
 cache=$root/.gantry/bin
 
+# The Houston for a gantry release older than gantry houston-release.
 houston_version="v0.5.11"
+# The last gantry release published without build provenance.
+unattested=v0.17.0
 gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
 houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
 
 die() {
 	printf '%s\n' "bin/gantry: $*" >&2
 	exit 1
+}
+
+# A setting meant as a guarantee is never misread as off.
+case ${GANTRY_REQUIRE_PROVENANCE:-} in
+"" | 0 | false) strict="" ;;
+1 | true) strict=1 ;;
+*) die "GANTRY_REQUIRE_PROVENANCE=$GANTRY_REQUIRE_PROVENANCE: set it to 1 or true to require build provenance, or 0, false or nothing not to" ;;
+esac
+
+# gh_checks_provenance: whether gh is 2.70 or later, which checks an
+# attestation's tag (--source-ref).
+gh_checks_provenance() {
+	gh attestation verify --help 2>/dev/null | grep -q -- --source-ref
 }
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -42,6 +67,20 @@ esac
 
 is_release() {
 	printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# newer_than a b: whether release tag a comes after release tag b.
+newer_than() {
+	printf '%s %s\n' "$1" "$2" | awk '{
+		split(substr($1, 2), a, ".")
+		split(substr($2, 2), b, ".")
+		for (i = 1; i <= 3; i++) {
+			if (a[i] + 0 != b[i] + 0) {
+				exit !(a[i] + 0 > b[i] + 0)
+			}
+		}
+		exit 1
+	}'
 }
 
 d=$root
@@ -154,14 +193,30 @@ file_sha256() {
 	printf '%s\n' "$out" | awk '{print tolower($1)}'
 }
 
-# fetch_release name remote version base. remote is the release filename
-# (gantry-$os-$arch, houston-$os-$arch). The copy kept locally is named
-# with the version, so a failed upgrade cannot replace the previous CLI.
+# download file url. --proto keeps every request, redirects too, on https.
+download() {
+	curl -fsSL --proto =https --retry 3 --retry-delay 1 -o "$1" "$2" 2>/dev/null
+}
+
+# sums_entry asset: the digest the SHA256SUMS lines on stdin give asset.
+sums_entry() {
+	awk -v asset="$1" '
+		length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ && ($2 == asset || $2 == "*" asset) { print tolower($1); found = 1; exit }
+		END { if (!found) exit 1 }
+	'
+}
+
+# fetch_release name remote version base [pins]. remote is the release
+# filename (gantry-$os-$arch, houston-$os-$arch). pins, SHA256SUMS lines from
+# somewhere other than the release, replace the release's own when they name
+# remote. The copy kept locally is named with the version, so a failed
+# upgrade cannot replace the previous CLI.
 fetch_release() {
 	name=$1
 	remote=$2
 	version=$3
 	base=$4
+	pins=${5:-}
 	kept=$name-$version-$os-$arch
 	is_release "$version" || die "$name $version isn't a release tag (vX.Y.Z), so there is no CLI build to download"
 	command -v curl >/dev/null 2>&1 || die "curl is required to fetch $name $version"
@@ -175,24 +230,42 @@ fetch_release() {
 		ensure_link "$link" "$kept"
 		return 0
 	fi
+	case $base in
+	https://*) ;;
+	*) die "$name's release base $base isn't https" ;;
+	esac
+	if [ "$strict" = 1 ]; then
+		if [ "$name" = houston ]; then
+			printf '%s\n' "$pins" | sums_entry "$remote" >/dev/null ||
+				die "this gantry pins no digests for houston $version, so its provenance can't be checked, and GANTRY_REQUIRE_PROVENANCE refuses it: require a newer gantry in go.mod"
+		elif ! newer_than "$version" "$unattested"; then
+			die "gantry $version was published without build provenance, and GANTRY_REQUIRE_PROVENANCE refuses it: require a newer gantry in go.mod"
+		elif ! gh_checks_provenance; then
+			die "GANTRY_REQUIRE_PROVENANCE needs gh 2.70 or later to check gantry $version's build provenance, and there's none on PATH or it's older: install it, or unset GANTRY_REQUIRE_PROVENANCE"
+		fi
+	fi
 	partial=$cache/.$kept.$$
 	sums=$cache/.$kept.sums.$$
 	url=$base/$version/$remote
 	sums_url=$base/$version/SHA256SUMS
-	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$partial" "$url" 2>/dev/null; then
+	if ! download "$partial" "$url"; then
 		rm -f "$partial"
 		die "$name $version has no $os/$arch build at $url"
 	fi
-	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$sums" "$sums_url" 2>/dev/null; then
-		rm -f "$partial" "$sums"
-		die "$name $version published no SHA256SUMS at $sums_url"
-	fi
-	if ! want=$(awk -v asset="$remote" '
-		length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ && ($2 == asset || $2 == "*" asset) { print tolower($1); found = 1; exit }
-		END { if (!found) exit 1 }
-	' "$sums"); then
-		rm -f "$partial" "$sums"
-		die "SHA256SUMS for $name $version has no $remote"
+	if [ -n "$pins" ] && want=$(printf '%s\n' "$pins" | sums_entry "$remote"); then
+		:
+	else
+		if ! download "$sums" "$sums_url"; then
+			rm -f "$partial" "$sums"
+			die "$name $version published no SHA256SUMS at $sums_url"
+		fi
+		if ! want=$(sums_entry "$remote" <"$sums"); then
+			rm -f "$partial" "$sums"
+			die "SHA256SUMS for $name $version has no $remote"
+		fi
+		if [ "$name" = houston ]; then
+			printf '%s\n' "bin/gantry: this gantry pins no digests for houston $version, so it was checked against its own release's SHA256SUMS" >&2
+		fi
 	fi
 	if ! got=$(file_sha256 "$partial"); then
 		rm -f "$partial" "$sums"
@@ -201,6 +274,27 @@ fetch_release() {
 	if [ "$got" != "$want" ]; then
 		rm -f "$partial" "$sums"
 		die "$remote from $version failed its checksum"
+	fi
+	# The bundle comes from the same release, but only gantry's release
+	# workflow, running for this tag, could have signed it.
+	if [ "$name" = gantry ] && newer_than "$version" "$unattested"; then
+		if gh_checks_provenance; then
+			bundle=$cache/.$kept.provenance.$$
+			bundle_url=$base/$version/provenance.sigstore.json
+			if ! download "$bundle" "$bundle_url"; then
+				rm -f "$partial" "$sums" "$bundle"
+				die "gantry $version published no build provenance at $bundle_url"
+			fi
+			if ! out=$(gh attestation verify "$partial" --bundle "$bundle" --repo scttymn/gantry \
+				--signer-workflow scttymn/gantry/.github/workflows/release.yml \
+				--source-ref "refs/tags/$version" 2>&1); then
+				rm -f "$partial" "$sums" "$bundle"
+				die "$remote from $version failed its build provenance check: $out"
+			fi
+			rm -f "$bundle"
+		else
+			printf '%s\n' "bin/gantry: checked gantry $version against SHA256SUMS only; install gh 2.70 or later to check its build provenance too" >&2
+		fi
 	fi
 	chmod 755 "$partial"
 	mv -f "$partial" "$dest"
@@ -224,6 +318,17 @@ else
 	fetch_release gantry "gantry-$os-$arch" "$version" "$gantry_base"
 fi
 
+# The Houston this app runs with is the one its gantry release names, so
+# bumping gantry in go.mod upgrades both. A gantry older than that names
+# none, and the pin above stands. The gantry also pins that Houston's
+# digests, which carry the gantry release's provenance; an older one
+# answers --sha256 with the release tag, which names no asset.
+houston_pins=""
+if named=$("${GANTRY_BIN:-$cache/gantry}" houston-release 2>/dev/null) && is_release "$named"; then
+	houston_version=$named
+	houston_pins=$("${GANTRY_BIN:-$cache/gantry}" houston-release --sha256 2>/dev/null) || houston_pins=""
+fi
+
 if [ -n "${HOUSTON_BIN:-}" ]; then
 	[ -x "$HOUSTON_BIN" ] || die "HOUSTON_BIN ($HOUSTON_BIN) isn't executable"
 	case $HOUSTON_BIN in
@@ -233,7 +338,7 @@ if [ -n "${HOUSTON_BIN:-}" ]; then
 	mkdir -p "$cache"
 	ensure_link "$cache/houston" "$houston_abs"
 else
-	fetch_release houston "houston-$os-$arch" "$houston_version" "$houston_base"
+	fetch_release houston "houston-$os-$arch" "$houston_version" "$houston_base" "$houston_pins"
 fi
 
 export PATH="$cache:$PATH"

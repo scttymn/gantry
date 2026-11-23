@@ -3,9 +3,11 @@ package auth
 import (
  "log/slog"
  "net/http"
+ "net/http/httptest"
  "path/filepath"
  "testing"
 
+ gantryauth "github.com/scttymn/gantry/auth"
  "github.com/scttymn/gantry/sign"
  "github.com/scttymn/gantry/testkit"
  "github.com/scttymn/gantry/web"
@@ -13,7 +15,7 @@ import (
 )
 
 func TestPasswordSetupAndLogin(t *testing.T) {
- a := New(test.DB(t),sign.Signer{Key:[]byte("test cookies")},nil,"",filepath.Join(t.TempDir(),"setup-code"))
+ a := New(test.DB(t),sign.Signer{Key:[]byte("test cookies, signed with 32 bytes")},nil,"",filepath.Join(t.TempDir(),"setup-code"))
  a.Paths.AfterLogin="/account"
  rt:=web.NewRouter(slog.New(slog.DiscardHandler),nil)
  a.Routes(rt)
@@ -35,4 +37,19 @@ func TestPasswordSetupAndLogin(t *testing.T) {
  b.Get("/account/").Submit("#sign-out",nil)
  signedIn:=b.Get("/login").Submit("form",map[string]string{"email_address":"owner@example.com","password":"correct horse"})
  if signedIn.Code!=302 || b.Get("/account/").Code!=200 { t.Fatal("password login failed") }
+}
+
+// gantry sets Page.Status (422) when it redraws a form with errors.
+func TestViewsKeepPageStatus(t *testing.T) {
+ a := New(nil,sign.Signer{},nil,"","")
+ views := map[string]func(http.ResponseWriter,*http.Request,gantryauth.Page) error{
+  "Login":a.Views.Login, "Setup":a.Views.Setup, "ForgotPassword":a.Views.ForgotPassword,
+  "EditPassword":func(w http.ResponseWriter,r *http.Request,p gantryauth.Page) error { return a.Views.EditPassword(w,r,p,"token") },
+ }
+ for name,view := range views {
+  for status,want := range map[int]int{0:http.StatusOK, http.StatusUnprocessableEntity:http.StatusUnprocessableEntity} {
+   w := httptest.NewRecorder()
+   if err := view(w,httptest.NewRequest("GET","/login",nil),gantryauth.Page{Status:status}); err!=nil || w.Code!=want { t.Errorf("%s with Status %d: %d, want %d (%v)",name,status,w.Code,want,err) }
+  }
+ }
 }

@@ -15,6 +15,7 @@ An opinionated Go web framework: Rails' conventions, as idiomatic Go, built from
 - [Social login](docs/social-login.md): Apple/Google identities, verified account linking and shared sessions.
 - [Mail](docs/mail.md): app-wide delivery configuration and a persistent development inbox.
 - [Authentication](docs/auth.md): passwords, emailed codes, signup and delivery.
+- [Security](docs/security.md): trusted proxies, server timeouts, HSTS and the Content-Security-Policy.
 - [Contributing](CONTRIBUTING.md): working on Gantry itself.
 - [llms.txt](llms.txt): the documentation index for AI tools.
 
@@ -27,12 +28,14 @@ cd myapp && bin/gantry dev     # http://myapp.localhost, rebuilt as you change i
 bin/gantry g migration create_posts title:string:required body:text
 bin/gantry db migrate          # db rollback, status, seed, reset, console: in the app's container
 bin/gantry test                # the app's tests, in a throwaway copy
+bin/gantry routes --json       # the app's routes, from its router: method, path, scope, filters, cached
+bin/gantry verify              # every feature in test/features.yaml, visited as each role
 ```
-`bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release that gantry names, for this machine, into `.gantry/bin`, over https. gantry is checked against its release's `SHA256SUMS` and, with `gh` 2.70 or later installed, its build provenance (`gh attestation verify`: gantry's release workflow built that binary at that tag); Houston is checked against the digests that gantry release pins for it. A download that fails either check is refused. An app tracks one version, gantry's: bumping it in `go.mod` (as Dependabot does) upgrades Houston too, and gantry keeps `bin/gantry` itself current (commit the update it notes). Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
+`bin/gantry` is the app's command from then on. The first run downloads the gantry release in `go.mod` and the Houston release that gantry names, for this machine, into `.gantry/bin`, over https. gantry is checked against its release's `SHA256SUMS` and, with `gh` 2.70 or later installed, its build provenance (`gh attestation verify`: gantry's release workflow built that binary at that tag); Houston is checked against the digests that gantry release pins for it. A download that fails either check is refused. Without `gh` 2.70 or later, or with a gantry that pins no Houston digests, `bin/gantry` says what it couldn't check and goes on; a gantry release up to v0.17.0 has no provenance to check. Set `GANTRY_REQUIRE_PROVENANCE=1` (or `true`; in CI, say) to have it refuse each of those before downloading anything. It applies to downloads: a CLI already in `.gantry/bin` is used as it is, so delete that folder to have them checked again. An app tracks one version, gantry's: bumping it in `go.mod` (as Dependabot does) upgrades Houston too, and gantry keeps `bin/gantry` itself current (commit the update it notes). Cloning the app needs Docker, a shell and curl — not a gantry or Houston install.
 
 `bin/gantry dev` first prints development warnings with file and line numbers, then starts Houston. Open pages reload themselves when you save. `bin/gantry check` runs those checks alone; `--strict` makes convention violations fail CI. See [development checks and the editor example](docs/development.md).
 
-`bin/gantry dev`, `test`, `console` and `deploy` are Houston's commands; `bin/gantry db` and `bin/gantry task` run the app's own.
+`bin/gantry dev`, `test`, `console` and `deploy` are Houston's commands; `bin/gantry db`, `bin/gantry task` and `bin/gantry routes` run the app's own.
 
 ## Gantry Strict
 
@@ -55,4 +58,7 @@ catalog. See [the purpose and extension contract](docs/strict.md) and
 | `sign`, `mail`, `compress` | Signed tokens, email, and gzip. |
 
 ## Working on gantry
-Everything runs in Docker: `bin/go go test ./...`. The plan, with what was measured and found: [`docs/plans/gantry.md`](docs/plans/gantry.md).
+Everything runs in Docker: `bin/go go test ./...`. The plan, with what was measured and found: [`docs/plans/gantry.md`](docs/plans/gantry.md). Report a vulnerability privately, as [SECURITY.md](SECURITY.md) says, not in an issue.
+
+## License
+MIT: see [LICENSE](LICENSE). The Turbo and Stimulus that new apps vendor are MIT too, each file carrying its own notice.

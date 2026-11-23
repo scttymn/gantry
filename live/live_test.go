@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -28,7 +30,7 @@ func text(s string) templ.Component {
 	})
 }
 
-var signer = sign.Signer{Key: []byte("test")}
+var signer = sign.Signer{Key: []byte(strings.Repeat("test", 8))}
 
 // serve is a hub behind a router, as an app routes it, on a real server.
 func serve(t *testing.T, o Options) (*Hub, *httptest.Server) {
@@ -154,7 +156,7 @@ func TestBroadcast(t *testing.T) {
 // Only names the app signed can be listened to.
 func TestSigned(t *testing.T) {
 	h, srv := serve(t, Options{})
-	other := New(sign.Signer{Key: []byte("another app")}, Options{})
+	other := New(sign.Signer{Key: []byte(strings.Repeat("another app", 3))}, Options{})
 	for _, path := range []string{"/live", "/live?s=x", "/live?s=" + strings.TrimPrefix(other.URL("project:1"), "/live?s="), h.URL()} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
@@ -195,6 +197,62 @@ func TestKeepAlive(t *testing.T) {
 	}
 	if New(signer, Options{}).o.KeepAlive != 30*time.Second {
 		t.Error("the default isn't 30 s")
+	}
+}
+
+// A client that stops reading (a phone gone into a tunnel) doesn't hold its
+// stream open: once a write waits WriteTimeout, the stream ends.
+func TestStalledClient(t *testing.T) {
+	h := New(signer, Options{WriteTimeout: 100 * time.Millisecond, Buffer: 1000})
+	ended := make(chan struct{})
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Handle("GET /live", func(w http.ResponseWriter, r *http.Request) error {
+		defer close(ended)
+		return h.Serve(w, r)
+	})
+	srv := httptest.NewServer(rt.Handler())
+	t.Cleanup(func() { h.Close(); srv.Close() })
+
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: app\r\n\r\n", h.URL("s"))
+	waitFor(t, h, "s", 1)
+	big := text(strings.Repeat("x", 1<<20))
+	deadline := time.After(10 * time.Second)
+	for {
+		select {
+		case <-ended:
+			return
+		case <-deadline:
+			t.Fatal("the stream to a client that stopped reading never ended")
+		case <-time.After(10 * time.Millisecond):
+			h.Broadcast(context.Background(), "s", big)
+		}
+	}
+}
+
+// A stream outlives the server's WriteTimeout (an app's is 60 s), which
+// would otherwise cut it off.
+func TestServerWriteTimeout(t *testing.T) {
+	h := New(signer, Options{})
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Handle("GET /live", h.Serve)
+	srv := httptest.NewUnstartedServer(rt.Handler())
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	t.Cleanup(func() { h.Close(); srv.Close() })
+	l := listen(t, srv, h, "s")
+	waitFor(t, h, "s", 1)
+	time.Sleep(300 * time.Millisecond)
+	h.Broadcast(context.Background(), "s", text("late"))
+	if got := l.next(t); got != "data: late" {
+		t.Errorf("after the server's write timeout: %q", got)
+	}
+	if New(signer, Options{}).o.WriteTimeout != 10*time.Second {
+		t.Error("the default write timeout isn't 10 s")
 	}
 }
 
@@ -358,7 +416,7 @@ func TestClose(t *testing.T) {
 // arrives, until it stops.
 func TestListen(t *testing.T) {
 	ctx := context.Background()
-	h := New(sign.Signer{Key: []byte("k")}, Options{Debounce: time.Millisecond})
+	h := New(sign.Signer{Key: []byte(strings.Repeat("k", 32))}, Options{Debounce: time.Millisecond})
 	messages, stop := h.Listen("project:1", "board")
 	if h.Subscribers("project:1") != 1 || h.Subscribers("board") != 1 {
 		t.Fatal("not subscribed")

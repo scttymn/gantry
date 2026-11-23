@@ -12,16 +12,18 @@ bin/gantry dev             # http://feed.localhost, rebuilt as you change it
 bin/gantry test            # its tests, in a throwaway copy
 bin/gantry check --strict  # Gantry defaults; violations fail CI
 bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
+bin/gantry routes          # every route, from the app's router (--json for tools)
+bin/gantry verify          # each feature in test/features.yaml, visited as each role
 bin/gantry console         # sqlite3 on the dev database
 ```
 
 ## Guide for agents
 
-Start with Gantry's [application guide for agents](https://github.com/scttymn/gantry/blob/main/docs/agents.md) for framework defaults, Strict checks and verification. Use this app's pinned version and its `bin/gantry` commands; the guide on `main` may describe newer features.
+Start with [AGENTS.md](AGENTS.md): the checks to run, and Gantry's guide for agents at this app's version.
 
 ## Development checks
 
-`dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
+`dev` prints source warnings before starting Houston. Run `check` again after edits. Use the generated asset helpers instead of literal script/style URLs, render initial editor data with the page, and scope JavaScript to the form it enhances. The browser shows a collapsed warnings panel in development; set `GANTRY_DEV_WARNINGS=false` and restart to hide it. Pages reload themselves when you save; set `GANTRY_DEV_RELOAD=false` and restart to turn that off. New apps expose `Server-Timing` only in development. See Gantry’s [development guide and editor example](https://github.com/scttymn/gantry/blob/main/docs/development.md).
 
 ## Mail
 
@@ -42,7 +44,7 @@ All email uses `App.Mail`: controllers, jobs and authentication share one delive
 
 ## Generators
 ```sh
-bin/gantry g resource admin/posts title:string:required body:text
+bin/gantry g resource posts title:string:required body:text   # admin/posts: under /admin
 bin/gantry g migration add_email_to_users email:string
 bin/gantry g error-pages
 bin/gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app

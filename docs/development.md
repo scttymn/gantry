@@ -53,6 +53,25 @@ conventions, not every possible path through a program. It cannot prove that a
 custom layout is wrong or that a data fetch delays rendering; those remain
 review/performance-measurement questions.
 
+`bin/gantry check --json` prints the same scan as one JSON object, for tools
+and agents. Its field names are stable:
+
+```json
+{
+  "violations": 1,
+  "advisories": 0,
+  "findings": [
+    {"file": "app/editor.html", "line": 2, "rule": "asset-url", "severity": "error", "message": "local script or stylesheet uses a literal URL; ..."}
+  ]
+}
+```
+
+`findings` is in the order the text lists them, and empty, not null, when
+there are none. `line` is 0 for a finding about a file as a whole, and
+`severity` is `error` (a violation) or `advice`. With `--strict` it still exits
+1 on a violation, after printing. `check --rules --json` is the catalog: an
+array of objects with `id`, `severity`, `purpose` and `guidance`.
+
 For an intentional departure, add an exception to `.gantry-check.json` in the
 project root. A new app has the file, with no exceptions:
 
@@ -86,6 +105,123 @@ a link to an issue or decision record (`https://...`). With `"requireIssue":
 true`, as a new app has, the scan fails on a reason without one. Without it, as
 in a file from before the setting existed, each such reason is reported as
 `exception-reason` advice instead.
+
+## Routes and the feature map
+
+`bin/gantry routes` lists the app's routes as its router has them, by running
+the app's own `routes` command (`myapp routes`) in its container, or on this
+machine with `--local`. It's the app's answer rather than a reading of
+`app/routes.go`, so a route a package adds (auth's `Routes`) or one only
+development has (the mail inbox) is in it. `--json` prints an array of
+`web.Route`, whose field names are stable:
+
+```json
+[
+  {"method": "GET", "path": "/admin/posts/{id}", "scope": "/admin", "filters": ["auth.(*Auth).Required"], "cached": false, "mounted": false, "constrained": false}
+]
+```
+
+`path` is the whole path, its scopes' prefixes and its host included;
+`method` is empty for a route of any method. `filters` are the scope's
+pipeline, in order, named by their functions (a closure's name is the
+compiler's). `cached` is a `Cached` route the page cache serves; `mounted`, a
+plain `http.Handler` from `Mount` (files, a mounted package); `constrained`,
+a route only a `Constraint`'s requests reach. A Go test has the same list from
+`Router.Routes`.
+
+### The feature map
+
+`test/features.yaml` says what the app's features are: the routes each is made
+of, who it's for, and pages to check it by. A new app has one, with its home
+page, `/up` and `/live`:
+
+```yaml
+features:
+  - name: posts
+    routes:
+      - /posts
+      - /posts/
+    role: public
+    cacheable: false
+    visit:
+      - path: /posts
+        selector: h1
+```
+
+- `routes` are as `bin/gantry routes` lists them: `GET /posts`, or `/posts` for
+  any method. One ending in `/` is every route under it too, as a ServeMux
+  pattern is: `/posts/` has `GET /posts/{id}` and `DELETE /posts/{id}`. In a
+  `[list]`, quote a route with `{` in it.
+- `role` is `public`, `signed-in` or `admin`. Each can see what the one before
+  it can.
+- `cacheable` says its routes are `Cached` and its pages are the same for
+  everyone its role lets in.
+- `visit` lists pages to request, each with the status it answers (200 when
+  left out) and a CSS selector for an element the page has.
+
+`app/features_test.go`'s `TestFeatures` passes the app's router to
+`testkit.Verify`, so `bin/gantry test` fails when:
+
+- a route is in no feature. Routes from `Mount` (files, the development inbox)
+  are exempt.
+- a cacheable feature has a route that isn't `Cached`, or a `Cached` route is
+  in a feature that isn't cacheable.
+- a feature's role has no way to sign in (below).
+
+`bin/gantry verify` runs that test alone, verbosely: in the app's container, or
+on this machine with `--local`. The app runs in the test's process, on a test
+database, through testkit's browser. For each feature's visits, as each role
+it can sign in as:
+
+- A role the feature lets in gets the visit's status and selector, and
+  everything the page refers to loads (`testkit.Links`).
+- A role before the feature's is turned away: any answer but a 2xx.
+- On a cacheable feature, the page comes from the page cache: an `ETag` and a
+  `Last-Modified`, and a 304 when the browser sends the `ETag` back.
+- Before anything else requests a cacheable page, user 0 of each signed-in role
+  fetches it, then user 1 of that role and a public visitor do. If either is
+  shown what only user 0's pages show, a signed-in visitor's copy was cached
+  for everyone, and the run fails. Each role does this at the page's URL with
+  a `gantry-verify=<role>` query added, a cache key of its own. So each role's
+  user 0 renders the page rather than getting another role's copy, and a leak
+  only admins trigger is caught too.
+
+`g resource` and `g auth` print their feature among their next steps, to paste
+under `features` once its routes are routed. A namespaced resource's role is
+whoever its scope's filter lets in, which the generator can't know.
+
+#### Signing in as a role
+
+A new app has no sign-in, so `TestFeatures` passes `testkit.Roles{}` and the
+feature map can have only public features. After `g auth`, give it a
+`testkit.SignIn` for each role the app has. Each one signs a `testkit.Visitor`
+in as the nth (0 or 1) of two test users of that role, and returns what only
+that user's pages show, such as their email, for the cache check. Returning
+`""` skips the cache check for that role:
+
+```go
+testkit.Verify(t, rt.Handler(), rt.Routes(), "../test/features.yaml", testkit.Roles{
+	testkit.SignedIn: func(v *testkit.Visitor, n int) string {
+		email := fmt.Sprintf("member%d@example.com", n)
+		// create the user (a fixture, or the app's own query), then:
+		v.Get("/login").Submit(`form[action="/login"]`, map[string]string{"email_address": email, "password": "…"})
+		return email
+	},
+})
+```
+
+How a role signs in is the app's: its users, its sign-in form, and what makes a
+user an admin.
+
+#### An app made before the feature map
+
+Copy a new app's `test/features.yaml` and `app/features_test.go`, then:
+
+- split `App.Handler` in `app/routes.go` into `Router`, which returns the
+  `*web.Router`, and `Handler`, which returns `a.Router().Handler()`;
+- add the `routes` case and function from a new app's `cmd/<app>/main.go`.
+
+`bin/gantry test` then lists the routes the map is missing.
 
 ## Browser warnings
 
@@ -128,9 +264,11 @@ Both extend the toolchain stage's `-tags=` list, so they work only while
 Injection happens before Gantry compresses the response. Only complete HTML
 pages with a body are transformed; streams, fragments, encoded responses,
 upgraded connections, ranges and pages larger than 2 MiB pass through unchanged.
-Transformed pages are not cached. A strict CSP can block the panel's inline
-styles; terminal checks remain available. The disable setting is available for
-layouts that do not work well inside the development content area.
+Transformed pages are not cached. The panel's styles are a stylesheet at
+`/_gantry/development.css`, from the app itself, so the app's
+[Content-Security-Policy](security.md#content-security-policy) lets them in. The
+disable setting is available for layouts that do not work well inside the
+development content area.
 
 ## Reload on save
 

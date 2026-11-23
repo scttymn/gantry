@@ -12,8 +12,9 @@ patterns; it covers a growing subset of them, not every performance concern.
 
 ## 1. Read the app before changing it
 
-- Read the app's own instructions and README, then `go.mod`, `compose.yml`,
-  `Dockerfile`, `app/routes.go`, and `app/shared/layout`.
+- Read the app's own instructions (`AGENTS.md`, which `gantry new` writes) and
+  README, then `go.mod`, `compose.yml`, `Dockerfile`, `app/routes.go`, and
+  `app/shared/layout`.
 - Check the pinned Gantry version and any `replace` directive or `go.work`.
   Use the APIs and generators that version provides. The documentation on
   `main` may describe features newer than the app's dependency.
@@ -27,7 +28,13 @@ From an existing app's root:
 bin/gantry --help
 bin/gantry check --rules
 bin/gantry check
+bin/gantry routes --json
 ```
+
+`routes` is the app's routes from its own router, with each one's scope,
+filters and whether it's cached. Read it rather than inferring them from
+`app/routes.go`. `test/features.yaml` says which feature each route belongs to
+and who it's for (see [the feature map](development.md#the-feature-map)).
 
 Use the app's `bin/gantry`, which selects the CLI matching its Gantry dependency
 and the pinned Houston CLI. Cloning a generated app requires Docker, a shell
@@ -54,6 +61,7 @@ an older CLI may not have `check`.
 | Sign-in and API access | Existing auth wiring, or the `auth` / `api-tokens` recipes when missing; `auth --email-code [--signup]` for email codes | Framework password/session handling and server-side access checks |
 | Email delivery | App-wide `App.Mail`, configured once with `mail.Config`; development inbox at `/dev/inbox` | Shared delivery, safe development capture and reusable testing |
 | Background work and live updates | `jobs` and `live`, wired through the app | Existing queues, schedules and authorization for streams |
+| Proxies, timeouts and security headers | `TRUSTED_PROXIES`, the generated `http.Server` timeouts, and `rt.Security` (HSTS, `web.ContentSecurityPolicy`); see [security](security.md) | Scripts and styles from the app's files, not inline, so the policy can be enforced |
 
 For email-code login, use the [shared Auth implementation](auth.md), configure a
 shared [app mail service](mail.md) and an external code secret, and make
@@ -108,9 +116,12 @@ Use the existing development server when it is already running.
 
 Use generators for a feature when they fit. Read `bin/gantry --help` and the
 generator's printed next steps. Generated code still needs application-specific
-wiring, validation and tests. The resource generator currently targets
-`admin/<table>` and expects a shared admin controller; inspect those dependencies
-before treating its output as a complete feature.
+wiring, validation and tests. `g resource posts ...` makes a top-level resource
+and `g resource admin/posts ...` one under any namespace. Its controllers share
+`app/shared/resource`, which the first resource writes and the app owns from
+then on. A namespaced resource is routed in its namespace's scope: give that
+scope the filter that guards it, such as `a.Auth.Required` from the `auth`
+recipe, since the generator can't know it.
 
 When the change needs migrations or regenerated queries/views, use the relevant
 steps in the app's container:
@@ -174,9 +185,15 @@ Before handing over or deploying the change:
 ```sh
 bin/gantry check --strict
 bin/gantry test
+bin/gantry verify
 ```
 
 `check --strict` and the test suite are separate checks; run both in CI as well.
+`check --json` gives the findings to a tool with stable field names. A route
+you add needs a feature in `test/features.yaml`, or the tests fail. `verify`
+visits every feature's pages as each role the app can sign in as. It checks
+statuses and selectors, the page cache's headers, and that no signed-in user's
+cached page is shown to anyone else.
 Report remaining advice and justified exceptions rather than equating a zero
 exit status with no findings. Use the app's existing tests and Gantry's `testkit`
 helpers where relevant: `Links`/`Crawl` for page assets and navigation,
@@ -205,6 +222,22 @@ Within the user's deployment authorization, use the existing push-to-deploy
 workflow or `bin/gantry deploy --server --follow`. Confirm the intended commit
 is serving and check the affected live pages before reporting success. Creating
 a local development app does not itself require creating a production project.
+
+### The signing key
+
+`SECRET_KEY` signs password-reset links, flash and return-to cookies, email-code
+challenges and live-stream tokens. Outside development and test (`GANTRY_ENV`,
+which defaults to production) the app refuses to start without one of at least
+32 bytes. Generate it once with `openssl rand -hex 32` and store it as a Houston
+secret; never commit it or print it. Development and test keep a generated key
+in the database instead, so they need no setting.
+
+Upgrading: a production app deployed with a blank or short `SECRET_KEY` must set
+one before it upgrades, or it won't start. Changing the key invalidates
+outstanding reset links, flash, return-to and email-code cookies, and live-stream
+tokens; sessions are unaffected, as their cookies hold a random token rather
+than a signature. A `sign.Signer` built with a key under 32 bytes panics, so
+tests that construct one need a longer key (`strings.Repeat("test-key", 4)`).
 
 ### First-install password accounts
 
