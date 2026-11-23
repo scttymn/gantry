@@ -11,5 +11,6 @@ func DefaultRules() []Rule {
 		{ID: "raw-assets", Severity: Advice, Extensions: []string{".go"}, Purpose: "Avoid rebuilding asset serving outside Gantry's optimized pipeline", Guidance: "raw file server bypasses Gantry asset handling; use assets.Routes for scripts/styles, or document this route's separate purpose", Check: checkRawAssets},
 		{ID: "development-guard", Severity: Violation, Extensions: []string{".go"}, Purpose: "Keep development scan overhead and diagnostics out of production", Guidance: "development diagnostics must be inside a positive cfg.Development() guard; document a custom equivalent guard with an exception", Check: checkDevelopmentGuard},
 		{ID: "environment-default", Severity: Violation, Extensions: []string{".go"}, Purpose: "Use Gantry's production defaults unless development is explicitly selected", Guidance: "GANTRY_ENV should default to production; opt into development explicitly", Check: checkEnvironment},
+		{ID: "migration-down", Severity: Violation, Extensions: []string{".sql"}, Purpose: "Keep rollback and testkit.Migrations checking every migration's undo", Guidance: "migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible", Check: checkMigrationDown},
 	}
 }

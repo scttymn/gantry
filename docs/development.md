@@ -8,7 +8,7 @@ development features. This guide describes the checks currently implemented;
 block the server. Run `bin/gantry check` again after edits, or use
 `bin/gantry check --strict` in CI (exit 1 when unsuppressed violations are found; advice does not fail CI).
 
-The checks read local `.html`, `.templ`, `.js`, and Go source files, without starting a
+The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
 built assets, Git metadata and test fixtures, and do not follow symlinks.
 
@@ -34,6 +34,7 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `asset-url` | Violation | Content-versioned local scripts and styles through the asset pipeline |
 | `development-guard` | Violation | Calls to `web.Development` and `web.Timing` inside a positive `cfg.Development()` guard |
 | `environment-default` | Violation | The config helper's `GANTRY_ENV` fallback is `production` |
+| `migration-down` | Violation | Each migration in `db/migrations` has a `-- +goose Down` section, empty when it can't be undone |
 | `shared-layout` | Advice | Full HTML page shells belong in `app/shared`, rather than individual app views |
 | `raw-assets` | Advice | Review `http.FileServer`/`FileServerFS` routes that bypass the asset pipeline |
 | `form-scope` | Advice | Form enhancements target an explicit form rather than the page's first form |

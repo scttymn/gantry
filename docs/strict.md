@@ -86,8 +86,9 @@ custom rule gets the same exact-file, reason-required exception policy.
 
 ## Current coverage
 
-The current six rules cover assets, broad form selection, shared page shells,
-raw file servers, development guards and environment fallbacks. Their exact
+The current seven rules cover assets, broad form selection, shared page shells,
+raw file servers, development guards, environment fallbacks and migrations'
+down sections. Their exact
 limits and exception syntax are in [the development guide](development.md).
 Page-cache eligibility, image-pipeline adoption and render-blocking data fetches
 are future coverage areas, not checks that exist today. Some will need runtime
