@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,15 +23,15 @@ import (
 // (a session's name, a CSRF token) mustn't be cached; that part belongs in
 // a fragment of its own.
 //
-// Only 200s are kept, never a response that sets a cookie, and never one to
-// a request with an Authorization header. Browsers are told no-cache with
-// an ETag and a Last-Modified, so they check back each time and get a 304
-// when nothing changed. Last-Modified is when the page last changed: its
-// first render since the app started (a deploy), or the first render that
-// came out different from the one before (an edit in the admin, say).
-// Rendered again the same, it keeps its date. It's there for what's
-// between a browser and the app: a proxy that may rewrite HTML (Cloudflare)
-// drops ETags, and passes Last-Modified on.
+// Only 200s are kept, never a response that sets a cookie or says private
+// or no-store, and never one to a request with an Authorization header.
+// Browsers are told no-cache with an ETag and a Last-Modified, so they check
+// back each time and get a 304 when nothing changed. Last-Modified is when
+// the page last changed: its first render since the app started (a
+// deploy), or the first render that came out different from the one before
+// (an edit in the admin, say). Rendered again the same, it keeps its date.
+// It's there for what's between a browser and the app: a proxy that may
+// rewrite HTML (Cloudflare) drops ETags, and passes Last-Modified on.
 type PageCache struct {
 	// Version changes whenever the data does (db.DB.Version); a page made
 	// under another version is stale. nil, or an error: pages go by MaxAge
@@ -88,11 +89,12 @@ func (c *PageCache) maxEntries() int {
 	return 1000
 }
 
-// Handler serves next's GETs and HEADs from the cache, keyed by path and
-// query. Anything else goes straight to next, as does a request with
-// credentials (an Authorization header) and one whose response already sets
-// a cookie (a filter before the cache took a flash, say): neither is the
-// same for every visitor. A filter that decides who may see a page goes
+// Handler serves next's GETs and HEADs from the cache, keyed by host, path
+// and query; a HEAD shares its GET's page. Anything else goes straight to
+// next, as does a request with credentials (an Authorization header), one
+// Skip names, and one whose response already sets a cookie (a filter before
+// the cache took a flash, say): none is the same for every visitor. A
+// filter that decides who may see a page goes
 // outside it, as Cached puts a scope's: inside, a kept page is served
 // without it.
 func (c *PageCache) Handler(next http.Handler) http.Handler {
@@ -109,7 +111,7 @@ func (c *PageCache) Handler(next http.Handler) http.Handler {
 				version, versioned = v, true
 			}
 		}
-		key := r.URL.RequestURI()
+		key := strings.ToLower(r.Host) + r.URL.RequestURI() // a host may be another site (Router.Hosts)
 		page := c.fresh(key, version, versioned)
 		if page == nil {
 			var own *cachedPage
@@ -160,10 +162,14 @@ func (c *PageCache) fresh(key string, version int64, versioned bool) *cachedPage
 func (c *PageCache) make(key string, version int64, next http.Handler, r *http.Request) *cachedPage {
 	// The render is shared by whoever waits on it, so it isn't cut short
 	// when this request's client goes.
+	// A HEAD is rendered as the GET it shares a page with: its own render
+	// may have no body (http.ServeContent writes none).
 	rec := &recorder{header: http.Header{}, status: http.StatusOK}
-	next.ServeHTTP(rec, r.Clone(context.WithoutCancel(r.Context())))
+	get := r.Clone(context.WithoutCancel(r.Context()))
+	get.Method = http.MethodGet
+	next.ServeHTTP(rec, get)
 	page := &cachedPage{status: rec.status, header: rec.header, body: rec.body.Bytes(), version: version, made: c.now()}
-	if rec.status != http.StatusOK || len(rec.header.Values("Set-Cookie")) > 0 || rec.header.Get("Content-Encoding") != "" {
+	if rec.status != http.StatusOK || len(rec.header.Values("Set-Cookie")) > 0 || rec.header.Get("Content-Encoding") != "" || private(rec.header) {
 		return page // for this request alone, never kept
 	}
 	page.kept = true
@@ -252,6 +258,20 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 	if r.Method != http.MethodHead {
 		w.Write(body)
 	}
+}
+
+// private reports whether the response's Cache-Control keeps it out of a
+// cache shared by visitors: private, or no-store.
+func private(h http.Header) bool {
+	for _, v := range h.Values("Cache-Control") {
+		for d := range strings.SplitSeq(v, ",") {
+			name, _, _ := strings.Cut(strings.TrimSpace(d), "=")
+			if strings.EqualFold(name, "private") || strings.EqualFold(name, "no-store") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // unchanged reports whether the browser's copy of p is p, by its ETag when

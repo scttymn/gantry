@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -81,6 +82,17 @@ func newCached(t *testing.T) *cached {
 		who := r.Header.Get("X-Who")
 		http.SetCookie(w, &http.Cookie{Name: "who", Value: who})
 		io.WriteString(w, "for "+who)
+		return nil
+	})
+	rt.Cached("GET /file", func(w http.ResponseWriter, r *http.Request) error {
+		c.renders.Add(1)
+		http.ServeContent(w, r, "file.txt", time.Time{}, strings.NewReader("the file"))
+		return nil
+	})
+	rt.Cached("GET /cache-control", func(w http.ResponseWriter, r *http.Request) error {
+		c.renders.Add(1)
+		w.Header().Set("Cache-Control", r.URL.Query().Get("is"))
+		io.WriteString(w, "said "+r.URL.Query().Get("is"))
 		return nil
 	})
 	rt.Cached("POST /page", page)
@@ -221,6 +233,47 @@ func TestPageCache(t *testing.T) {
 		}
 		if next := c.get("/flash/page"); strings.Contains(next.Body.String(), "saved") {
 			t.Fatalf("the next visitor got the flash: %q", next.Body)
+		}
+	})
+	t.Run("each host is its own page", func(t *testing.T) {
+		c := newCached(t)
+		c.get("http://one.example/page")
+		c.get("http://two.example/page")
+		if c.renders.Load() != 2 {
+			t.Fatal("two hosts shared a page")
+		}
+		if c.get("http://ONE.example/page"); c.renders.Load() != 2 {
+			t.Fatal("a host's page wasn't kept, whatever its case")
+		}
+	})
+	t.Run("a HEAD that misses keeps the whole page, for the GET after", func(t *testing.T) {
+		c := newCached(t)
+		if head := do(c.h, "HEAD", "/file", nil); head.Code != 200 || head.Body.Len() != 0 {
+			t.Fatalf("HEAD: %d %q", head.Code, head.Body)
+		}
+		if got := c.get("/file"); got.Body.String() != "the file" || c.renders.Load() != 1 {
+			t.Fatalf("GET after HEAD: %d %q, renders %d", got.Code, got.Body, c.renders.Load())
+		}
+	})
+	for _, said := range []string{"private", "no-store", "private, max-age=60", "max-age=60, No-Store", `no-cache="Set-Cookie", private`} {
+		t.Run("a response that says "+said+" is never kept", func(t *testing.T) {
+			c := newCached(t)
+			for range 2 {
+				if got := c.get("/cache-control?is=" + url.QueryEscape(said)); got.Header().Get("Cache-Control") != said {
+					t.Fatalf("%v", got.Header())
+				}
+			}
+			if c.renders.Load() != 2 {
+				t.Fatal("kept")
+			}
+		})
+	}
+	t.Run("a response that says only max-age is kept", func(t *testing.T) {
+		c := newCached(t)
+		c.get("/cache-control?is=max-age%3D60")
+		c.get("/cache-control?is=max-age%3D60")
+		if c.renders.Load() != 1 {
+			t.Fatalf("%d renders", c.renders.Load())
 		}
 	})
 	t.Run("an error page is never kept", func(t *testing.T) {

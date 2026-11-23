@@ -76,8 +76,9 @@ that purpose if Strict flags it.
 
 Page caching is an explicit application decision. Do not wrap account pages,
 personalized responses or an entire authenticated router in a public page cache.
-Its key is the path and query, not the user's identity. `Cached` runs its
-scope's filters before the cache on every request, so `auth.Required` still
+Its key is the host, path and query, not the user's identity, and a response
+that says `Cache-Control: private` or `no-store` is never kept. `Cached` runs
+its scope's filters before the cache on every request, so `auth.Required` still
 turns away whoever it would, but everyone it lets in shares one copy of the
 page: cache a page behind it only when it's the same for every member, never
 one that reads `auth.Current`. Requests with an `Authorization` header and
