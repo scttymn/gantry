@@ -33,31 +33,33 @@
 - **Measured, not hoped for.** Every batch ends with the numbers.
 
 ## Decisions
+Libraries are named by module path, and go.mod requires each one (`docs_test.go` checks). A decision since replaced keeps its row, marked **Superseded** with what's used instead.
+
 | Need | Choice | Why |
 |---|---|---|
 | Routing | `net/http` ServeMux, with a `Resources` helper for the seven REST routes | Methods and path values are built in; no dependency |
 | Handlers | `func(w, r) error` | One place turns errors into pages: `sql.ErrNoRows` → 404, validation errors → 422 |
-| Views | templ, with Turbo and Stimulus by default (changed from htmx on 2026-09-29: see `mission-control.md`, G3); htmx stays supported | Compiled and type-safe, so a wrong field is a compile error; no Node. Turbo and Stimulus are Rails' default, and give fast navigation, live updates and a convention for an app's own JavaScript |
-| Postgres | pgx/v5 through `database/sql` (`pgx/stdlib`) | The fastest driver, behind the same interface SQLite uses |
-| SQLite | modernc.org/sqlite | Pure Go, so the static binary runs on `scratch` |
-| IDs | `int64` by default; UUIDv7 per table when asked (`gantry g resource post --uuid`) | `int64` is the least code, the smallest index, and SQLite's own rowid. UUIDv7 is for rows whose URLs shouldn't reveal a count: made in Go (google/uuid) so both engines behave alike, stored as `uuid` on Postgres and a 16-byte blob on SQLite |
+| Views | templ (`github.com/a-h/templ`), with Turbo and Stimulus by default (changed from htmx on 2026-09-29: see `mission-control.md`, G3); htmx stays supported | Compiled and type-safe, so a wrong field is a compile error; no Node. Turbo and Stimulus are Rails' default, and give fast navigation, live updates and a convention for an app's own JavaScript |
+| Postgres | pgx (`github.com/jackc/pgx/v5`) through `database/sql` (its `stdlib` package) | The fastest driver, behind the same interface SQLite uses |
+| SQLite | `modernc.org/sqlite` | Pure Go, so the static binary runs on `scratch` |
+| IDs | `int64` by default; UUIDv7 per table when asked (`gantry g resource post --uuid`). **Superseded in part:** UUIDv7 wasn't built; there's no `--uuid`, and every table's ID is `int64` | `int64` is the least code, the smallest index, and SQLite's own rowid. UUIDv7 is for rows whose URLs shouldn't reveal a count: made in Go (`github.com/google/uuid`) so both engines behave alike, stored as `uuid` on Postgres and a 16-byte blob on SQLite |
 | Queries | sqlc, with `sql_package: database/sql` for both engines | You write SQL and get typed Go, with generated code the same shape on either engine |
-| Migrations | goose, with migrations embedded | Works on both; the framework's migrations and the app's each have their own version table |
+| Migrations | goose (`github.com/pressly/goose/v3`), with migrations embedded | Works on both; the framework's migrations and the app's each have their own version table |
 | Sessions | a `sessions` table owned by `auth` (Rails 8's design), with an opaque random token whose hash is stored | "Sign out everywhere" needs sessions by user, which a generic store (scs) doesn't give |
 | Flash, return-to | signed cookies, by gantry's `sign` (the POC's purpose-bound HMAC signer) | No server state for one-page messages; 60 tested lines, instead of gorilla/securecookie |
 | CSRF | `http.CrossOriginProtection` (Go 1.25+) | Standard library; no tokens in forms |
 | Passwords | bcrypt, with rate limits on login | argon2id takes about 64 MB per hash, which breaks the memory ceiling on small hosts |
-| TOTP | pquerna/otp | Standard, and small |
-| Passkeys | go-webauthn/webauthn | The maintained Go WebAuthn library |
-| OAuth | x/oauth2, with coreos/go-oidc for OIDC providers (Google, Apple, Microsoft); plain OAuth2 for GitHub | Two focused libraries instead of goth's 60 providers and gorilla sessions |
-| Apple's client secret | golang-jwt/jwt v5 (an ES256 JWT) | Apple requires one |
-| Mail | wneessen/go-mail; development logs mail to the console | SMTP, maintained |
-| Forms | go-playground/form to decode; validation is plain Go methods (`Validate() web.Errors`) | Reflection only when a form is submitted; rules are code you can read |
-| Assets | embedded files served under digested names: the POC's `assets`, made a library (CSS `url()` rewriting, tdewolff/minify, gzipped once at startup) | Immutable caching with no build step. hashfs does only the naming, so it isn't used |
-| Config | environment variables into a typed struct (caarlos0/env) | Houston and compose already speak environment variables |
+| TOTP | `github.com/pquerna/otp`. **Superseded:** not built; TOTP is still planned, and chooses its library when it is | Standard, and small |
+| Passkeys | `github.com/go-webauthn/webauthn`. **Superseded:** not built; passkeys are still planned, and choose their library when they are | The maintained Go WebAuthn library |
+| OAuth | `golang.org/x/oauth2`, with `github.com/coreos/go-oidc/v3` for OIDC providers (Google, Apple, Microsoft); plain OAuth2 for GitHub | Two focused libraries instead of goth's 60 providers and gorilla sessions |
+| Apple's client secret | `github.com/golang-jwt/jwt/v5` (an ES256 JWT). **Superseded:** `github.com/go-jose/go-jose/v4` and its `jwt` package sign it (`auth/social_provider.go`) | Apple requires one |
+| Mail | `github.com/wneessen/go-mail`; development logs mail to the console | SMTP, maintained |
+| Forms | `github.com/go-playground/form` to decode; validation is plain Go methods (`Validate() web.Errors`). **Superseded:** `web.Sent` reads a form's fields with `net/http`, and there's no decoding library | Reflection only when a form is submitted; rules are code you can read |
+| Assets | embedded files served under digested names: the POC's `assets`, made a library (CSS `url()` rewriting, `github.com/tdewolff/minify/v2`, gzipped once at startup) | Immutable caching with no build step. hashfs does only the naming, so it isn't used |
+| Config | environment variables into a typed struct (`github.com/caarlos0/env`). **Superseded:** an app's `config` package reads them through a `getenv` function (`os.Getenv`, or a test's), with no library | Houston and compose already speak environment variables |
 | Logging | log/slog | Standard library |
-| CLI | cobra | Houston already uses it |
-| Tests | `testing` and httptest, goquery for HTML, fixtures in YAML | The POC's toolkit, generalised |
+| CLI | `github.com/spf13/cobra`. **Superseded:** the standard library's `flag` | Houston already uses it |
+| Tests | `testing` and httptest, `github.com/PuerkitoBio/goquery` for HTML, fixtures in YAML | The POC's toolkit, generalised |
 
 ## An app's layout
 The layout is what `gantry new` writes and what every generator follows.
