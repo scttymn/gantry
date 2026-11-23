@@ -1,7 +1,7 @@
 # Stages: toolchain (Go, templ, sqlc, psql and pg_dump), dev (the mounted code,
-# rebuilt on change), test, and production (a static binary on an empty
-# image). Houston builds dev for gantry dev, test for gantry test, and
-# production to deploy.
+# rebuilt on change), test, and production (a static binary without the
+# development checks, on an empty image). Houston builds dev for gantry dev,
+# test for gantry test, and production to deploy.
 
 FROM golang:1.27-bookworm AS toolchain
 COPY --from=sqlc/sqlc:1.31.1 /workspace/sqlc /usr/local/bin/sqlc
@@ -44,6 +44,9 @@ RUN --mount=type=cache,id=shop-assets,target=/cache/assets,sharing=locked \
 CMD ["sh", "-c", "go vet ./... && go test ./..."]
 
 FROM toolchain AS build
+# nodevcheck: the production binary leaves out the development checks
+# (web.Development's source scanner); dev keeps them.
+ENV GOFLAGS="${GOFLAGS},nodevcheck"
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .

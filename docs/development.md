@@ -112,6 +112,16 @@ CLI checks and timing remain available. Production and test environments do not
 activate diagnostics. Apps with a custom HTTP stack outside Gantry's router can
 opt into `web.Development` explicitly inside a development guard.
 
+A new app's Dockerfile builds production with `-tags nodevcheck`, so the
+deployed binary contains no source scanner at all; the dev stage keeps it.
+Under the tag `web.Development` is `web.Timing` alone and
+`web.DevelopmentWithRules` doesn't exist. An existing app adopts it by adding
+this line to its Dockerfile's build stage, after `FROM toolchain AS build`:
+
+```dockerfile
+ENV GOFLAGS="${GOFLAGS},nodevcheck"
+```
+
 Injection happens before Gantry compresses the response. Only complete HTML
 pages with a body are transformed; streams, fragments, encoded responses,
 upgraded connections, ranges and pages larger than 2 MiB pass through unchanged.

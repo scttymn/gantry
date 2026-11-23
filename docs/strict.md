@@ -77,8 +77,10 @@ findings, err := devcheck.ScanWithRules(projectRoot, rules)
 This small text-match example illustrates the API, not a built-in recommendation.
 An HTTP stack outside Gantry’s router can pass the same registry to
 `web.DevelopmentWithRules(handler, projectRoot, logger, rules)` inside its
-`cfg.Development()` guard. The standard CLI uses the built-in registry; project
-extensions require a compiled caller rather than arbitrary code in JSON.
+`cfg.Development()` guard. A build with `-tags nodevcheck`, as a new app's
+production build is, has no `web.DevelopmentWithRules`. The standard CLI uses
+the built-in registry; project extensions require a compiled caller rather than
+arbitrary code in JSON.
 
 Registries reject duplicate IDs, unknown severities and missing metadata or
 checks. Invalid source offsets and rule execution errors fail the scan with the
