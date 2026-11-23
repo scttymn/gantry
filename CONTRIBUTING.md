@@ -5,7 +5,14 @@ For agents building applications with Gantry, start with the
 
 Run the framework tests in Docker with `bin/go go test ./...` and static checks
 with `bin/go go vet ./...`. Generator changes must update the golden fixtures
-and keep generated apps passing tests and Gantry Strict.
+and keep generated apps passing tests and Gantry Strict. `TestGolden`
+(`cmd/gantry/golden_test.go`) pins what every generator writes and fails on a
+template no case renders; `bin/go go test ./cmd/gantry -update` rewrites the
+goldens. `TestGeneratorMatrix` runs every generator on SQLite and Postgres in
+a new app, with its next steps done, and fails on a Strict finding, sqlc or
+templ failing, `go vet`, the app's tests, or stale generated code. It builds
+the apps only where templ and sqlc are installed, as in `bin/go`; elsewhere
+it generates and scans them.
 
 `db` has SQLite two ways: compiled from C (`db/sqlite_c.go`, gantry's own
 binding) when the build has cgo, as an app's does, and translated to Go

@@ -103,7 +103,7 @@ jobs:
   # The release job's build and probe, on a made-up tag: the four CLI binaries
   # cross-compiled by the Dockerfile, and the tag set in them by -X
   # main.releaseVersion, which no test reaches. That a new app builds and
-  # passes its tests against the checkout is TestNewAppBuilds'.
+  # passes its tests against the checkout is TestGeneratorMatrix's.
   release-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/testkit"
 )
 
 func TestDevelopmentChecks(t *testing.T) {
@@ -71,10 +75,6 @@ func TestNewAppDevelopmentDefaults(t *testing.T) {
 		t.Fatal(stderr)
 	}
 	dir := filepath.Join(root, "shop")
-	warnings, err := checkDevelopment(dir)
-	if err != nil || len(warnings) != 0 {
-		t.Fatalf("%v: %+v", err, warnings)
-	}
 	data, err := os.ReadFile(filepath.Join(dir, "app/shared/layout/layout.templ"))
 	if err != nil {
 		t.Fatal(err)
@@ -192,6 +192,52 @@ func TestCheckGenerated(t *testing.T) {
 	lookPath = func(name string) (string, error) { return "", exec.ErrNotFound }
 	if code, out := check(); code != 1 || !strings.Contains(out, "templ isn't installed") {
 		t.Errorf("no templ: exit %d\n%s", code, out)
+	}
+}
+
+// With the real templ and sqlc, check --generated names a hand edit to each
+// one's output by the source to edit.
+func TestCheckGeneratedTools(t *testing.T) {
+	for _, tool := range []string{"templ", "sqlc"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skip(tool + " isn't installed: run it in the toolchain (bin/go)")
+		}
+	}
+	dir := shopApp(t, "sqlite")
+	generate(t, dir, "posts", "title:string")
+	d := testkit.DB(t, func(ctx context.Context, d *db.DB) error {
+		return d.Migrate(ctx, os.DirFS(filepath.Join(dir, "db", "migrations")), "app_migrations")
+	})
+	schema, err := d.Schema(t.Context(), "app_migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0o644)
+	for _, tool := range []string{"sqlc", "templ"} {
+		cmd := exec.Command(tool, "generate")
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s generate: %v\n%s", tool, err, out)
+		}
+	}
+	if code, out, stderr := gantry(t, dir, "check", "--generated"); code != 0 {
+		t.Fatalf("fresh: exit %d\n%s%s", code, out, stderr)
+	}
+	for _, file := range []string{"app/posts/index_templ.go", "app/models/posts.sql.go"} {
+		b, err := os.ReadFile(filepath.Join(dir, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(filepath.Join(dir, file), append(b, "// by hand\n"...), 0o644)
+	}
+	code, out, _ := gantry(t, dir, "check", "--generated")
+	for _, want := range []string{"edit app/posts/index.templ,", "edit app/models/posts.sql,", "2 stale"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
 	}
 }
 
