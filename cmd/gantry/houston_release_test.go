@@ -33,8 +33,7 @@ func TestBinstubUsesTheHoustonGantryNames(t *testing.T) {
 	rs := newReleaseServer(t)
 	rs.put("gantry", "v0.20.0", "gantry-"+osName+"-"+arch, gantryNaming("v9.9.9"), "")
 	rs.put("houston", "v9.9.9", "houston-"+osName+"-"+arch, []byte("#!/bin/sh\necho houston-named\n"), "")
-	gBase, hBase := rs.bases()
-	code, out := runStub(t, dir, stubEnv(gBase, hBase), "dev")
+	code, out := runStub(t, dir, rs.env(), "dev")
 	if code != 0 || !strings.Contains(out, "houston-named") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}

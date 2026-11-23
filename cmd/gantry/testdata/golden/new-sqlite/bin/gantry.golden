@@ -2,8 +2,11 @@
 # Downloads this app's gantry (the release go.mod requires) and the Houston
 # release that gantry names, then runs gantry. A gantry checkout in go.mod's
 # replace, or in go.work, uses that checkout's bin/gantry instead.
-# Assets are gantry-$os-$arch and houston-$os-$arch, checked against the
-# release's SHA256SUMS. Both land in .gantry/bin, which git ignores.
+# Assets are gantry-$os-$arch and houston-$os-$arch, downloaded over https
+# and checked against the release's SHA256SUMS. gh (2.70 or later), when
+# installed, also checks gantry's build provenance: an attestation that
+# gantry's release workflow built that binary at that tag. Both land in
+# .gantry/bin, which git ignores.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -12,6 +15,8 @@ cache=$root/.gantry/bin
 
 # The Houston for a gantry release older than gantry houston-release.
 houston_version="v0.5.11"
+# The last gantry release published without build provenance.
+unattested=v0.17.0
 gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
 houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
 
@@ -43,6 +48,20 @@ esac
 
 is_release() {
 	printf '%s\n' "$1" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+# newer_than a b: whether release tag a comes after release tag b.
+newer_than() {
+	printf '%s %s\n' "$1" "$2" | awk '{
+		split(substr($1, 2), a, ".")
+		split(substr($2, 2), b, ".")
+		for (i = 1; i <= 3; i++) {
+			if (a[i] + 0 != b[i] + 0) {
+				exit !(a[i] + 0 > b[i] + 0)
+			}
+		}
+		exit 1
+	}'
 }
 
 d=$root
@@ -155,6 +174,11 @@ file_sha256() {
 	printf '%s\n' "$out" | awk '{print tolower($1)}'
 }
 
+# download file url. --proto keeps every request, redirects too, on https.
+download() {
+	curl -fsSL --proto =https --retry 3 --retry-delay 1 -o "$1" "$2" 2>/dev/null
+}
+
 # fetch_release name remote version base. remote is the release filename
 # (gantry-$os-$arch, houston-$os-$arch). The copy kept locally is named
 # with the version, so a failed upgrade cannot replace the previous CLI.
@@ -176,15 +200,19 @@ fetch_release() {
 		ensure_link "$link" "$kept"
 		return 0
 	fi
+	case $base in
+	https://*) ;;
+	*) die "$name's release base $base isn't https" ;;
+	esac
 	partial=$cache/.$kept.$$
 	sums=$cache/.$kept.sums.$$
 	url=$base/$version/$remote
 	sums_url=$base/$version/SHA256SUMS
-	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$partial" "$url" 2>/dev/null; then
+	if ! download "$partial" "$url"; then
 		rm -f "$partial"
 		die "$name $version has no $os/$arch build at $url"
 	fi
-	if ! curl -fsSL --retry 3 --retry-delay 1 -o "$sums" "$sums_url" 2>/dev/null; then
+	if ! download "$sums" "$sums_url"; then
 		rm -f "$partial" "$sums"
 		die "$name $version published no SHA256SUMS at $sums_url"
 	fi
@@ -202,6 +230,27 @@ fetch_release() {
 	if [ "$got" != "$want" ]; then
 		rm -f "$partial" "$sums"
 		die "$remote from $version failed its checksum"
+	fi
+	# The bundle comes from the same release, but only gantry's release
+	# workflow, running for this tag, could have signed it.
+	if [ "$name" = gantry ] && newer_than "$version" "$unattested"; then
+		if gh attestation verify --help 2>/dev/null | grep -q -- --source-ref; then
+			bundle=$cache/.$kept.provenance.$$
+			bundle_url=$base/$version/provenance.sigstore.json
+			if ! download "$bundle" "$bundle_url"; then
+				rm -f "$partial" "$sums" "$bundle"
+				die "gantry $version published no build provenance at $bundle_url"
+			fi
+			if ! out=$(gh attestation verify "$partial" --bundle "$bundle" --repo scttymn/gantry \
+				--signer-workflow scttymn/gantry/.github/workflows/release.yml \
+				--source-ref "refs/tags/$version" 2>&1); then
+				rm -f "$partial" "$sums" "$bundle"
+				die "$remote from $version failed its build provenance check: $out"
+			fi
+			rm -f "$bundle"
+		else
+			printf '%s\n' "bin/gantry: checked gantry $version against SHA256SUMS only; install gh 2.70 or later to check its build provenance too" >&2
+		fi
 	fi
 	chmod 755 "$partial"
 	mv -f "$partial" "$dest"
