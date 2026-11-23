@@ -63,7 +63,7 @@ func TestServer(t *testing.T) {
 		s, _ := newServer(t, 80)
 		largest := get(s, "/photos/k/1600w-q80.webp").Body.Bytes()
 		rec := get(s, "/photos/k/2400w-q80.webp")
-		if rec.Code != 200 || string(rec.Body.Bytes()) != string(largest) {
+		if rec.Code != 200 || rec.Body.String() != string(largest) {
 			t.Errorf("%d, %d bytes", rec.Code, rec.Body.Len())
 		}
 		if s.Pipeline.Has("k", 2400, 80) {

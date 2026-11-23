@@ -49,13 +49,12 @@ type Options struct {
 // Queue is an app's jobs: the ones it defines, and the workers that run
 // them (Run).
 type Queue struct {
-	d       *db.DB
-	o       Options
-	mu      sync.Mutex
-	defs    map[string]runner
-	recur   []*recurring
-	wake    map[string]chan struct{}
-	process string
+	d     *db.DB
+	o     Options
+	mu    sync.Mutex
+	defs  map[string]runner
+	recur []*recurring
+	wake  map[string]chan struct{}
 }
 
 // New is a queue set on d, its tables brought up to date.
