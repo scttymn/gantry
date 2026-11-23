@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/devcheck"
 )
 
 // goldenCase is a generator's output, pinned: what its command writes or
@@ -66,7 +68,8 @@ func goldenCases() []goldenCase {
 
 // What every generator writes is pinned, on each engine: a change to it is a
 // change to every app made or generated into next, so it shows up here, and
-// in review. Every template is rendered by a case, so none changes unseen.
+// in review. Every template is rendered by a case, so none changes unseen,
+// and what each case writes passes Strict.
 func TestGolden(t *testing.T) {
 	opened := &openedFS{FS: templates, names: map[string]bool{}}
 	templates = opened
@@ -126,6 +129,15 @@ func TestGolden(t *testing.T) {
 				}
 			}
 			compareTree(t, got, filepath.Join("testdata", "golden", c.golden))
+			// Scanned where it's written: devcheck skips testdata, and a
+			// .golden file matches no rule's extension.
+			warnings, err := devcheck.Scan(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, w := range warnings {
+				t.Errorf("Strict %s at %s:%d: %s; fix its template in cmd/gantry/templates", w.Rule, w.File, w.Line, w.Message)
+			}
 		})
 	}
 	if ran < len(cases) {
