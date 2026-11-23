@@ -77,6 +77,12 @@ jobs:
           (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
           grep -qx "	github.com/scttymn/gantry $GITHUB_REF_NAME" "$probe/probe/go.mod" \
             || { echo "a new app's go.mod doesn't require $GITHUB_REF_NAME:"; cat "$probe/probe/go.mod"; exit 1; }
+      - name: The binary pins its Houston release's digests
+        run: |
+          houston=$(dist/gantry-linux-amd64 houston-release)
+          published=$(curl -fsSL --proto =https --retry 3 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+          pinned=$(dist/gantry-linux-amd64 houston-release --sha256)
+          [ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
       - name: Build provenance
         id: provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2

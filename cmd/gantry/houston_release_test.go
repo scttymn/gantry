@@ -2,8 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -20,9 +23,80 @@ func TestHoustonReleaseCommand(t *testing.T) {
 	}
 }
 
-// gantryNaming is a gantry release that names its Houston release.
+// Houston's digests come with the gantry release, which gh can attest, so a
+// replaced Houston release can't pass on its own SHA256SUMS.
+func TestHoustonReleaseSHA256Command(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"houston-release", "--sha256"}, t.TempDir(), &out, &errOut); code != 0 {
+		t.Fatalf("gantry houston-release --sha256 = %d %q", code, errOut.String())
+	}
+	line := regexp.MustCompile(`\A[0-9a-f]{64}  houston-(darwin|linux)-(amd64|arm64)\z`)
+	seen := map[string]bool{}
+	for _, l := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
+		if !line.MatchString(l) {
+			t.Errorf("not a SHA256SUMS line for a houston asset: %q", l)
+			continue
+		}
+		seen[strings.Fields(l)[1]] = true
+	}
+	for _, asset := range []string{"houston-darwin-amd64", "houston-darwin-arm64", "houston-linux-amd64", "houston-linux-arm64"} {
+		if !seen[asset] {
+			t.Errorf("no digest for %s in\n%s", asset, out.String())
+		}
+	}
+}
+
+// gantryNaming is a gantry release that names its Houston release, from
+// before gantry pinned Houston's digests: it answers houston-release the same
+// whatever follows.
 func gantryNaming(houston string) []byte {
 	return []byte("#!/bin/sh\nif [ \"$1\" = houston-release ]; then echo " + houston + "; exit 0; fi\necho gantry-ok\nhouston\n")
+}
+
+// gantryPinning is a gantry release that names its Houston release and pins
+// its digests (sums, in SHA256SUMS form).
+func gantryPinning(houston, sums string) []byte {
+	return []byte("#!/bin/sh\nif [ \"$1 $2\" = 'houston-release --sha256' ]; then printf '%s' '" + sums + "'; exit 0; fi\n" +
+		"if [ \"$1\" = houston-release ]; then echo " + houston + "; exit 0; fi\necho gantry-ok\nhouston\n")
+}
+
+func TestBinstubChecksHoustonAgainstGantrysDigests(t *testing.T) {
+	osName, arch := platform(t)
+	asset := "houston-" + osName + "-" + arch
+	good := []byte("#!/bin/sh\necho houston-good\n")
+	sum := sha256.Sum256(good)
+	pins := hex.EncodeToString(sum[:]) + "  " + asset + "\n"
+	for _, tc := range []struct {
+		name    string
+		gantry  []byte
+		houston []byte // served with a SHA256SUMS line that matches it
+		want    string
+		ok      bool
+	}{
+		{"pinned", gantryPinning("v9.9.9", pins), good, "houston-good", true},
+		{"replaced release", gantryPinning("v9.9.9", pins), []byte("#!/bin/sh\necho houston-evil\n"), "failed its checksum", false},
+		{"gantry pins none", gantryNaming("v9.9.9"), good, "checked against its own release's SHA256SUMS", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeMod(t, dir, "v0.20.0", "")
+			installBinstub(t, dir)
+			rs := newReleaseServer(t)
+			rs.put("gantry", "v0.20.0", "gantry-"+osName+"-"+arch, tc.gantry, "")
+			rs.put("houston", "v9.9.9", asset, tc.houston, "")
+			code, out := runStub(t, dir, rs.env(), "dev")
+			if (code == 0) != tc.ok || !strings.Contains(out, tc.want) || strings.Contains(out, "houston-evil") {
+				t.Fatalf("exit %d\n%s", code, out)
+			}
+			_, err := os.Stat(filepath.Join(dir, ".gantry", "bin", "houston-v9.9.9-"+osName+"-"+arch))
+			if tc.ok != (err == nil) {
+				t.Errorf("installed = %v, want %v", err == nil, tc.ok)
+			}
+			if pinned := tc.name != "gantry pins none"; pinned && strings.Contains(out, "own release's SHA256SUMS") {
+				t.Errorf("warned with gantry's digests in hand:\n%s", out)
+			}
+		})
+	}
 }
 
 func TestBinstubUsesTheHoustonGantryNames(t *testing.T) {

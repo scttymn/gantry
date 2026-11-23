@@ -2,11 +2,12 @@
 # Downloads this app's gantry (the release go.mod requires) and the Houston
 # release that gantry names, then runs gantry. A gantry checkout in go.mod's
 # replace, or in go.work, uses that checkout's bin/gantry instead.
-# Assets are gantry-$os-$arch and houston-$os-$arch, downloaded over https
-# and checked against the release's SHA256SUMS. gh (2.70 or later), when
-# installed, also checks gantry's build provenance: an attestation that
-# gantry's release workflow built that binary at that tag. Both land in
-# .gantry/bin, which git ignores.
+# Assets are gantry-$os-$arch and houston-$os-$arch, downloaded over https.
+# gantry is checked against its release's SHA256SUMS and, when gh (2.70 or
+# later) is installed, its build provenance: an attestation that gantry's
+# release workflow built that binary at that tag. Houston is checked against
+# the digests that gantry pins for it. Both land in .gantry/bin, which git
+# ignores.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -179,14 +180,25 @@ download() {
 	curl -fsSL --proto =https --retry 3 --retry-delay 1 -o "$1" "$2" 2>/dev/null
 }
 
-# fetch_release name remote version base. remote is the release filename
-# (gantry-$os-$arch, houston-$os-$arch). The copy kept locally is named
-# with the version, so a failed upgrade cannot replace the previous CLI.
+# sums_entry asset: the digest the SHA256SUMS lines on stdin give asset.
+sums_entry() {
+	awk -v asset="$1" '
+		length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ && ($2 == asset || $2 == "*" asset) { print tolower($1); found = 1; exit }
+		END { if (!found) exit 1 }
+	'
+}
+
+# fetch_release name remote version base [pins]. remote is the release
+# filename (gantry-$os-$arch, houston-$os-$arch). pins, SHA256SUMS lines from
+# somewhere other than the release, replace the release's own when they name
+# remote. The copy kept locally is named with the version, so a failed
+# upgrade cannot replace the previous CLI.
 fetch_release() {
 	name=$1
 	remote=$2
 	version=$3
 	base=$4
+	pins=${5:-}
 	kept=$name-$version-$os-$arch
 	is_release "$version" || die "$name $version isn't a release tag (vX.Y.Z), so there is no CLI build to download"
 	command -v curl >/dev/null 2>&1 || die "curl is required to fetch $name $version"
@@ -212,16 +224,20 @@ fetch_release() {
 		rm -f "$partial"
 		die "$name $version has no $os/$arch build at $url"
 	fi
-	if ! download "$sums" "$sums_url"; then
-		rm -f "$partial" "$sums"
-		die "$name $version published no SHA256SUMS at $sums_url"
-	fi
-	if ! want=$(awk -v asset="$remote" '
-		length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ && ($2 == asset || $2 == "*" asset) { print tolower($1); found = 1; exit }
-		END { if (!found) exit 1 }
-	' "$sums"); then
-		rm -f "$partial" "$sums"
-		die "SHA256SUMS for $name $version has no $remote"
+	if [ -n "$pins" ] && want=$(printf '%s\n' "$pins" | sums_entry "$remote"); then
+		:
+	else
+		if ! download "$sums" "$sums_url"; then
+			rm -f "$partial" "$sums"
+			die "$name $version published no SHA256SUMS at $sums_url"
+		fi
+		if ! want=$(sums_entry "$remote" <"$sums"); then
+			rm -f "$partial" "$sums"
+			die "SHA256SUMS for $name $version has no $remote"
+		fi
+		if [ "$name" = houston ]; then
+			printf '%s\n' "bin/gantry: this gantry pins no digests for houston $version, so it was checked against its own release's SHA256SUMS" >&2
+		fi
 	fi
 	if ! got=$(file_sha256 "$partial"); then
 		rm -f "$partial" "$sums"
@@ -276,9 +292,13 @@ fi
 
 # The Houston this app runs with is the one its gantry release names, so
 # bumping gantry in go.mod upgrades both. A gantry older than that names
-# none, and the pin above stands.
+# none, and the pin above stands. The gantry also pins that Houston's
+# digests, which carry the gantry release's provenance; an older one
+# answers --sha256 with the release tag, which names no asset.
+houston_pins=""
 if named=$("${GANTRY_BIN:-$cache/gantry}" houston-release 2>/dev/null) && is_release "$named"; then
 	houston_version=$named
+	houston_pins=$("${GANTRY_BIN:-$cache/gantry}" houston-release --sha256 2>/dev/null) || houston_pins=""
 fi
 
 if [ -n "${HOUSTON_BIN:-}" ]; then
@@ -290,7 +310,7 @@ if [ -n "${HOUSTON_BIN:-}" ]; then
 	mkdir -p "$cache"
 	ensure_link "$cache/houston" "$houston_abs"
 else
-	fetch_release houston "houston-$os-$arch" "$houston_version" "$houston_base"
+	fetch_release houston "houston-$os-$arch" "$houston_version" "$houston_base" "$houston_pins"
 fi
 
 export PATH="$cache:$PATH"

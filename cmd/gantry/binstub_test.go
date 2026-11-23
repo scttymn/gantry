@@ -743,7 +743,7 @@ func TestReleasePublishesBinstubAssets(t *testing.T) {
 			}
 		}
 	}
-	for _, needle := range []string{"SHA256SUMS", "gantry-*", "gh release create", "provenance.sigstore.json", "id-token: write", "attestations: write"} {
+	for _, needle := range []string{"SHA256SUMS", "gantry-*", "gh release create", "provenance.sigstore.json", "id-token: write", "attestations: write", "houston-release --sha256"} {
 		if !strings.Contains(string(workflow), needle) {
 			t.Errorf("workflow missing %q", needle)
 		}
