@@ -153,7 +153,7 @@ integration; see [Browser warnings](development.md#browser-warnings).
 For a justified alternative, use an exact file/rule exception with a specific
 reason in `.gantry-check.json`. Explain why the framework pattern does not apply
 and how the intended behavior is preserved. Do not add blanket exceptions just
-to get a clean result. The [development guide](development.md) defines the six
+to get a clean result. The [development guide](development.md) lists the
 current checks, their severities and exception syntax. Use `check --rules` to
 discover additions after an upgrade. [Strict's current coverage](strict.md#current-coverage)
 also identifies patterns that still require human or agent review.

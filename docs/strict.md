@@ -44,8 +44,9 @@ configuration. Adding a built-in entry automatically reaches all consumers.
    mutation. Do not put secrets or entire source contents in a diagnostic.
 4. Update generators and examples to use the feature. Generated apps must pass
    Strict. Add a migration example so existing apps can adopt it.
-5. Update the rule catalog documentation and describe new strict failures in the
-   release notes. Apps pick up rule changes when their pinned Gantry version is
+5. Regenerate the development guide's rule table with
+   `go test ./devcheck -update` (the test fails until you do) and describe new
+   strict failures in the release notes. Apps pick up rule changes when their pinned Gantry version is
    upgraded; exceptions stay explicit and reviewable.
 
 For every new performance or development feature, record whether Strict coverage
@@ -86,9 +87,8 @@ custom rule gets the same exact-file, reason-required exception policy.
 
 ## Current coverage
 
-The current six rules cover assets, broad form selection, shared page shells,
-raw file servers, development guards and environment fallbacks. Their exact
-limits and exception syntax are in [the development guide](development.md).
-Page-cache eligibility, image-pipeline adoption and render-blocking data fetches
+[The development guide](development.md#gantry-defaults-and-strict-mode) lists
+the current rules, generated from `DefaultRules()`, with their limits and
+exception syntax. Page-cache eligibility, image-pipeline adoption and render-blocking data fetches
 are future coverage areas, not checks that exist today. Some will need runtime
 measurement or richer analysis instead of static source matching.
