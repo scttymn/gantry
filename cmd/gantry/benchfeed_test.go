@@ -16,6 +16,7 @@ import (
 // benchFeedOwn is what bench/feed has of its own in place of what gantry
 // new writes, and why: the challenge's API, where a new app has a page.
 var benchFeedOwn = map[string]string{
+	".env":                 "random keys, each app its own, ignored by git",
 	"app/routes.go":        "the challenge's routes",
 	"app/home_test.go":     "the API's 404 and the bench's routes",
 	"app/features_test.go": "the API's bearer token signs a visitor in",
