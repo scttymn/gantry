@@ -209,20 +209,15 @@ func generateStorage(root string, args []string, out io.Writer) error {
 	fmt.Fprintf(out, `
 Next:
   1. gantry db migrate.
-  2. In cmd/<app>/main.go, before anything else, let the binary be its own
-     resizing child (pictures' copies are made in one, out of the server's way):
-       pictures := &images.Pipeline{}
-       if images.IsChild(os.Args) {
-           os.Exit(pictures.RunChild(os.Args))
-       }
-       exe, _ := os.Executable()
-       pictures.Maker = images.Child{Exe: exe}
-  3. Give App a Storage, on the data volume, and serve it:
+  2. Give App a Storage, on the data volume, and serve it. Its pictures'
+     copies are app.Pictures', which main has made in a child process, out of
+     the server's way (an app made before gantry had app/pictures.go: copy
+     that file and the start of main() from a new app's):
        a.Storage = &storage.Storage{DB: a.DB, Root: filepath.Join(dataDir, "storage"),
-           Images: pictures, Log: a.Log}
+           Images: app.Pictures, Log: a.Log}
        a.Storage.WarmLater()  // the copies not made yet
        rt.Mount("GET /storage/", a.Storage)
-  4. Attach a form's file to a record, and draw it:
+  3. Attach a form's file to a record, and draw it:
        f, ok := storage.FileFrom(r, "clip[thumbnail]")
        a.Storage.Attach(ctx, storage.Ref{RecordType: "Clip", RecordID: id, Name: "thumbnail"}, f)
        @a.Storage.Img(blob, images.Img{Alt: "…", Sizes: "240px"})

@@ -54,7 +54,7 @@ type Storage struct {
 	Prefix string
 	// Images makes pictures' copies (WebP, by default). A server's makes
 	// them in a child (images.Child), which the app's main starts before
-	// anything else:
+	// anything else (a new app's app.Pictures is one):
 	//
 	//	if images.IsChild(os.Args) {
 	//		os.Exit(pictures.RunChild(os.Args))
