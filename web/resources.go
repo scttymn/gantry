@@ -44,10 +44,12 @@ type (
 func (s *Scope) Resources(base string, controller any, wrap func(http.Handler) http.Handler) {
 	route := func(pattern string, h Handler) {
 		var handler http.Handler = s.rt.Wrap(s.filters.then(h))
+		var r Route
 		if wrap != nil {
 			handler = wrap(handler)
+			r.Filters = funcNames([]func(http.Handler) http.Handler{wrap})
 		}
-		s.mux.Handle(s.pattern(pattern), handler)
+		s.add(pattern, handler, r)
 	}
 	if c, ok := controller.(Indexer); ok {
 		route("GET "+base, c.Index)

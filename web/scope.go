@@ -70,20 +70,22 @@ func (s *Scope) Scope(prefix string, pipeline Pipeline, routes func(s *Scope)) {
 // Handle routes pattern ("GET /posts/{id}", ServeMux's syntax, under the
 // scope's prefix) to h, behind the scope's filters.
 func (s *Scope) Handle(pattern string, h Handler) {
-	s.mux.Handle(s.pattern(pattern), s.rt.Wrap(s.filters.then(h)))
+	s.add(pattern, s.rt.Wrap(s.filters.then(h)), Route{})
 }
 
 // Mount routes pattern to a plain http.Handler (files, a mounted package),
 // behind the scope's filters.
-func (s *Scope) Mount(pattern string, h http.Handler) {
+func (s *Scope) Mount(pattern string, h http.Handler) { s.mount(pattern, h, Route{Mounted: true}) }
+
+func (s *Scope) mount(pattern string, h http.Handler, r Route) {
 	if len(s.filters) == 0 {
-		s.mux.Handle(s.pattern(pattern), h)
+		s.add(pattern, h, r)
 		return
 	}
-	s.Handle(pattern, func(w http.ResponseWriter, r *http.Request) error {
+	s.add(pattern, s.rt.Wrap(s.filters.then(func(w http.ResponseWriter, r *http.Request) error {
 		h.ServeHTTP(w, r)
 		return nil
-	})
+	})), r)
 }
 
 // Cached routes pattern to h through the router's page cache (rt.Cache),
@@ -97,7 +99,7 @@ func (s *Scope) Cached(pattern string, h Handler) {
 		s.Handle(pattern, h)
 		return
 	}
-	s.Mount(pattern, s.rt.Cache.Handler(s.rt.Wrap(h)))
+	s.mount(pattern, s.rt.Cache.Handler(s.rt.Wrap(h)), Route{Cached: true})
 }
 
 // pattern is a route's pattern under the scope's prefix: "GET /posts" in
