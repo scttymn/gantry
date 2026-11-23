@@ -7,6 +7,9 @@ development features. This guide describes the checks currently implemented;
 `bin/gantry dev` checks the project before starting Houston. Warnings do not
 block the server. Run `bin/gantry check` again after edits, or use
 `bin/gantry check --strict` in CI (exit 1 when unsuppressed violations are found; advice does not fail CI).
+`bin/gantry check --generated` is a separate check: templ's and sqlc's Go,
+generated again in a copy of the app, must be what the app has, so a hand
+edit to generated code fails it rather than being lost to the next generate.
 
 The checks read local `.html`, `.templ`, `.js`, and Go source files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,

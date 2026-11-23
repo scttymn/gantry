@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -139,6 +140,48 @@ func TestNewVendorLicenses(t *testing.T) {
 				t.Errorf("%s's license is missing %q", file, want)
 			}
 		}
+	}
+}
+
+// A new app's CI runs Strict, the generated-code check and the tests, each a
+// command gantry has, with its actions pinned by commit and no secrets. An
+// app in a module has its repository's CI instead.
+func TestNewCI(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		root := t.TempDir()
+		if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--skip-houston"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		ci, err := os.ReadFile(filepath.Join(root, "shop", ".github", "workflows", "ci.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var runs []string
+		for _, line := range strings.Split(string(ci), "\n") {
+			line = strings.TrimSpace(line)
+			if command, ok := strings.CutPrefix(line, "- run: bin/gantry "); ok {
+				runs = append(runs, command)
+				if msg := checkInvocation(command); msg != "" {
+					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+				}
+			}
+			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40} # v`).MatchString(action) {
+				t.Errorf("%s: %s isn't pinned by commit", engine, action)
+			}
+		}
+		if want := []string{"check --strict", "check --generated", "test"}; !reflect.DeepEqual(runs, want) {
+			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
+		}
+		if strings.Contains(string(ci), "secrets.") || !strings.Contains(string(ci), "GH_TOKEN: ${{ github.token }}") {
+			t.Errorf("%s: its token isn't the job's own:\n%s", engine, ci)
+		}
+	}
+	root := big(t, "")
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if _, err := os.Stat(filepath.Join(root, "apps", "control", ".github")); err == nil {
+		t.Error("an app in a module has a .github of its own")
 	}
 }
 

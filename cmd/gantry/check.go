@@ -9,21 +9,25 @@ import (
 
 var checkDevelopment = devcheck.Scan
 
-// checkFlags are gantry check's: --strict, or --rules.
-func checkFlags() (fs *flag.FlagSet, strict, rules *bool) {
+// checkFlags are gantry check's: --strict, --rules, or --generated.
+func checkFlags() (fs *flag.FlagSet, strict, rules, generated *bool) {
 	fs = flagSet("check")
 	strict = fs.Bool("strict", false, "fail on a violation")
 	rules = fs.Bool("rules", false, "the rules, with their guidance")
-	return fs, strict, rules
+	generated = fs.Bool("generated", false, "fail on generated Go (templ's, sqlc's) that isn't what its source makes")
+	return fs, strict, rules, generated
 }
 
 func developmentCheck(root string, args []string, out io.Writer) error {
-	fs, strict, rules := checkFlags()
+	fs, strict, rules, generated := checkFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || *strict && *rules {
+	if fs.NArg() > 0 || *strict && *rules || *generated && (*strict || *rules) {
 		return usageError{}
+	}
+	if *generated {
+		return generatedCheck(root, out)
 	}
 	if *rules {
 		for _, rule := range devcheck.DefaultRules() {

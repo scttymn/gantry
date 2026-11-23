@@ -236,6 +236,12 @@ func writeApp(dir string, a NewApp) error {
 			out = ".gitignore"
 		case "gantry-check.json":
 			out = ".gantry-check.json"
+		case "github/workflows/ci.yml":
+			// A module's CI is its repository's, at the module's root.
+			if a.InModule {
+				return nil
+			}
+			out = ".github/workflows/ci.yml"
 		case "assets/built/gitkeep":
 			// Kept so the folder is there for go:embed before a build.
 			out = "assets/built/.gitkeep"

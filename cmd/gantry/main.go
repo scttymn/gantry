@@ -38,7 +38,7 @@ type command struct {
 }
 
 var commands = []command{
-	{name: "check", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _ := checkFlags(); return fs },
+	{name: "check", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _, _ := checkFlags(); return fs },
 		run: func(root string, args []string, out, _ io.Writer) error { return developmentCheck(root, args, out) }},
 	{name: "new", args: "NAME", flags: func() *flag.FlagSet { return new(newOptions).flags("NAME") }, run: newApp},
 	{name: "g resource", args: "[NAMESPACE/]TABLE FIELD:TYPE[:required]...", about: "a table, its model and its pages",

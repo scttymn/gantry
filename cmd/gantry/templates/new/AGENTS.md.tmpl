@@ -13,8 +13,13 @@ Use `bin/gantry`, which runs the CLI that matches `go.mod`. Ask the tools rather
 bin/gantry --help          # commands and generators
 bin/gantry check --rules   # the rules this version checks, with their guidance
 bin/gantry check --strict  # nonzero on a violation: run it before you finish
+bin/gantry check --generated  # nonzero when generated Go isn't what its .templ or .sql makes
 bin/gantry test            # the tests, in a throwaway copy
 ```
+{{- if not .InModule}}
+
+`.github/workflows/ci.yml` runs `check --strict`, `check --generated` and `test` on every pull request.
+{{- end}}
 
 ## Where things go
 - `app/routes.go`: every route, and the controllers behind them

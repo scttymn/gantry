@@ -126,7 +126,10 @@ bin/gantry exec templ generate
 ```
 
 Follow the app's existing generation workflow and do not edit generated Go
-instead of its `.sql` or `.templ` source. Keep the Dockerfile's asset precompile
+instead of its `.sql` or `.templ` source: `bin/gantry check --generated`
+generates it again in a copy of the app and fails on a difference, naming the
+source to edit. It runs the `templ` and `sqlc` on the machine, at the versions
+the app's Dockerfile installs. Keep the Dockerfile's asset precompile
 step so tests and production use the optimized assets. Preserve the app's
 SQLite/upload volumes and apply schema changes through migrations. Development
 fixtures belong to the app; do not introduce a shared default production login.
@@ -177,10 +180,13 @@ Before handing over or deploying the change:
 
 ```sh
 bin/gantry check --strict
+bin/gantry check --generated
 bin/gantry test
 ```
 
-`check --strict` and the test suite are separate checks; run both in CI as well.
+`check --strict`, `check --generated` and the test suite are separate checks;
+an app's `.github/workflows/ci.yml`, which `gantry new` writes, runs all three
+on every pull request.
 Report remaining advice and justified exceptions rather than equating a zero
 exit status with no findings. Use the app's existing tests and Gantry's `testkit`
 helpers where relevant: `Links`/`Crawl` for page assets and navigation,
