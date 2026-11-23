@@ -152,9 +152,13 @@ protection guards only the methods that change state.
 
 Password reset gives the same answer, equally fast, whether or not the address
 has an account. Auth looks up the address and sends the email after the
-response. A test that reads the reset email calls `a.Auth.Wait()` first. The
-reset pages send `Cache-Control: no-store` and `Referrer-Policy: no-referrer`,
-because the edit page's address carries the reset token.
+response. At most 100 reset emails are in flight at once. Past that, a request
+gets the same answer and no email. `a.Auth.Wait()` waits for the emails in
+flight, each a minute at most. Call it in `serve` after `server.Shutdown` and
+before the database closes, so a deploy doesn't drop them. A test that reads
+the reset email calls it first. The reset pages and the reset form's answers
+send `Cache-Control: no-store` and `Referrer-Policy: no-referrer`, because the
+edit page's address carries the reset token.
 
 **Upgrading.** Apps that left `Idle` and `Lifetime` at zero now get the 30-day
 and 90-day limits. A session idle for more than 30 days, or signed in more than

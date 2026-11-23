@@ -171,6 +171,7 @@ Next:
        a.Auth.Routes(rt)
        rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
      Adjust session Idle/Lifetime (30/90 days) and set FirstUser.CreateUser for app-specific roles.
+     In serve (cmd/.../main.go), call a.Auth.Wait() after server.Shutdown, so reset emails in flight are sent.
   3. Open /login to finish first-install setup. In your terminal, retrieve its code:
        gantry task auth:setup-code
      On production, with Houston v0.5.10 or newer (houston login, no SSH):

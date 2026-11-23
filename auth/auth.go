@@ -131,6 +131,8 @@ type Auth struct {
 	// cap on failures from every address, a lockout, an audit log.
 	Attempt func(r *http.Request) bool
 	Failed  func(r *http.Request, email string)
+
+	resets *sends // made by Routes; a pointer, so a copied Auth shares it
 }
 
 // The messages are Rails 8's generator's.
@@ -524,6 +526,9 @@ func (a *Auth) Routes(rt web.Routes) {
 	if a.Mail == nil || a.EmailCodes != nil {
 		return
 	}
+	if a.resets == nil {
+		a.resets = newSends()
+	}
 	rt.Handle("GET "+p.Passwords+"/new", a.forgotPassword)
 	rt.Handle("POST "+p.Passwords, a.sendReset)
 	rt.Handle("GET "+p.Passwords+"/{token}/edit", a.editPassword)
@@ -650,52 +655,126 @@ func (a *Auth) UserByResetToken(ctx context.Context, token string) (User, error)
 	return u, nil
 }
 
-// resets are the reset emails still being looked up and sent. It isn't a
-// field: an Auth is copied, and a WaitGroup mustn't be.
-var resets sync.WaitGroup
+// maxResetSends caps the reset emails in flight. Past it a request gets the
+// usual answer and no email, so a flood can't pile up lookups and mail
+// connections, each held up to a minute.
+const maxResetSends = 100
 
-// Wait waits for the password reset emails being sent, every Auth's: for a
-// test that reads them, or a server shutting down.
-func (a *Auth) Wait() { resets.Wait() }
+// sends counts the reset emails in flight. Unlike a WaitGroup, it may be
+// waited on while new ones start.
+type sends struct {
+	mu   sync.Mutex
+	idle sync.Cond
+	n    int
+}
+
+func newSends() *sends {
+	s := &sends{}
+	s.idle.L = &s.mu
+	return s
+}
+
+// start counts one more, unless maxResetSends are in flight.
+func (s *sends) start() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.n >= maxResetSends {
+		return false
+	}
+	s.n++
+	return true
+}
+
+func (s *sends) done() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.n--; s.n == 0 {
+		s.idle.Broadcast()
+	}
+}
+
+func (s *sends) wait() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.n > 0 {
+		s.idle.Wait()
+	}
+}
+
+// Wait waits for the password reset emails being sent: for a test that
+// reads them, or a server shutting down (after http.Server.Shutdown, before
+// the database closes). Each takes a minute at most.
+func (a *Auth) Wait() {
+	if a.resets != nil {
+		a.resets.wait()
+	}
+}
 
 // sendReset answers at once, and then emails a reset link if the address is
 // a user's. Anyone else gets the same answer, as fast, so the form can't be
 // used to find out who has an account. The link isn't queued as a job: the
 // jobs table would keep a working reset link in the database.
 func (a *Auth) sendReset(w http.ResponseWriter, r *http.Request) error {
+	resetHeaders(w)
 	p := a.paths()
 	if !a.allow(r, "passwords") {
 		a.flash().Redirect(w, r, p.Passwords+"/new", "alert", msgTooMany)
 		return nil
 	}
-	email := r.PostFormValue("email_address")
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Minute)
-	resets.Go(func() {
-		defer cancel()
-		a.mailReset(ctx, email)
-	})
+	if a.resets.start() {
+		email := r.PostFormValue("email_address")
+		ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), time.Minute)
+		go func() {
+			defer a.resets.done()
+			defer cancel()
+			a.mailReset(ctx, email)
+		}()
+	} else {
+		a.logger().Warn("auth: password reset email dropped: too many in flight")
+	}
 	a.flash().Redirect(w, r, p.Login, "notice", msgResetSent)
 	return nil
 }
 
+// logger is Log, or slog's default: a reset email's failure has no response
+// to show it.
+func (a *Auth) logger() *slog.Logger {
+	if a.Log != nil {
+		return a.Log
+	}
+	return slog.Default()
+}
+
+// mailReset runs off the request, outside the router's recovery, so a panic
+// in it (an app's sender, say) is logged here rather than ending the process.
 func (a *Auth) mailReset(ctx context.Context, email string) {
+	defer func() {
+		if p := recover(); p != nil {
+			a.logger().Error("auth: password reset email panicked", "panic", p)
+		}
+	}()
+	if a.URL == nil {
+		a.logger().Error("auth: password reset emails need Auth.URL")
+		return
+	}
 	u, err := a.FindByEmail(ctx, email)
 	if err != nil {
-		if !errors.Is(err, ErrNoUser) && a.Log != nil {
-			a.Log.Error("auth: password reset lookup", "err", err)
+		if !errors.Is(err, ErrNoUser) {
+			a.logger().Error("auth: password reset lookup", "err", err)
 		}
 		return
 	}
 	link := a.URL(a.paths().Passwords + "/" + url.PathEscape(a.ResetToken(u)) + "/edit")
 	msg := mail.Message{From: a.From, To: u.EmailAddress, Subject: "Reset your password",
 		Text: fmt.Sprintf("You can reset your password on\n%s\n\nThis link will expire in %d minutes.\n", link, int(ResetValidity/time.Minute))}
-	if err := a.Mail.Send(ctx, msg); err != nil && a.Log != nil {
-		a.Log.Error("auth: password reset email", "err", err)
+	if err := a.Mail.Send(ctx, msg); err != nil {
+		a.logger().Error("auth: password reset email", "err", err)
 	}
 }
 
-// resetHeaders keep the reset pages out of caches, and the token in the
-// edit page's address out of the Referer of anything it loads or links to.
+// resetHeaders keep the reset pages and answers out of caches, and the
+// token in the edit page's address out of the Referer of anything it loads,
+// links or redirects to.
 func resetHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -712,6 +791,7 @@ func (a *Auth) editPassword(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (a *Auth) updatePassword(w http.ResponseWriter, r *http.Request) error {
+	resetHeaders(w)
 	p := a.paths()
 	token := r.PathValue("token")
 	u, err := a.UserByResetToken(r.Context(), token)
