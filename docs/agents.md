@@ -13,8 +13,9 @@ patterns; it covers a growing subset of them, not every performance concern.
 
 ## 1. Read the app before changing it
 
-- Read the app's own instructions and README, then `go.mod`, `compose.yml`,
-  `Dockerfile`, `app/routes.go`, and `app/shared/layout`.
+- Read the app's own instructions (`AGENTS.md`, which `gantry new` writes) and
+  README, then `go.mod`, `compose.yml`, `Dockerfile`, `app/routes.go`, and
+  `app/shared/layout`.
 - Check the pinned Gantry version and any `replace` directive or `go.work`.
   Use the APIs and generators that version provides. The documentation on
   `main` may describe features newer than the app's dependency.
