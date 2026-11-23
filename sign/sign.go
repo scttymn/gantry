@@ -14,9 +14,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"os"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/env"
 )
 
 // Signer signs and checks tokens with Key, of at least 32 bytes: a shorter
@@ -84,7 +84,7 @@ func Key(ctx context.Context, d *db.DB, secret string) ([]byte, error) {
 		}
 		return []byte(secret), nil
 	}
-	if env := os.Getenv("GANTRY_ENV"); env != "development" && env != "test" {
+	if !env.Development() && !env.Test() {
 		return nil, errors.New("sign: SECRET_KEY is blank, and outside development and test the signing key can't be kept in the database: " + generate)
 	}
 	if _, err := d.Write.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS gantry_settings (name text PRIMARY KEY, value text NOT NULL)`); err != nil {

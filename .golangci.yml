@@ -37,7 +37,7 @@ linters:
       analyze-types: true
       forbid:
         - pattern: ^os\.(Getenv|LookupEnv)$
-          msg: read GANTRY_ENV through env.Development (internal/env), so every reader agrees on what development is.
+          msg: read GANTRY_ENV through env.Development or env.Test (internal/env), so every reader agrees on it.
         - pattern: ^(net/)?http\.Header\.(Get|Values)$
           msg: a forwarding header (X-Forwarded-*, Forwarded, X-Real-Ip) is believed only from a trusted proxy; use web.ClientIP, web.Scheme or web.RequestHost (web/proxies.go).
         - pattern: ^(net/)?http\.(DefaultClient|Get|Head|Post|PostForm)$
