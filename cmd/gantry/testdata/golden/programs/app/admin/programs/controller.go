@@ -2,6 +2,7 @@
 package programs
 
 import (
+	"maps"
 	"net/http"
 	"strings"
 
@@ -60,15 +61,21 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	if errs := program.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
 	}
-	q := models.New(c.DB.Write)
-	if !program.Position.Valid {
-		next, err := q.NextProgramPosition(r.Context())
-		if err != nil {
-			return err
+	var id int64
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
+		// On Postgres two at once can still take the same position; the
+		// list orders by position, then id.
+		if !program.Position.Valid {
+			next, err := q.NextProgramPosition(r.Context())
+			if err != nil {
+				return err
+			}
+			program.Position.Int64, program.Position.Valid = next, true
 		}
-		program.Position.Int64, program.Position.Valid = next, true
-	}
-	id, err := q.CreateProgram(r.Context(), models.CreateProgramParams{Name: program.Name, Blurb: program.Blurb, CTA: program.CTA, Position: program.Position, Now: c.Now()})
+		id, err = q.CreateProgram(r.Context(), models.CreateProgramParams{Name: program.Name, Blurb: program.Blurb, CTA: program.CTA, Position: program.Position, Now: c.Now()})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -86,9 +93,11 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, program.ID, formValues(program), nil)
 }
 
-// Update reads, checks and writes in one transaction, so an edit saved
-// meanwhile isn't overwritten with what this one read.
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
+	sent := admin.Overlay(r, param, map[string]string{})
 	var (
 		id   int64
 		v    map[string]string
@@ -100,7 +109,8 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		id, v = was.ID, admin.Overlay(r, param, formValues(was))
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
 		program := fromForm(v)
 		if errs = program.Errors(); len(errs) > 0 {
 			return nil

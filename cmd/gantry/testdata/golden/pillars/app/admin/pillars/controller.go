@@ -2,6 +2,7 @@
 package pillars
 
 import (
+	"maps"
 	"net/http"
 	"strings"
 
@@ -58,15 +59,20 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	if errs := pillar.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
 	}
-	q := models.New(c.DB.Write)
-	if !pillar.Position.Valid {
-		next, err := q.NextPillarPosition(r.Context())
-		if err != nil {
-			return err
+	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
+		q := models.New(tx)
+		// On Postgres two at once can still take the same position; the
+		// list orders by position, then id.
+		if !pillar.Position.Valid {
+			next, err := q.NextPillarPosition(r.Context())
+			if err != nil {
+				return err
+			}
+			pillar.Position.Int64, pillar.Position.Valid = next, true
 		}
-		pillar.Position.Int64, pillar.Position.Valid = next, true
-	}
-	_, err := q.CreatePillar(r.Context(), models.CreatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now()})
+		_, err = q.CreatePillar(r.Context(), models.CreatePillarParams{Title: pillar.Title, Body: pillar.Body, Position: pillar.Position, Now: c.Now()})
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -81,9 +87,11 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, pillar.ID, formValues(pillar), nil)
 }
 
-// Update reads, checks and writes in one transaction, so an edit saved
-// meanwhile isn't overwritten with what this one read.
+// Update reads, checks and writes the row in one transaction, so an edit
+// saved meanwhile isn't overwritten with what this one read. The form is
+// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
+	sent := admin.Overlay(r, param, map[string]string{})
 	var (
 		id   int64
 		v    map[string]string
@@ -95,7 +103,8 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return err
 		}
-		id, v = was.ID, admin.Overlay(r, param, formValues(was))
+		id, v = was.ID, formValues(was)
+		maps.Copy(v, sent)
 		pillar := fromForm(v)
 		if errs = pillar.Errors(); len(errs) > 0 {
 			return nil
