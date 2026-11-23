@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"testing"
+
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 // constraintSchema makes a parent and a child table on d's engine.
@@ -54,10 +55,7 @@ func checkConstraintErrors(t *testing.T, d *DB) {
 func TestConstraintErrors(t *testing.T) { checkConstraintErrors(t, openTemp(t)) }
 
 func TestConstraintErrorsPostgres(t *testing.T) {
-	url := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-	}
+	url := testenv.Postgres(t)
 	d, err := Open(context.Background(), url)
 	if err != nil {
 		t.Fatal(err)

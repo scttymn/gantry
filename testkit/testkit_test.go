@@ -2,13 +2,13 @@ package testkit
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"testing/fstest"
 	"time"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 var schema = fstest.MapFS{"00001_schema.sql": {Data: []byte(`-- +goose Up
@@ -52,9 +52,7 @@ func TestFixtures(t *testing.T) {
 }
 
 func TestPostgres(t *testing.T) {
-	if os.Getenv("TEST_DATABASE_URL") == "" {
-		t.Skip("TEST_DATABASE_URL isn't set")
-	}
+	t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 	var names []string
 	for range 2 {
 		d := Postgres(t, func(ctx context.Context, d *db.DB) error {

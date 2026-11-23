@@ -4,6 +4,7 @@ package auth
 
 import (
 	"net/http"
+	"time"
 
 	gantryauth "github.com/scttymn/gantry/auth"
 	"github.com/scttymn/gantry/db"
@@ -17,10 +18,12 @@ type User = gantryauth.User
 
 // New selects email-code login. key must be a random secret of at least 32
 // bytes from AUTH_CODE_KEY. Use a real sender or a development mail capture;
-// mail.Log cannot deliver codes. Set Idle and Lifetime for session expiry.
+// mail.Log cannot deliver codes. A session ends 30 days unused or 90 days
+// after sign-in; gantryauth.NoLimit lifts either.
 func New(d *db.DB, signer sign.Signer, sender mail.Sender, from string, key []byte) *Auth {
 	return &Auth{
 		DB: d, Signer: signer, Mail: sender, From: from,
+		Idle: 30 * 24 * time.Hour, Lifetime: 90 * 24 * time.Hour,
 		EmailCodes: &gantryauth.EmailCodes{Key: key, Signup: {{.Signup}}},
 		Views: gantryauth.Views{
 			RequestCode: func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {

@@ -15,6 +15,7 @@ import (
 
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/devcheck"
+	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/storage"
 	"github.com/scttymn/gantry/testkit"
 )
@@ -219,9 +220,7 @@ func TestStorageMigrates(t *testing.T) {
 		t.Run(engine, func(t *testing.T) {
 			url := "sqlite://" + filepath.Join(t.TempDir(), "app.sqlite3")
 			if engine == "postgres" {
-				if url = os.Getenv("GANTRY_TEST_POSTGRES_URL"); url == "" {
-					t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-				}
+				url = testenv.Postgres(t)
 			}
 			dir := shopApp(t, engine)
 			if code, _, stderr := gantry(t, dir, "g", "storage"); code != 0 {
@@ -348,8 +347,8 @@ func TestEmailCodeRecipe(t *testing.T) {
 						t.Skip("run in the toolchain")
 					}
 				}
-				if engine == "postgres" && os.Getenv("GANTRY_TEST_POSTGRES_URL") == "" {
-					t.Skip("GANTRY_TEST_POSTGRES_URL not set")
+				if engine == "postgres" {
+					t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 				}
 				repo, _ := filepath.Abs("../..")
 				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
@@ -359,7 +358,6 @@ func TestEmailCodeRecipe(t *testing.T) {
 				}
 				var baseline *db.DB
 				if engine == "postgres" {
-					t.Setenv("TEST_DATABASE_URL", os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 					baseline = testkit.Postgres(t, migrate)
 				} else {
 					baseline = testkit.DB(t, migrate)
@@ -371,10 +369,9 @@ func TestEmailCodeRecipe(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0o644); err != nil {
 					t.Fatal(err)
 				}
-				env := append(os.Environ(), "TEST_DATABASE_URL="+os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
 					cmd := exec.Command(step[0], step[1:]...)
-					cmd.Dir, cmd.Env = dir, env
+					cmd.Dir = dir
 					if out, err := cmd.CombinedOutput(); err != nil {
 						t.Fatalf("%v: %v\n%s", step, err, out)
 					}
@@ -451,8 +448,8 @@ func TestSocialRecipe(t *testing.T) {
 				if _, err := exec.LookPath("templ"); err != nil {
 					t.Skip("toolchain required")
 				}
-				if engine == "postgres" && os.Getenv("GANTRY_TEST_POSTGRES_URL") == "" {
-					t.Skip("Postgres required")
+				if engine == "postgres" {
+					t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 				}
 				repo, _ := filepath.Abs("../..")
 				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
@@ -462,7 +459,6 @@ func TestSocialRecipe(t *testing.T) {
 				}
 				var baseline *db.DB
 				if engine == "postgres" {
-					t.Setenv("TEST_DATABASE_URL", os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 					baseline = testkit.Postgres(t, migrate)
 				} else {
 					baseline = testkit.DB(t, migrate)
@@ -475,7 +471,6 @@ func TestSocialRecipe(t *testing.T) {
 				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
 					cmd := exec.Command(step[0], step[1:]...)
 					cmd.Dir = dir
-					cmd.Env = append(os.Environ(), "TEST_DATABASE_URL="+os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 					if out, err := cmd.CombinedOutput(); err != nil {
 						t.Fatalf("%v: %v\n%s", step, err, out)
 					}
