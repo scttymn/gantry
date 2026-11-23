@@ -1,0 +1,12 @@
+-- +goose Up
+CREATE TABLE "posts" (
+  "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  "title" text NOT NULL DEFAULT '',
+  "body" text NOT NULL DEFAULT '',
+  "published_on" date,
+  "created_at" datetime NOT NULL,
+  "updated_at" datetime NOT NULL
+);
+
+-- +goose Down
+DROP TABLE "posts";

@@ -1,0 +1,12 @@
+-- +goose Up
+CREATE TABLE "pillars" (
+  "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  "title" text NOT NULL DEFAULT '',
+  "body" text NOT NULL DEFAULT '',
+  "position" integer,
+  "created_at" datetime NOT NULL,
+  "updated_at" datetime NOT NULL
+);
+
+-- +goose Down
+DROP TABLE "pillars";

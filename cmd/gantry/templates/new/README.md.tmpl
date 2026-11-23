@@ -6,6 +6,7 @@ A [gantry](https://github.com/scttymn/gantry) app, run and deployed with [Housto
 bin/gantry dev             # http://{{.Name}}.localhost, rebuilt as you change it
 bin/gantry test            # its tests, in a throwaway copy
 bin/gantry check --strict  # Gantry defaults; violations fail CI
+bin/gantry check --generated  # generated Go is what its .templ and .sql make
 bin/gantry db migrate      # run pending migrations (and rewrite db/schema.sql)
 bin/gantry routes          # every route, from the app's router (--json for tools)
 bin/gantry verify          # each feature in test/features.yaml, visited as each role

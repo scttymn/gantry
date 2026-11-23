@@ -11,7 +11,7 @@ import (
 
 // A pin is one version or flag set: where it's changed (its owner), and the
 // copies kept by hand that must say the same. What gantry new writes isn't
-// here: TestNewGolden and TestBenchFeedIsANewApp (cmd/gantry) hold that.
+// here: TestGolden and TestBenchFeedIsANewApp (cmd/gantry) hold that.
 type pin struct {
 	what   string // "sqlc's image"
 	value  string

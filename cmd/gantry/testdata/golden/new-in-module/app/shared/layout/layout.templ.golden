@@ -1,0 +1,34 @@
+// Package layout is the page shell every page is drawn in.
+package layout
+
+import (
+	"github.com/scttymn/gantry/meta"
+
+	"example.com/big/apps/control/assets"
+)
+
+// Page is what the layout needs from a page: its title, and what its link
+// preview and search result say.
+type Page struct {
+	Title       string
+	Description string
+	Path        string // the page's address on the site: "/terms"
+	Image       string // its own preview picture; the site's when ""
+}
+
+templ Layout(p Page) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<meta charset="utf-8"/>
+			<title>{ p.Title }</title>
+			<meta name="viewport" content="width=device-width,initial-scale=1"/>
+			@meta.Tags(Site, meta.Page{Title: p.Title, Description: p.Description, Path: p.Path, Image: p.Image})
+			@assets.Styles.Tag()
+			@assets.ImportMap.Tag()
+		</head>
+		<body>
+			{ children... }
+		</body>
+	</html>
+}

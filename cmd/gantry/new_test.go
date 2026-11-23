@@ -1,23 +1,18 @@
 package main
 
 import (
-	"bytes"
 	"encoding/hex"
 	"errors"
 	"go/format"
-	"image"
-	"image/jpeg"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
-	"github.com/scttymn/gantry/images"
-	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/testkit"
 )
 
@@ -116,63 +111,6 @@ func TestNewInModuleRules(t *testing.T) {
 	}
 }
 
-// What gantry new writes is pinned, on each engine: a change to it is a
-// change to every app made next, so it shows up here, and in review.
-func TestNewGolden(t *testing.T) {
-	for _, engine := range []string{"sqlite", "postgres"} {
-		t.Run(engine, func(t *testing.T) {
-			root := t.TempDir()
-			if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--module", "example.com/shop", "--skip-houston"); code != 0 {
-				t.Fatalf("exit %d: %s", code, stderr)
-			}
-			dir := filepath.Join(root, "shop")
-			golden := filepath.Join("testdata", "golden", "new-"+engine)
-			if *update {
-				os.RemoveAll(golden)
-			}
-			seen := map[string]bool{}
-			filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-				if err != nil || d.IsDir() {
-					return err
-				}
-				rel, _ := filepath.Rel(dir, path)
-				if rel == ".env" {
-					// Random keys, checked by TestNewEnv.
-					return nil
-				}
-				got, _ := os.ReadFile(path)
-				if strings.HasPrefix(filepath.ToSlash(rel), "assets/js/vendor/") {
-					// Vendored JavaScript is copied as it is, not kept twice.
-					if want, err := fs.ReadFile(templates, "templates/new/"+filepath.ToSlash(rel)); err != nil || string(want) != string(got) {
-						t.Errorf("%s isn't gantry's copy", rel)
-					}
-					return nil
-				}
-				seen[rel] = true
-				gofmted(t, rel, got)
-				want := filepath.Join(golden, rel+".golden")
-				if *update {
-					os.MkdirAll(filepath.Dir(want), 0o755)
-					return os.WriteFile(want, got, 0o644)
-				}
-				if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-					t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
-				}
-				return nil
-			})
-			filepath.WalkDir(golden, func(path string, d fs.DirEntry, err error) error {
-				if err == nil && !d.IsDir() {
-					rel, _ := filepath.Rel(golden, path)
-					if !seen[strings.TrimSuffix(rel, ".golden")] {
-						t.Errorf("%s isn't written any more", rel)
-					}
-				}
-				return err
-			})
-		})
-	}
-}
-
 // The JavaScript a new app vendors is MIT, which asks that every copy carry
 // its copyright and permission notice: the app's copy does, in a /*! */
 // comment the build's minifying keeps.
@@ -200,6 +138,48 @@ func TestNewVendorLicenses(t *testing.T) {
 				t.Errorf("%s's license is missing %q", file, want)
 			}
 		}
+	}
+}
+
+// A new app's CI runs Strict, the generated-code check and the tests, each a
+// command gantry has, with its actions pinned by commit and no secrets. An
+// app in a module has its repository's CI instead.
+func TestNewCI(t *testing.T) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		root := t.TempDir()
+		if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--skip-houston"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		ci, err := os.ReadFile(filepath.Join(root, "shop", ".github", "workflows", "ci.yml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var runs []string
+		for _, line := range strings.Split(string(ci), "\n") {
+			line = strings.TrimSpace(line)
+			if command, ok := strings.CutPrefix(line, "- run: bin/gantry "); ok {
+				runs = append(runs, command)
+				if msg := checkInvocation(command); msg != "" {
+					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+				}
+			}
+			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40} # v`).MatchString(action) {
+				t.Errorf("%s: %s isn't pinned by commit", engine, action)
+			}
+		}
+		if want := []string{"check --strict", "check --generated", "test"}; !reflect.DeepEqual(runs, want) {
+			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
+		}
+		if strings.Contains(string(ci), "secrets.") || !strings.Contains(string(ci), "GH_TOKEN: ${{ github.token }}") {
+			t.Errorf("%s: its token isn't the job's own:\n%s", engine, ci)
+		}
+	}
+	root := big(t, "")
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatal(stderr)
+	}
+	if _, err := os.Stat(filepath.Join(root, "apps", "control", ".github")); err == nil {
+		t.Error("an app in a module has a .github of its own")
 	}
 }
 
@@ -565,64 +545,6 @@ func TestNewInModuleBuilds(t *testing.T) {
 	}
 }
 
-// A new app builds, vets clean and passes its own tests, against this
-// checkout, on each engine. It needs the toolchain (templ, and Go's
-// module cache or the network): bin/go go test ./cmd/gantry runs it.
-func TestNewAppBuilds(t *testing.T) {
-	if testing.Short() {
-		t.Skip("-short")
-	}
-	if _, err := exec.LookPath("templ"); err != nil {
-		t.Skip("templ isn't installed: run it in the toolchain (bin/go)")
-	}
-	repo, _ := filepath.Abs("../..")
-	for _, engine := range []string{"sqlite", "postgres"} {
-		t.Run(engine, func(t *testing.T) {
-			if engine == "postgres" {
-				t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
-			}
-			root := t.TempDir()
-			if code, _, stderr := gantry(t, root, "new", "shop", "--db", engine, "--skip-houston", "--gantry", repo, "--module", "example.com/shop"); code != 0 {
-				t.Fatal(stderr)
-			}
-			dir := filepath.Join(root, "shop")
-			// This checkout, not the release go.mod requires: go.work alone still
-			// reads that release's go.mod, which isn't published until it's tagged.
-			mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-			os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-			for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}, {"go", "build", "-o", "shop", "./cmd/shop"}} {
-				cmd := exec.Command(step[0], step[1:]...)
-				cmd.Dir = dir
-				if out, err := cmd.CombinedOutput(); err != nil {
-					t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
-				}
-			}
-			// Its binary is its pictures' resizing child (images.Child), with the
-			// app's pipeline and so its pixel limit.
-			var jpg bytes.Buffer
-			jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 400, 200)), nil)
-			os.WriteFile(filepath.Join(dir, "photo.jpg"), jpg.Bytes(), 0o644)
-			os.WriteFile(filepath.Join(dir, "bomb.gif"), []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00"), 0o644)
-			resize := func(src, dst string) (string, error) {
-				cmd := exec.Command(filepath.Join(dir, "shop"), images.ChildCommand, src, dst, "100", "80")
-				cmd.Dir = dir
-				out, err := cmd.CombinedOutput()
-				return string(out), err
-			}
-			if out, err := resize("photo.jpg", "copy.webp"); err != nil {
-				t.Fatalf("resize: %v\n%s", err, out)
-			}
-			data, _ := os.ReadFile(filepath.Join(dir, "copy.webp"))
-			if w, h, ct, err := (&images.Pipeline{}).Dimensions(data); err != nil || w != 100 || h != 50 || ct != "image/webp" {
-				t.Errorf("the child's copy: %d×%d %s %v", w, h, ct, err)
-			}
-			if out, err := resize("bomb.gif", "bomb.webp"); err == nil || !strings.Contains(out, "too many pixels") {
-				t.Errorf("the child resized a bomb: %v\n%s", err, out)
-			}
-		})
-	}
-}
-
 // A command's own exit code is gantry's: houston test's 3 is gantry test's.
 func TestExitCodes(t *testing.T) {
 	err := exitError(exec.Command("sh", "-c", "exit 5").Run())
@@ -696,8 +618,8 @@ func Wrap(h http.Handler) http.Handler { return web.DevelopmentWithRules(h, ".",
 }
 
 // A new app's feature map reads, as do the features g resource and g auth
-// print for it once pasted. TestNewAppBuilds and the recipes' and
-// resources' builds run TestFeatures in the app itself, on its routes.
+// print for it once pasted. TestGeneratorMatrix runs TestFeatures in each
+// app it builds, on its routes.
 func TestFeatureMap(t *testing.T) {
 	dir := shopApp(t, "sqlite")
 	path := filepath.Join(dir, "test", "features.yaml")

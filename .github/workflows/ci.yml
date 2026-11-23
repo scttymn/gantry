@@ -78,7 +78,7 @@ jobs:
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
       - name: shellcheck
         # An app's bin/gantry is the template rendered, which is its golden
-        # (TestNewGolden holds the two the same).
+        # (TestGolden holds the two the same).
         run: docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench bin/ci .githooks/pre-push cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
       - name: golangci-lint
         # .golangci.yml's linters, staticcheck's checks among them, on gantry
@@ -111,7 +111,7 @@ jobs:
   # The release job's build and probe, on a made-up tag: the four CLI binaries
   # cross-compiled by the Dockerfile, and the tag set in them by -X
   # main.releaseVersion, which no test reaches. That a new app builds and
-  # passes its tests against the checkout is TestNewAppBuilds'.
+  # passes its tests against the checkout is TestGeneratorMatrix's.
   release-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

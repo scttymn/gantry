@@ -10,13 +10,15 @@ import (
 
 var checkDevelopment = devcheck.Scan
 
-// checkFlags are gantry check's: --strict or --rules, and --json.
-func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON *bool) {
+// checkFlags are gantry check's: --strict or --rules, and --json; or
+// --generated alone.
+func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON, generated *bool) {
 	fs = flagSet("check")
 	strict = fs.Bool("strict", false, "fail on a violation")
 	rules = fs.Bool("rules", false, "the rules, with their guidance")
 	asJSON = fs.Bool("json", false, "as JSON, with stable field names (docs/development.md)")
-	return fs, strict, rules, asJSON
+	generated = fs.Bool("generated", false, "fail on generated Go (templ's, sqlc's) that isn't what its source makes")
+	return fs, strict, rules, asJSON, generated
 }
 
 // checkReport is check --json's: the counts, and every finding in the
@@ -43,12 +45,15 @@ type checkRule struct {
 }
 
 func developmentCheck(root string, args []string, out io.Writer) error {
-	fs, strict, rules, asJSON := checkFlags()
+	fs, strict, rules, asJSON, generated := checkFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || *strict && *rules {
+	if fs.NArg() > 0 || *strict && *rules || *generated && (*strict || *rules || *asJSON) {
 		return usageError{}
+	}
+	if *generated {
+		return generatedCheck(root, out)
 	}
 	if *rules {
 		var list []checkRule
