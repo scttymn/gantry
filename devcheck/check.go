@@ -139,6 +139,10 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 	if err != nil {
 		return nil, err
 	}
+	warnings, err = applyExceptions(root, warnings, byID)
+	if err != nil {
+		return nil, err
+	}
 	sort.SliceStable(warnings, func(i, j int) bool {
 		a, b := warnings[i], warnings[j]
 		if a.File != b.File {
@@ -149,5 +153,5 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 		}
 		return a.Rule < b.Rule
 	})
-	return applyExceptions(root, warnings, byID)
+	return warnings, nil
 }

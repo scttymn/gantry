@@ -28,7 +28,11 @@ func developmentCheck(root string, args []string, out io.Writer) error {
 		if w.Severity == "error" {
 			failures++
 		}
-		fmt.Fprintf(out, "%s:%d: %s [%s]: %s\n", w.File, w.Line, w.Severity, w.Rule, w.Message)
+		location := w.File
+		if w.Line > 0 {
+			location = fmt.Sprintf("%s:%d", w.File, w.Line)
+		}
+		fmt.Fprintf(out, "%s: %s [%s]: %s\n", location, w.Severity, w.Rule, w.Message)
 	}
 	fmt.Fprintf(out, "gantry check: %d violation(s), %d advisory finding(s)\n", failures, len(warnings)-failures)
 	if strict && failures > 0 {
