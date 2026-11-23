@@ -28,7 +28,7 @@ func text(s string) templ.Component {
 	})
 }
 
-var signer = sign.Signer{Key: []byte("test")}
+var signer = sign.Signer{Key: []byte(strings.Repeat("test", 8))}
 
 // serve is a hub behind a router, as an app routes it, on a real server.
 func serve(t *testing.T, o Options) (*Hub, *httptest.Server) {
@@ -154,7 +154,7 @@ func TestBroadcast(t *testing.T) {
 // Only names the app signed can be listened to.
 func TestSigned(t *testing.T) {
 	h, srv := serve(t, Options{})
-	other := New(sign.Signer{Key: []byte("another app")}, Options{})
+	other := New(sign.Signer{Key: []byte(strings.Repeat("another app", 3))}, Options{})
 	for _, path := range []string{"/live", "/live?s=x", "/live?s=" + strings.TrimPrefix(other.URL("project:1"), "/live?s="), h.URL()} {
 		resp, err := http.Get(srv.URL + path)
 		if err != nil {
@@ -358,7 +358,7 @@ func TestClose(t *testing.T) {
 // arrives, until it stops.
 func TestListen(t *testing.T) {
 	ctx := context.Background()
-	h := New(sign.Signer{Key: []byte("k")}, Options{Debounce: time.Millisecond})
+	h := New(sign.Signer{Key: []byte(strings.Repeat("k", 32))}, Options{Debounce: time.Millisecond})
 	messages, stop := h.Listen("project:1", "board")
 	if h.Subscribers("project:1") != 1 || h.Subscribers("board") != 1 {
 		t.Fatal("not subscribed")
