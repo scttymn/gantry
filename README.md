@@ -37,6 +37,8 @@ bin/gantry verify              # every feature in test/features.yaml, visited as
 
 `bin/gantry dev`, `test`, `console` and `deploy` are Houston's commands; `bin/gantry db`, `bin/gantry task` and `bin/gantry routes` run the app's own.
 
+Production needs a `SECRET_KEY` of at least 32 bytes, set as a Houston secret: `bin/gantry secret | houston secrets set SECRET_KEY --project NAME`. `gantry new` puts development's own key in `.env`, which git ignores. See [the signing key](docs/agents.md#the-signing-key).
+
 ## Gantry Strict
 
 Strict helps apps adopt Gantry’s built-in performance and development patterns

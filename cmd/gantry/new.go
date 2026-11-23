@@ -287,14 +287,35 @@ func writeApp(dir string, a NewApp) error {
 			return err
 		}
 	}
+	// Local only (.env is ignored by git): development's signing key, and the
+	// dev database's password. Production's key is a Houston secret.
+	env := "SECRET_KEY=" + secretKey() + "\n"
 	if a.Postgres {
 		raw := make([]byte, 16)
 		rand.Read(raw)
-		// Local only (.env is ignored by git): the dev database's password.
-		if err := write(filepath.Join(dir, ".env"), []byte("POSTGRES_PASSWORD="+hex.EncodeToString(raw)+"\n")); err != nil {
-			return err
-		}
+		env += "POSTGRES_PASSWORD=" + hex.EncodeToString(raw) + "\n"
 	}
+	return write(filepath.Join(dir, ".env"), []byte(env))
+}
+
+// secretKey is a new SECRET_KEY: 32 random bytes, the least sign.Key takes,
+// in hex.
+func secretKey() string {
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// printSecret is gantry secret: a key for production's SECRET_KEY.
+func printSecret(_ string, args []string, out, _ io.Writer) error {
+	fs := flagSet("secret")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageError{fmt.Errorf("secret takes no arguments (%q)", fs.Arg(0))}
+	}
+	fmt.Fprintln(out, secretKey())
 	return nil
 }
 

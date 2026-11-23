@@ -17,7 +17,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
-      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (openssl rand -hex 32, a Houston secret); blank in development
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (bin/gantry secret, a Houston secret); development's is in .env
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
     volumes:
