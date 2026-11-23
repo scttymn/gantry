@@ -441,7 +441,7 @@ type cTx struct{ c *cConn }
 func (t cTx) Commit() error {
 	_, err := t.c.ExecContext(context.Background(), "COMMIT", nil)
 	if err != nil && C.sqlite3_get_autocommit(t.c.db) == 0 {
-		t.c.ExecContext(context.Background(), "ROLLBACK", nil)
+		_, _ = t.c.ExecContext(context.Background(), "ROLLBACK", nil) // the commit's error is the one to return
 	}
 	return err
 }
@@ -672,7 +672,7 @@ func (s *cStmt) first(st *C.sqlite3_stmt, args []driver.NamedValue, finalize boo
 		if finalize {
 			C.sqlite3_finalize(st)
 		} else {
-			s.reset(st)
+			_ = s.reset(st) // after the error being returned, which reset would repeat
 		}
 	}
 	if err := s.bind(st, args); err != nil {

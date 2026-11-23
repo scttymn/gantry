@@ -97,32 +97,20 @@ linters:
       # testkit runs in an app's tests, as they do.
       - path: ^testkit/
         linters: [errcheck]
-      # Errors dropped on purpose, in files open pull requests edit (#66,
-      # #73, #74, #77), so they're named here rather than discarded there:
-      # the comparison with a dummy hash, made for its time, not its answer;
-      - path: ^auth/auth\.go$
-        linters: [errcheck]
-        text: bcrypt\.CompareHashAndPassword
-      # a stream's write deadline, which a writer without deadlines hasn't;
-      - path: ^live/live\.go$
-        linters: [errcheck]
-        text: SetWriteDeadline
+      # An error dropped on purpose is `_ =` in the code, with why. These are
+      # the few left here instead:
       # an error page's JSON (the router's, an app's ErrorPage), whose
-      # failed write has no one to go to;
+      # failed write has no one to go to, as ResponseWriter.Write's;
       - linters: [errcheck]
         source: JSON\(w, status,
-      # the C SQLite's cleanup after an error it returns (#77 edits it): the
-      # rollback after a failed commit, the reset of a failed statement;
-      - path: ^db/sqlite_c\.go$
-        linters: [errcheck]
-        text: (t\.c\.ExecContext|s\.reset)
-      # bench/feed's wait for its jobs to stop at shutdown, as a generated
-      # app's main.go waits: there, a Run that failed while the server ran
-      # is dropped unseen, to change with the template (#73 edits both);
+      # bench/feed's wait for its jobs to stop at shutdown, which is what
+      # gantry new writes (TestBenchFeedIsANewApp): a Run that failed while
+      # the server ran is dropped there unseen, to change in the template;
       - path: ^bench/feed/cmd/feed/main\.go$
         linters: [errcheck]
         source: <-jobsDone
-      # and a failed init's output, written to the CLI's error output.
+      # and a failed init's output, written to the CLI's error output, in a
+      # file open pull requests edit (#81, #83).
       - path: ^cmd/gantry/new\.go$
         linters: [errcheck]
         text: errOut\.Write
