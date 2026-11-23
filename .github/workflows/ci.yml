@@ -1,8 +1,9 @@
 # Every pull request and every push to main: gantry's tests as the release runs
 # them (pure Go, then as an app builds: with cgo, linked statically) on SQLite
 # and Postgres, that build again under the race detector, then vet, gofmt,
-# staticcheck and govulncheck (vet, staticcheck and govulncheck on the app's
-# build too), the bench modules' tests, and the release's build and probe. A
+# golangci-lint (staticcheck among its linters) and govulncheck (each on the
+# app's build too, and golangci-lint on the bench modules), the bench
+# modules' tests, and the release's build and probe. A
 # broken main shows here, not once the tag exists. CI reaches the tests, so a
 # missing Postgres fails them rather than skipping (internal/testenv).
 # No path is ignored: a required check has to report on every pull request.
@@ -75,14 +76,20 @@ jobs:
         run: |
           unformatted=$(bin/go find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
-      - name: staticcheck
-        run: bin/go go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
-      - name: go vet and staticcheck, on the app's build
+      - name: golangci-lint
+        # .golangci.yml's linters, staticcheck's checks among them, on gantry
+        # and the bench modules. Built by the toolchain's Go, as gantry's
+        # go.mod needs a Go no older than its own.
+        run: |
+          bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+          GANTRY_DIR=bench bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+          GANTRY_DIR=bench/feed bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+      - name: go vet and golangci-lint, on the app's build
         # bin/go builds without cgo, which leaves out db/sqlite_c.go, the
         # SQLite an app runs. This is the app's build, as in the test job.
         run: |
           bin/go sh -c 'export CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4" &&
-            go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...'
+            go vet ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...'
       - name: govulncheck
         # Both builds: the CLI's (bin/go's, without cgo) and an app's.
         # GO-2026-6866 and GO-2026-6860, in golang.org/x/net v0.59.0, go with
