@@ -93,7 +93,7 @@ db=(--network "$network" -e GANTRY_TEST_POSTGRES_URL="$url")
 cgo=(-e CGO_ENABLED=1 -e CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY")
 tags=-tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4
 static=(-ldflags "-linkmode external -extldflags -static")
-staticcheck=honnef.co/go/tools/cmd/staticcheck@v0.8.2
+golangci=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
 step "Go tests"
@@ -113,11 +113,16 @@ step "gofmt"
 unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
 [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
 
-step "staticcheck"
-toolchain -- go run "$staticcheck" ./...
+step "shellcheck"
+timeout 300 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
 
-step "go vet and staticcheck, on the app's build"
-toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $staticcheck ./..."
+step "golangci-lint"
+toolchain -- go run "$golangci" run ./...
+GANTRY_DIR=bench toolchain -- go run "$golangci" run ./...
+GANTRY_DIR=bench/feed toolchain -- go run "$golangci" run ./...
+
+step "go vet and golangci-lint, on the app's build"
+toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $golangci run ./..."
 
 step "govulncheck"
 toolchain -- go run "$govulncheck" -format json ./... >"$tmp/vulns.json"

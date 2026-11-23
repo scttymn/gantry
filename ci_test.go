@@ -49,6 +49,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 	// (the first group, or the whole match) must be in bin/ci as it is there.
 	for what, re := range map[string]string{
 		"tool version":           `go run ([\w.-]+(?:/[\w.-]+)+@v[\d.]+)`,
+		"docker image":           `docker run [^\n]*?(\S+@sha256:[0-9a-f]{64})`,
 		"linker flags":           `-ldflags "[^"]+"`,
 		"race detector":          `go test -race`,
 		"bench module":           `GANTRY_DIR=\S+`,
