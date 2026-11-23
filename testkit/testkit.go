@@ -90,10 +90,15 @@ func Fixtures(t testing.TB, d *db.DB, fsys fs.FS, replace map[string]any) IDs {
 				col, node := fields.Content[k].Value, fields.Content[k+1]
 				var v any = node.Value
 				switch {
-				case node.Tag == "!!bool" && d.Engine == db.Postgres:
-					v = node.Value == "true"
 				case node.Tag == "!!bool":
-					v = map[string]int{"true": 1, "false": 0}[node.Value]
+					var b bool
+					if err := node.Decode(&b); err != nil {
+						t.Fatalf("fixture %s.%s.%s: %v", table, label, col, err)
+					}
+					v = b
+					if d.Engine != db.Postgres {
+						v = map[bool]int{true: 1, false: 0}[b]
+					}
 				case node.Tag == "!!null":
 					v = nil
 				default:
