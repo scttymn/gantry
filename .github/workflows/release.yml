@@ -1,9 +1,12 @@
 # A release: pushing a tag like v0.12.0 tests gantry, then publishes a GitHub
-# Release with the CLI binaries (gantry-$os-$arch) and SHA256SUMS over them.
-# An app's bin/gantry downloads the asset for its go.mod version and checks
-# that file. Nothing is published unless the tests pass, and they check that
-# latestRelease (cmd/gantry/new.go) was raised to the tag before it was pushed.
-# Actions are pinned by commit, and no checkout keeps the token in .git/config.
+# Release with the CLI binaries (gantry-$os-$arch), SHA256SUMS over them and
+# provenance.sigstore.json: a build provenance attestation, signed for this
+# workflow at this tag, over the same binaries. An app's bin/gantry downloads
+# the asset for its go.mod version, checks SHA256SUMS and, where gh is
+# installed, the attestation. Nothing is published unless the tests pass, and
+# they check that latestRelease (cmd/gantry/new.go) was raised to the tag
+# before it was pushed. Actions are pinned by commit, and no checkout keeps the
+# token in .git/config.
 name: release
 
 on:
@@ -41,7 +44,7 @@ jobs:
           mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
-            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache -e CI \
             -e GANTRY_RELEASE_TAG="$GITHUB_REF_NAME" \
             gantry-toolchain sh -c 'go test ./... &&
               echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically" &&
@@ -56,6 +59,9 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write
+      # Sign the attestation with this workflow's OIDC identity, and store it.
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,6 +77,21 @@ jobs:
           (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
           grep -qx "	github.com/scttymn/gantry $GITHUB_REF_NAME" "$probe/probe/go.mod" \
             || { echo "a new app's go.mod doesn't require $GITHUB_REF_NAME:"; cat "$probe/probe/go.mod"; exit 1; }
+      - name: The binary pins its Houston release's digests
+        run: |
+          houston=$(dist/gantry-linux-amd64 houston-release)
+          published=$(curl -fsSL --proto =https --retry 3 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+          pinned=$(dist/gantry-linux-amd64 houston-release --sha256)
+          [ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
+      - name: Build provenance
+        id: provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/gantry-*
+      - name: Provenance as a release asset
+        env:
+          BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
+        run: cp "$BUNDLE" dist/provenance.sigstore.json
       - name: GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}

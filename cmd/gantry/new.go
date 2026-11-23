@@ -58,6 +58,17 @@ var releaseTag = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
 // that published houston-$os-$arch and SHA256SUMS.
 const houstonRelease = "v0.5.11"
 
+// houstonSHA256SUMS is houstonRelease's SHA256SUMS lines for its CLIs, copied
+// when it was pinned. bin/gantry checks the Houston it downloads against
+// these (gantry houston-release --sha256), not the Houston release's own
+// file: this gantry carries build provenance, the Houston release doesn't.
+// The release workflow checks they're still what that release publishes.
+const houstonSHA256SUMS = `b4e55360b44347fa7ab2c5d61a6e58bc6f5c75dccdc38339a8511798119127c7  houston-darwin-amd64
+43ef77c9b22b088abcb6a6e71a4727bc77293c0a8ed9f2b6db73e5c277bf98f0  houston-darwin-arm64
+182c451d07db313dd28c3e370fafd72fa35484c34bb4563d35168f1703edc4d8  houston-linux-amd64
+03bd4046a5042c7fa502fe93cbd578160650abed5455d8f466a6ef4d00aa018e  houston-linux-arm64
+`
+
 const templVersion = "v0.3.1020"
 
 var appName = regexp.MustCompile(`\A[a-z][a-z0-9-]{0,62}\z`)
