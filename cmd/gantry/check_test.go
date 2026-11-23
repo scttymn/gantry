@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,6 +49,60 @@ func TestDevelopmentChecks(t *testing.T) {
 	}
 	if got := run([]string{"check"}, t.TempDir(), &out, &out); got != 0 {
 		t.Fatal(got)
+	}
+}
+
+// check --json is the same findings and counts, for tools, with field names
+// that stay: --strict still fails on a violation, after printing them.
+func TestCheckJSON(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "app"), 0o755)
+	os.WriteFile(filepath.Join(root, "app", "editor.html"), []byte("<!doctype html>\n<script src=\"/menu-assets/editor.js?v=1\"></script>"), 0o644)
+	os.WriteFile(filepath.Join(root, "app", "editor.js"), []byte("// editor\nconst form = document.querySelector('form');"), 0o644)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"check", "--json", "--strict"}, root, &out, &errOut); code != 1 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var report struct {
+		Violations int `json:"violations"`
+		Advisories int `json:"advisories"`
+		Findings   []struct {
+			File     string `json:"file"`
+			Line     int    `json:"line"`
+			Rule     string `json:"rule"`
+			Severity string `json:"severity"`
+			Message  string `json:"message"`
+		} `json:"findings"`
+	}
+	d := json.NewDecoder(&out)
+	d.DisallowUnknownFields()
+	if err := d.Decode(&report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Violations != 1 || report.Advisories != 1 || len(report.Findings) != 2 {
+		t.Fatalf("%+v", report)
+	}
+	if f := report.Findings[0]; f.File != "app/editor.html" || f.Line != 2 || f.Severity != "error" || f.Rule == "" || f.Message == "" {
+		t.Errorf("%+v", f)
+	}
+	if f := report.Findings[1]; f.Rule != "form-scope" || f.Severity != "advice" {
+		t.Errorf("%+v", f)
+	}
+
+	// None is an empty list, not null.
+	out.Reset()
+	if code := run([]string{"check", "--json"}, t.TempDir(), &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != `{"violations":0,"advisories":0,"findings":[]}` {
+		t.Errorf("exit %d: %s", code, out.String())
+	}
+
+	// --rules --json is the catalog.
+	out.Reset()
+	if code := run([]string{"check", "--rules", "--json"}, root, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var rules []map[string]string
+	if err := json.Unmarshal(out.Bytes(), &rules); err != nil || len(rules) == 0 || rules[0]["id"] == "" || rules[0]["severity"] == "" || rules[0]["purpose"] == "" || rules[0]["guidance"] == "" || len(rules[0]) != 4 {
+		t.Errorf("%v: %s", err, out.String())
 	}
 }
 

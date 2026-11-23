@@ -311,10 +311,12 @@ func TestEmailCodeRecipe(t *testing.T) {
 				if signup {
 					args = append(args, "--signup")
 				}
-				if code, _, stderr := gantry(t, dir, args...); code != 0 {
+				code, out, stderr := gantry(t, dir, args...)
+				if code != 0 {
 					t.Fatal(stderr)
 				}
 				if mode == "password" {
+					feature(t, dir, out)
 					path := filepath.Join(dir, "app", "routes.go")
 					source, _ := os.ReadFile(path)
 					wired := strings.Replace(string(source), `"net/http"`, `"net/http"

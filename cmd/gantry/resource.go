@@ -202,7 +202,7 @@ func generateResource(root string, args []string, out io.Writer) error {
 }
 
 // nextSteps are what wires a resource into the app, as code to paste: a
-// top-level one in Handler (Rails' resources :posts), a namespaced one in
+// top-level one in Router (Rails' resources :posts), a namespaced one in
 // its namespace's scope (namespace :admin), behind the filter that guards
 // it, which the generator can't know.
 func nextSteps(r Resource) string {
@@ -210,12 +210,12 @@ func nextSteps(r Resource) string {
 	if len(r.Photos) > 0 {
 		shared += ", Photos: a.Storage"
 	}
-	route := fmt.Sprintf(`     and route it, in Handler:
+	route := fmt.Sprintf(`     and route it, in Router:
        rt.Resources(%q, %s.Controller{Controller: resource.Controller{
            %s}}, nil)
 `, r.Base, r.Package, shared)
 	if r.Namespace != "" {
-		route = fmt.Sprintf(`     and route it in Handler, in /%[1]s's scope (one for every %[1]s resource):
+		route = fmt.Sprintf(`     and route it in Router, in /%[1]s's scope (one for every %[1]s resource):
        rt.Scope("/%[1]s", web.Pipeline{}, func(s *web.Scope) {
            s.Resources("/%[2]s", %[3]s.Controller{Controller: resource.Controller{
                %[4]s}}, nil)
@@ -235,15 +235,20 @@ func nextSteps(r Resource) string {
      list and the form in app/%[1]s's layout instead.
 `, r.Namespace, r.Folder)
 	}
+	feature := "  2. In test/features.yaml, add its feature, which bin/gantry verify visits:\n"
+	if r.Namespace != "" {
+		feature = fmt.Sprintf("  2. In test/features.yaml, add its feature, which bin/gantry verify visits as\n     each role: its role is who /%s's filter lets in (public, signed-in or admin):\n", r.Namespace)
+	}
+	feature += featureYAML(strings.TrimPrefix(r.Base, "/"), "public", []string{r.Base, r.Base + "/"}, r.Base, "h1")
 	return fmt.Sprintf(`
 Next:
   1. In app/routes.go, import
        "%s/%s"
        "%s/app/shared/resource"
-%s  2. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
+%s%s  3. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
      and gantry exec go mod tidy.
-  3. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
-%s`, r.Module, r.Folder, r.Module, route, r.Table, own)
+  4. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
+%s`, r.Module, r.Folder, r.Module, route, feature, r.Table, own)
 }
 
 // modulePath is the app's module, from its go.mod.
