@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -78,18 +79,61 @@ var (
 	gooseDown = regexp.MustCompile(`(?m)^-- \+goose Down[ \t\r]*$`)
 )
 
+// migrationProblem is whether name is a goose migration, and what's wrong
+// with it ("" when nothing is). A SQL file is one by its place (a migrations
+// directory, a generator's migration.sql.tmpl), so a mistyped Up line doesn't
+// hide it, or by its Up line wherever it is.
+func migrationProblem(name, text string) (bool, string) {
+	if !strings.HasSuffix(name, ".sql") && !strings.HasSuffix(name, ".sql.tmpl") && !strings.HasSuffix(name, ".sql.golden") {
+		return false, ""
+	}
+	placed := slices.Contains(strings.Split(path.Dir(name), "/"), "migrations") || path.Base(name) == "migration.sql.tmpl"
+	switch {
+	case !placed && !gooseUp.MatchString(text):
+		return false, ""
+	case !gooseUp.MatchString(text):
+		return true, "no -- +goose Up line"
+	case !gooseDown.MatchString(text):
+		return true, "no -- +goose Down section"
+	}
+	return true, ""
+}
+
+func TestMigrationProblem(t *testing.T) {
+	const up, down = "-- +goose Up\nCREATE TABLE x (id integer);\n", "\n-- +goose Down\nDROP TABLE x;\n"
+	for _, c := range []struct {
+		name, text string
+		migration  bool
+		problem    string
+	}{
+		{"jobs/migrations/sqlite/00002_x.sql", up + down, true, ""},
+		{"db/migrations/00002_x.sql", "-- +goose Up\nUPDATE x SET id = id;\n\n-- +goose Down\n", true, ""},
+		{"jobs/migrations/sqlite/00002_x.sql", up, true, "no -- +goose Down section"},
+		{"cmd/gantry/templates/emailcodes/codes.sql.tmpl", up, true, "no -- +goose Down section"},
+		{"jobs/migrations/sqlite/00002_x.sql", "-- goose Up\nCREATE TABLE x (id integer);\n" + down, true, "no -- +goose Up line"},
+		{"cmd/gantry/templates/storage/migration.sql.tmpl", "CREATE TABLE x (id integer);\n" + down, true, "no -- +goose Up line"},
+		{"cmd/gantry/testdata/golden/new-sqlite/db/migrations/00001_start.sql.golden", down, true, "no -- +goose Up line"},
+		{"cmd/gantry/templates/resource/model.sql.tmpl", "-- name: Posts :many\nSELECT * FROM posts;\n", false, ""},
+		{"db/schema.sql", "CREATE TABLE x (id integer);\n", false, ""},
+	} {
+		if migration, problem := migrationProblem(c.name, c.text); migration != c.migration || problem != c.problem {
+			t.Errorf("%s %q: (%v, %q), want (%v, %q)", c.name, c.text, migration, problem, c.migration, c.problem)
+		}
+	}
+}
+
 // Every goose migration here (jobs', the generators' templates and their
-// goldens, bench/feed's) has a down section. Rolling back stops at one that
-// hasn't, and testkit.Migrations checks no migration older than it.
+// goldens, bench/feed's) has its up and down sections. Rolling back stops at
+// one without a down, and testkit.Migrations checks no migration older than it.
 func TestMigrationsHaveDown(t *testing.T) {
 	n := 0
 	files(t, checkout, func(name, text string) {
-		if !strings.HasSuffix(name, ".sql") && !strings.HasSuffix(name, ".sql.tmpl") && !strings.HasSuffix(name, ".sql.golden") || !gooseUp.MatchString(text) {
-			return
+		migration, problem := migrationProblem(name, text)
+		if migration {
+			n++
 		}
-		n++
-		if !gooseDown.MatchString(text) {
-			t.Errorf("%s: no -- +goose Down section", name)
+		if problem != "" {
+			t.Errorf("%s: %s", name, problem)
 		}
 	})
 	if n == 0 {
@@ -97,10 +141,10 @@ func TestMigrationsHaveDown(t *testing.T) {
 	}
 }
 
-var email = regexp.MustCompile(`[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})`)
+var email = regexp.MustCompile(`[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]+)`)
 
 // exampleDomain is a domain reserved for examples (RFC 2606, RFC 6761, and
-// .internal), or one of the mail providers gantry's code treats specially.
+// .internal).
 func exampleDomain(domain string) bool {
 	domain = strings.ToLower(domain)
 	for _, d := range []string{"example.com", "example.net", "example.org"} {
@@ -109,8 +153,49 @@ func exampleDomain(domain string) bool {
 		}
 	}
 	tld := domain[strings.LastIndexByte(domain, '.')+1:]
-	return slices.Contains([]string{"example", "test", "invalid", "localhost", "internal"}, tld) ||
-		slices.Contains([]string{"gmail.com", "googlemail.com", "privaterelay.appleid.com"}, domain)
+	return slices.Contains([]string{"example", "test", "invalid", "localhost", "internal"}, tld)
+}
+
+// providerDomains are the mail providers social login treats specially
+// (auth/social_provider.go), allowed only in the tests of it.
+var providerDomains = map[string][]string{
+	"auth/social_test.go": {"gmail.com", "privaterelay.appleid.com"},
+}
+
+// addressProblems is the email addresses in name that aren't examples.
+func addressProblems(name, text string) []string {
+	if strings.HasPrefix(name, "docs/plans/") {
+		return nil
+	}
+	var bad []string
+	for _, m := range email.FindAllStringSubmatch(text, -1) {
+		if !exampleDomain(m[1]) && !slices.Contains(providerDomains[name], strings.ToLower(m[1])) {
+			bad = append(bad, m[0])
+		}
+	}
+	return bad
+}
+
+func TestAddressProblems(t *testing.T) {
+	// Built here, so this file's own text holds none of them.
+	at := func(local, domain string) string { return local + "@" + domain }
+	gmail, relay, real, short := at("someone", "gmail.com"), at("relay", "privaterelay.appleid.com"), at("person", "realcompany.co"), at("a", "b.c")
+	for _, c := range []struct {
+		name, text string
+		bad        []string
+	}{
+		{"mail/mail_test.go", `"x@example.org", "a@mail.example.com", "dev@shop.localhost", "pw@host.docker.internal"`, nil},
+		{"mail/mail_test.go", gmail, []string{gmail}},
+		{"README.md", relay, []string{relay}},
+		{"auth/social_test.go", gmail + ", " + relay, nil},
+		{"auth/social_test.go", real, []string{real}},
+		{"testkit/links_test.go", `<a href="mailto:` + short + `">`, []string{short}},
+		{"docs/plans/gantry.md", real, nil},
+	} {
+		if got := addressProblems(c.name, c.text); !slices.Equal(got, c.bad) {
+			t.Errorf("%s %q: %q, want %q", c.name, c.text, got, c.bad)
+		}
+	}
 }
 
 // Email addresses in code, tests, goldens and docs are made up, at a domain
@@ -118,13 +203,8 @@ func exampleDomain(domain string) bool {
 // docs/plans quotes the conversations gantry was planned in.
 func TestEmailAddressesAreExamples(t *testing.T) {
 	files(t, checkout, func(name, text string) {
-		if strings.HasPrefix(name, "docs/plans/") {
-			return
-		}
-		for _, m := range email.FindAllStringSubmatch(text, -1) {
-			if !exampleDomain(m[1]) {
-				t.Errorf("%s: %s isn't at an example domain (example.com, *.test, *.localhost, ...)", name, m[0])
-			}
+		for _, bad := range addressProblems(name, text) {
+			t.Errorf("%s: %s isn't at an example domain (example.com, *.test, *.localhost, ...)", name, bad)
 		}
 	})
 }
