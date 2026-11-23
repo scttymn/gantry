@@ -66,7 +66,8 @@ Use `FirstUser.CreateUser(ctx, tx, email, passwordDigest)` for required profile
 fields or the application's initial administrator role. The callback must insert
 with tx and return that account; the digest is already hashed. Returning an error
 rolls back the account and completion together. Custom setup views implement
-`Views.Setup` and honor `Page.Status`; never echo passwords or the setup code.
+`Views.Setup`; never echo passwords or the setup code. Every view answers with
+`Page.Status` (200 when it's zero), as the generated ones do.
 A programmatically created user through this configured Auth closes setup in the
 same transaction. Startup also closes setup if it finds seeded/imported users.
 
@@ -116,7 +117,8 @@ and panics on a missing database, sender, valid From address or suitable key.
 2. `POST /login` sends a six-digit code and sets an HttpOnly challenge cookie.
 3. `GET /login/verify` shows the code form, resend button and change-email link.
 4. `POST /login/verify` verifies and consumes the code, optionally creates the
-   user, then starts the same session used by password login.
+   user, then starts the same session used by password login. A wrong, expired
+   or used code redirects (303) back to the code form with an alert.
 5. `POST /logout` ends the session.
 
 Custom `Paths.Login` moves both the email form and its `/verify` routes.

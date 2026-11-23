@@ -24,13 +24,20 @@ func New(d *db.DB, signer sign.Signer, sender mail.Sender, from string, key []by
 		EmailCodes: &gantryauth.EmailCodes{Key: key, Signup: true},
 		Views: gantryauth.Views{
 			RequestCode: func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
-				return web.Render(w, r, http.StatusOK, requestCode(p))
+				return web.Render(w, r, pageStatus(p), requestCode(p))
 			},
 			VerifyCode: func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
-				return web.Render(w, r, http.StatusOK, verifyCode(p))
+				return web.Render(w, r, pageStatus(p), verifyCode(p))
 			},
 		},
 	}
+}
+
+func pageStatus(p gantryauth.Page) int {
+	if p.Status != 0 {
+		return p.Status
+	}
+	return http.StatusOK
 }
 
 func Current(r *http.Request) (User, bool) { return gantryauth.Current(r) }
