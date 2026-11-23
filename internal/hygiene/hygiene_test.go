@@ -141,6 +141,63 @@ func TestMigrationsHaveDown(t *testing.T) {
 	}
 }
 
+var (
+	testName = regexp.MustCompile(`\bTest[A-Z][A-Za-z0-9_]*`)
+	testFunc = regexp.MustCompile(`\bfunc (Test[A-Z][A-Za-z0-9_]*)\(`)
+)
+
+// staleTestNames is each test named in texts (file → text) that no text
+// defines, with the files that name it. A definition counts wherever it is:
+// a _test.go file, a template or golden of one, or a string a test writes
+// out as a file.
+func staleTestNames(texts map[string]string) map[string][]string {
+	defined := map[string]bool{}
+	for _, text := range texts {
+		for _, m := range testFunc.FindAllStringSubmatch(text, -1) {
+			defined[m[1]] = true
+		}
+	}
+	stale := map[string][]string{}
+	for name, text := range texts {
+		for _, test := range testName.FindAllString(text, -1) {
+			if !defined[test] && !slices.Contains(stale[test], name) {
+				stale[test] = append(stale[test], name)
+			}
+		}
+	}
+	return stale
+}
+
+func TestStaleTestNames(t *testing.T) {
+	// Built here, so this file's own text names none of them.
+	a, b, gone := "Test"+"A", "Test"+"B", "Test"+"Gone"
+	got := staleTestNames(map[string]string{
+		"a_test.go":       "package a\n\n// Like " + b + ".\nfunc " + a + "(t *testing.T) {}\n",
+		"b.go.tmpl":       "func " + b + "(t *testing.T) {}\n",
+		".github/ci.yml":  "# " + gone + " holds it; " + a + " does too.\n",
+		"CONTRIBUTING.md": "`" + gone + "` and `TestingT`.\n",
+	})
+	if len(got) != 1 || len(got[gone]) != 2 {
+		t.Errorf("stale: %v, want %s in .github/ci.yml and CONTRIBUTING.md", got, gone)
+	}
+}
+
+// Every test the repository names (in a comment, a workflow, a doc, a
+// message) is one it has: a test renamed or replaced leaves no pointer to
+// nothing behind. docs/plans records what was, and keeps its old names.
+func TestNamedTestsExist(t *testing.T) {
+	texts := map[string]string{}
+	files(t, checkout, func(name, text string) {
+		if !strings.HasPrefix(name, "docs/plans/") {
+			texts[name] = text
+		}
+	})
+	for test, names := range staleTestNames(texts) {
+		slices.Sort(names)
+		t.Errorf("%s names %s, which no file defines: name the test that does its work now", strings.Join(names, ", "), test)
+	}
+}
+
 var email = regexp.MustCompile(`[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]+)`)
 
 // exampleDomain is a domain reserved for examples (RFC 2606, RFC 6761, and
