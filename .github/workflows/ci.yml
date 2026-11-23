@@ -1,7 +1,9 @@
 # Every pull request and every push to main: gantry's tests as the release runs
 # them (pure Go, then as an app builds: with cgo, linked statically), that build
-# again under the race detector, then vet, gofmt, staticcheck, govulncheck and
-# the bench modules' tests. A broken main shows here, not once the tag exists.
+# again under the race detector, testkit and jobs on Postgres, then vet, gofmt,
+# staticcheck and govulncheck (vet, staticcheck and govulncheck on the app's
+# build too) and the bench modules' tests. A broken main shows here, not once
+# the tag exists.
 # No path is ignored: a required check has to report on every pull request.
 # Actions are pinned by commit, and no checkout keeps the token in .git/config.
 name: ci
@@ -14,8 +16,11 @@ on:
 permissions:
   contents: read
 
+# A pull request's newer push cancels its older run. Each push to main has a
+# group of its own, so none is cancelled or dropped from the queue, and a break
+# is pinned to its commit.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -55,6 +60,15 @@ jobs:
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
             gantry-toolchain sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -race -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
+      - name: testkit and jobs on Postgres
+        # They take Postgres from TEST_DATABASE_URL, an app's variable, and run
+        # on SQLite without it, as in the passes above: testkit.Postgres and
+        # jobs' Postgres queries (FOR UPDATE SKIP LOCKED) run only here.
+        run: |
+          docker run --rm --network host -v "$PWD:/src" -w /src \
+            -e TEST_DATABASE_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
+            -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
+            gantry-toolchain go test ./testkit ./jobs
 
   check:
     runs-on: ubuntu-24.04
@@ -71,12 +85,20 @@ jobs:
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
       - name: staticcheck
         run: bin/go go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
+      - name: go vet and staticcheck, on the app's build
+        # bin/go builds without cgo, which leaves out db/sqlite_c.go, the
+        # SQLite an app runs. This is the app's build, as in the test job.
+        run: |
+          bin/go sh -c 'export CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4" &&
+            go vet ./... && go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...'
       - name: govulncheck
+        # Both builds: the CLI's (bin/go's, without cgo) and an app's.
         # GO-2026-6866 and GO-2026-6860, in golang.org/x/net v0.59.0, go with
         # raising it (#18): until then they're listed, and any other
         # vulnerability gantry's code reaches fails the job.
         run: |
           bin/go go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json ./... > "$RUNNER_TEMP/vulns.json"
+          bin/go sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 ./...' >> "$RUNNER_TEMP/vulns.json"
           reached=$(jq -rs '[.[].finding | select(.trace[0].function) | .osv] | unique[]' "$RUNNER_TEMP/vulns.json")
           echo "reached: ${reached:-none}"
           unknown=$(printf '%s\n' "$reached" | grep -vx -e GO-2026-6866 -e GO-2026-6860 || true)
