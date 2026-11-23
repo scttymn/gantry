@@ -74,13 +74,7 @@ func TestPostgres(t *testing.T) {
 }
 
 func TestPostgresFixtures(t *testing.T) {
-	if os.Getenv("TEST_DATABASE_URL") == "" {
-		server := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-		if server == "" {
-			t.Skip("neither TEST_DATABASE_URL nor GANTRY_TEST_POSTGRES_URL is set")
-		}
-		t.Setenv("TEST_DATABASE_URL", server)
-	}
+	t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 	d := Postgres(t, func(ctx context.Context, d *db.DB) error {
 		_, err := d.Write.ExecContext(ctx, `CREATE TABLE posts (id bigserial PRIMARY KEY, title text NOT NULL, published boolean NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL)`)
 		return err
