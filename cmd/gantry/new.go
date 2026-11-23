@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
@@ -41,6 +42,9 @@ type NewApp struct {
 	InModule bool
 	Dir, Up  string
 	Work     string // "/app", or "/app/<Dir>"
+	// Where the dev container has the app: Work, or with --gantry, under /app
+	// beside the checkout (gantryMounts).
+	DevWork string
 }
 
 // latestRelease is what a new app requires when this gantry isn't a release
@@ -151,6 +155,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		a.Work = "/app/" + a.Dir
 		a.Module = path + "/" + a.Dir
 	}
+	a.DevWork = a.Work
 	if a.Postgres {
 		a.Engine = "postgresql"
 	}
@@ -173,7 +178,8 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		if err != nil || !strings.HasPrefix(rel, "..") {
 			return fmt.Errorf("--gantry %s: the checkout must be outside the app", o.gantry)
 		}
-		a.GantryPath, a.GantryMount = filepath.ToSlash(rel), filepath.ToSlash(filepath.Join("/app", rel))
+		a.GantryPath = filepath.ToSlash(rel)
+		a.DevWork, a.GantryMount = gantryMounts(appAbs, abs)
 	} else if release == "" {
 		fmt.Fprintf(errOut, "note: this gantry isn't a release, so the app requires %s, the newest before it; --gantry PATH builds it against this checkout instead\n", latestRelease)
 	}
@@ -352,6 +358,28 @@ func enclosingModule(dir string) (root, path string, err error) {
 			return "", "", errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
 		}
 	}
+}
+
+// gantryMounts is where the dev container has an app made with --gantry and
+// the checkout it builds against: each at its path below the folder they
+// share on the host, under /app. They're as far apart as on the host, so
+// go.work's use finds the checkout there too, and however far up the
+// checkout is, nothing is mounted over the container's own folders: with
+// --gantry ../.. the checkout is /app, and the app /app/<its folder>/<app>.
+func gantryMounts(app, checkout string) (appAt, checkoutAt string) {
+	shared := app
+	rel, _ := filepath.Rel(app, checkout)
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part != ".." {
+			break
+		}
+		shared = filepath.Dir(shared)
+	}
+	below := func(dir string) string {
+		rel, _ := filepath.Rel(shared, dir)
+		return path.Join("/app", filepath.ToSlash(rel))
+	}
+	return below(app), below(checkout)
 }
 
 // write writes a generated file, a Go one as gofmt would (a template that
