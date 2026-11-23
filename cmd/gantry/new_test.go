@@ -6,6 +6,7 @@ import (
 	"go/format"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/scttymn/gantry/testkit"
+	"gopkg.in/yaml.v3"
 )
 
 // steps records the commands gantry runs instead of running them; fail
@@ -433,24 +435,80 @@ func TestNewRules(t *testing.T) {
 	}
 }
 
-// --gantry: go.work uses the checkout, and the dev container mounts it at
-// the same place relative to /app.
+// --gantry: go.work uses the checkout, and the dev container mounts the app
+// and the checkout under /app, the same path apart as on the host, so
+// go.work's use finds the checkout there too. Nothing is mounted over the
+// container's own folders, however far up or away the checkout is.
 func TestNewGantryCheckout(t *testing.T) {
-	root := t.TempDir()
-	checkout := filepath.Join(root, "gantry")
-	os.MkdirAll(checkout, 0o755)
-	os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module github.com/scttymn/gantry\n"), 0o644)
-	if code, _, stderr := gantry(t, root, "new", "shop", "--gantry", checkout, "--skip-houston"); code != 0 {
-		t.Fatal(stderr)
-	}
-	work, _ := os.ReadFile(filepath.Join(root, "shop", "go.work"))
-	compose, _ := os.ReadFile(filepath.Join(root, "shop", "compose.yml"))
-	if !strings.Contains(string(work), "use (\n\t.\n\t../gantry\n)") || !strings.Contains(string(compose), "- ../gantry:/gantry") {
-		t.Errorf("go.work:\n%s\ncompose.yml:\n%s", work, compose)
-	}
-	ignored, _ := os.ReadFile(filepath.Join(root, "shop", ".gitignore"))
-	if !strings.Contains(string(ignored), "go.work\n") {
-		t.Error("go.work isn't ignored by git")
+	for _, tc := range []struct {
+		in, checkout string // where the app is made and where the checkout is, under a temporary root
+		use          string // go.work's use: the checkout, from the app
+	}{
+		{in: ".", checkout: "gantry", use: "../gantry"},
+		{in: "gantry", checkout: "gantry", use: ".."},
+		{in: "apps", checkout: ".", use: "../.."},
+		{in: "apps", checkout: "x", use: "../../x"},
+		{in: "home/me/apps", checkout: "src/gantry", use: "../../../../src/gantry"},
+	} {
+		t.Run(tc.use, func(t *testing.T) {
+			root := t.TempDir()
+			in, checkout := filepath.Join(root, tc.in), filepath.Join(root, tc.checkout)
+			os.MkdirAll(in, 0o755)
+			os.MkdirAll(checkout, 0o755)
+			os.WriteFile(filepath.Join(checkout, "go.mod"), []byte("module github.com/scttymn/gantry\n"), 0o644)
+			if code, _, stderr := gantry(t, in, "new", "shop", "--gantry", checkout, "--skip-houston"); code != 0 {
+				t.Fatal(stderr)
+			}
+			dir := filepath.Join(in, "shop")
+			work, _ := os.ReadFile(filepath.Join(dir, "go.work"))
+			if !strings.Contains(string(work), "use (\n\t.\n\t"+tc.use+"\n)") {
+				t.Fatalf("go.work doesn't use %s:\n%s", tc.use, work)
+			}
+
+			raw, _ := os.ReadFile(filepath.Join(dir, "compose.yml"))
+			var compose struct {
+				Services map[string]struct{ Volumes []string }
+			}
+			if err := yaml.Unmarshal(raw, &compose); err != nil {
+				t.Fatal(err)
+			}
+			mounts := map[string]string{} // a folder on the host: where the container has it
+			for _, v := range compose.Services["app"].Volumes {
+				source, target, _ := strings.Cut(v, ":")
+				if !strings.HasPrefix(source, ".") && !strings.HasPrefix(source, "/") {
+					continue // a named volume
+				}
+				if target != "/app" && !strings.HasPrefix(target, "/app/") {
+					t.Errorf("%s is mounted at %s, outside /app", source, target)
+				}
+				if !filepath.IsAbs(source) {
+					source = filepath.Join(dir, source)
+				}
+				mounts[source] = target
+			}
+			app, gantryAt := mounts[dir], mounts[checkout]
+			if app == "" || gantryAt == "" {
+				t.Fatalf("the app and the checkout aren't both mounted: %q\n%s", mounts, raw)
+			}
+			if got := path.Join(app, tc.use); got != gantryAt {
+				t.Errorf("in the container, go.work's use is %s, and the checkout is at %s", got, gantryAt)
+			}
+			docker, _ := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+			_, dev, _ := strings.Cut(string(docker), "AS dev\n")
+			dev, _, _ = strings.Cut(dev, "\nFROM ")
+			if !strings.Contains(dev, "WORKDIR "+app+"\n") || !strings.Contains(dev, `"-path", "`+app+`"`) {
+				t.Errorf("the dev stage doesn't work in the app's mount, %s:\n%s", app, dev)
+			}
+			// The test and production builds copy the app to /app, and build
+			// against go.mod's gantry, not the checkout.
+			if others := strings.Replace(string(docker), dev, "", 1); strings.Contains(others, app+" ") || strings.Contains(others, app+"\n") {
+				t.Errorf("a stage besides dev uses the dev container's %s", app)
+			}
+			ignored, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+			if !strings.Contains(string(ignored), "go.work\n") {
+				t.Error("go.work isn't ignored by git")
+			}
+		})
 	}
 }
 
