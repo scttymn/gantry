@@ -2,6 +2,8 @@ package jobs
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -339,6 +341,138 @@ func TestLimitExpires(t *testing.T) {
 	}
 }
 
+// A job that runs past its limit's Duration loses its slot to the next one;
+// once both finish, the limit is still To at once, not one more.
+func TestLimitOutlived(t *testing.T) {
+	ctx := context.Background()
+	q, _, clock := queue(t, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	for range 4 {
+		deploy.Enqueue(ctx, "shop")
+	}
+	long, ok, _ := q.claim(ctx, "default", "test")
+	if !ok {
+		t.Fatal("nothing claimed")
+	}
+	clock.Advance(3*time.Minute + time.Second)
+	if err := q.maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	next, ok, _ := q.claim(ctx, "default", "test")
+	if !ok {
+		t.Fatal("the outlived slot didn't expire")
+	}
+	q.execute(ctx, long)
+	q.execute(ctx, next)
+	if _, ok, _ := q.claim(ctx, "default", "test"); !ok {
+		t.Fatal("nothing claimed once both finished")
+	}
+	if _, ok, _ := q.claim(ctx, "default", "test"); ok {
+		t.Error("two claimed at once with a limit of one")
+	}
+}
+
+// Jobs waiting on their limit don't hold up the ones behind them, however
+// many wait.
+func TestLimitHeadOfLine(t *testing.T) {
+	ctx := context.Background()
+	q, _, _ := queue(t, Options{})
+	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
+	for range 25 {
+		deploy.Enqueue(ctx, "shop")
+	}
+	deploy.Enqueue(ctx, "blog")
+	if c, ok, _ := q.claim(ctx, "default", "test"); !ok || string(c.Args) != `"shop"` {
+		t.Fatalf("claimed %q, %v; want the first shop deploy", c.Args, ok)
+	}
+	if c, ok, err := q.claim(ctx, "default", "test"); err != nil || !ok || string(c.Args) != `"blog"` {
+		t.Errorf("claimed %q, %v, %v; want the blog deploy, behind 24 waiting for shop's limit", c.Args, ok, err)
+	}
+}
+
+// A worker that stalls past Dead, its job gone back and claimed again, ends
+// late: what it ends with is dropped, not written over the new claim.
+func TestStaleWorker(t *testing.T) {
+	ctx := context.Background()
+	q, _, clock := queue(t, Options{})
+	var calls, exhausted atomic.Int32
+	work := Define(q, "work", func(ctx context.Context, s string) error {
+		if calls.Add(1) == 1 {
+			return errors.New("too late")
+		}
+		return nil
+	}, Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }})
+	work.Enqueue(ctx, "x")
+	stale, ok, _ := q.claim(ctx, "default", "stalled")
+	if !ok {
+		t.Fatal("nothing claimed")
+	}
+	clock.Advance(6 * time.Minute)
+	q.maintain(ctx)
+	q.beat(ctx, "alive")
+	fresh, ok, _ := q.claim(ctx, "default", "alive")
+	if !ok {
+		t.Fatal("the stalled worker's job didn't go back")
+	}
+	q.execute(ctx, stale)
+	if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "claimed" {
+		t.Fatalf("the stalled worker settled a job claimed again: %+v", p)
+	}
+	if failed, _ := q.Failed(ctx); len(failed) != 0 || exhausted.Load() != 0 {
+		t.Fatalf("failed %+v, exhausted %d; want neither", failed, exhausted.Load())
+	}
+	q.execute(ctx, fresh)
+	if p, _ := q.Pending(ctx); len(p) != 0 {
+		t.Errorf("the new claim's run didn't finish the job: %+v", p)
+	}
+}
+
+// brokenRead is a database whose queries fail after their first row, as a
+// dropped connection does.
+type brokenRead struct{}
+
+func (brokenRead) Connect(context.Context) (driver.Conn, error) { return brokenRead{}, nil }
+func (brokenRead) Driver() driver.Driver                        { return nil }
+func (brokenRead) Prepare(string) (driver.Stmt, error)          { return nil, errors.New("not prepared") }
+func (brokenRead) Close() error                                 { return nil }
+func (brokenRead) Begin() (driver.Tx, error)                    { return brokenRead{}, nil }
+func (brokenRead) Commit() error                                { return nil }
+func (brokenRead) Rollback() error                              { return nil }
+func (brokenRead) ExecContext(context.Context, string, []driver.NamedValue) (driver.Result, error) {
+	return driver.RowsAffected(1), nil
+}
+func (brokenRead) QueryContext(context.Context, string, []driver.NamedValue) (driver.Rows, error) {
+	return &oneRow{}, nil
+}
+
+type oneRow struct{ sent bool }
+
+func (*oneRow) Columns() []string { return []string{"id", "name", "args", "attempts", "limit_key"} }
+func (*oneRow) Close() error      { return nil }
+func (r *oneRow) Next(dest []driver.Value) error {
+	if r.sent {
+		return errors.New("connection reset")
+	}
+	r.sent = true
+	copy(dest, []driver.Value{int64(1), "work", `"x"`, int64(0), ""})
+	return nil
+}
+
+// A claim whose read fails partway fails, rather than claiming from what it
+// read before the failure.
+func TestClaimReadFails(t *testing.T) {
+	broken := sql.OpenDB(brokenRead{})
+	defer broken.Close()
+	q := &Queue{d: &db.DB{Engine: db.SQLite, Read: broken, Write: broken},
+		o: Options{Log: slog.New(slog.DiscardHandler), Now: time.Now}, defs: map[string]runner{}}
+	Define(q, "work", func(ctx context.Context, s string) error { return nil }, Opts[string]{})
+	if c, ok, err := q.claim(context.Background(), "default", "test"); err == nil {
+		t.Errorf("claimed %+v, %v; want the read's error", c, ok)
+	}
+}
+
 func TestRecurring(t *testing.T) {
 	ctx := context.Background()
 	q, d, clock := queue(t, Options{})
@@ -376,6 +510,62 @@ func TestRecurring(t *testing.T) {
 	}
 	if err := Define(q, "bad", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Cron("not cron", time.UTC, "x"); err == nil {
 		t.Error("a bad cron expression")
+	}
+}
+
+// A tick whose job isn't saved isn't recorded either: the next tick enqueues
+// the run, rather than finding it taken.
+func TestRecurringInsertFails(t *testing.T) {
+	ctx := context.Background()
+	q, d, clock := queue(t, Options{})
+	var runs atomic.Int32
+	Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(10*time.Minute, "x")
+	fail := []string{`CREATE TRIGGER fail BEFORE INSERT ON gantry_jobs BEGIN SELECT RAISE(ABORT, 'disk full'); END`}
+	unfail := `DROP TRIGGER fail`
+	if d.Engine == db.Postgres {
+		fail = []string{`CREATE FUNCTION fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'disk full'; END $$`,
+			`CREATE TRIGGER fail BEFORE INSERT ON gantry_jobs FOR EACH ROW EXECUTE FUNCTION fail()`}
+		unfail = `DROP TRIGGER fail ON gantry_jobs`
+	}
+	for _, stmt := range fail {
+		if _, err := d.Write.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock.Advance(10 * time.Minute)
+	if err := q.Drain(ctx); err == nil {
+		t.Fatal("the job wasn't saved, and the tick didn't say so")
+	}
+	if _, err := d.Write.ExecContext(ctx, unfail); err != nil {
+		t.Fatal(err)
+	}
+	drain(t, q)
+	if runs.Load() != 1 {
+		t.Errorf("%d runs after the failed tick; want 1", runs.Load())
+	}
+}
+
+// A recurring job's ticks are kept as long as finished jobs, then cleared.
+func TestTicksCleared(t *testing.T) {
+	ctx := context.Background()
+	q, d, clock := queue(t, Options{})
+	Define(q, "sweep", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Every(time.Hour, "x")
+	clock.Advance(time.Hour)
+	drain(t, q)
+	ticks := func() int {
+		var n int
+		d.Read.QueryRow(`SELECT COUNT(*) FROM gantry_job_ticks`).Scan(&n)
+		return n
+	}
+	clock.Advance(23 * time.Hour)
+	q.maintain(ctx)
+	if ticks() != 1 {
+		t.Fatalf("%d ticks before a day; want 1", ticks())
+	}
+	clock.Advance(2 * time.Hour)
+	q.maintain(ctx)
+	if ticks() != 0 {
+		t.Errorf("%d ticks after a day; want 0", ticks())
 	}
 }
 
