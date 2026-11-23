@@ -530,7 +530,18 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 		{"gh too old", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
 			rs.gh(t, false)
 			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
-		}, "GANTRY_REQUIRE_PROVENANCE=1 needs gh 2.70", "gantry"},
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
+		{"true requires it too", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			rs.gh(t, false)
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=true")
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
+		{"0 doesn't", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			rs.gh(t, false)
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=0")
+		}, "SHA256SUMS only", ""},
+		{"a value it doesn't know", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
+			return rs.env("GANTRY_REQUIRE_PROVENANCE=yes")
+		}, "GANTRY_REQUIRE_PROVENANCE=yes", "gantry"},
 		{"no gh", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
 			for _, d := range []string{"/usr/bin", "/bin"} {
 				if _, err := os.Stat(filepath.Join(d, "gh")); err == nil {
@@ -538,13 +549,13 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 				}
 			}
 			return rs.env("PATH=/usr/bin:/bin", "GANTRY_REQUIRE_PROVENANCE=1")
-		}, "GANTRY_REQUIRE_PROVENANCE=1 needs gh 2.70", "gantry"},
+		}, "GANTRY_REQUIRE_PROVENANCE needs gh 2.70", "gantry"},
 		{"published before provenance", "v0.17.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
 			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
-		}, "GANTRY_REQUIRE_PROVENANCE=1", "gantry"},
+		}, "GANTRY_REQUIRE_PROVENANCE refuses it", "gantry"},
 		{"gantry pins no Houston digests", "v0.20.0", gantryNaming("v9.9.9"), func(t *testing.T, rs *releaseServer) []string {
 			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
-		}, "GANTRY_REQUIRE_PROVENANCE=1", "houston"},
+		}, "GANTRY_REQUIRE_PROVENANCE refuses it", "houston"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -569,6 +580,11 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 			}
 			if tc.refused != "" && strings.Contains(out, "gantry-ok") {
 				t.Errorf("ran gantry after refusing a download:\n%s", out)
+			}
+			// What's refused is known before the download, which doesn't happen.
+			release := map[string]string{"gantry": tc.version, "houston": "v9.9.9"}[tc.refused]
+			if asset := "/" + tc.refused + "/" + release + "/" + tc.refused + "-" + osName + "-" + arch; tc.refused != "" && rs.hitsOn(asset) != 0 {
+				t.Errorf("downloaded %s before refusing it:\n%s", asset, out)
 			}
 		})
 	}

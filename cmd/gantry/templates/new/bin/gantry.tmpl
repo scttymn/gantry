@@ -7,10 +7,12 @@
 # later) is installed, its build provenance: an attestation that gantry's
 # release workflow built that binary at that tag. Houston is checked against
 # the digests that gantry pins for it. Both land in .gantry/bin, which git
-# ignores. Where provenance can't be checked (no gh, or one older than 2.70;
-# a gantry release from before it carried provenance; a gantry that pins no
-# digests for its Houston) bin/gantry says so and goes on; with
-# GANTRY_REQUIRE_PROVENANCE=1 it refuses instead, and installs nothing.
+# ignores. Without gh 2.70 or later, or with a gantry that pins no digests for
+# its Houston, bin/gantry says what it couldn't check and goes on; a gantry
+# release up to v0.17.0 has no provenance to check. GANTRY_REQUIRE_PROVENANCE=1
+# (or true) refuses each of those instead, before downloading anything. It
+# applies to downloads: a CLI already in .gantry/bin is used as it is, so
+# delete .gantry/bin to have them checked again.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -23,11 +25,23 @@ houston_version="{{.Houston}}"
 unattested=v0.17.0
 gantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}
 houston_base=${HOUSTON_RELEASE_BASE:-https://github.com/scttymn/houston/releases/download}
-strict=${GANTRY_REQUIRE_PROVENANCE:-}
 
 die() {
 	printf '%s\n' "bin/gantry: $*" >&2
 	exit 1
+}
+
+# A setting meant as a guarantee is never misread as off.
+case ${GANTRY_REQUIRE_PROVENANCE:-} in
+"" | 0 | false) strict="" ;;
+1 | true) strict=1 ;;
+*) die "GANTRY_REQUIRE_PROVENANCE=$GANTRY_REQUIRE_PROVENANCE: set it to 1 or true to require build provenance, or 0, false or nothing not to" ;;
+esac
+
+# gh_checks_provenance: whether gh is 2.70 or later, which checks an
+# attestation's tag (--source-ref).
+gh_checks_provenance() {
+	gh attestation verify --help 2>/dev/null | grep -q -- --source-ref
 }
 
 os=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -220,6 +234,16 @@ fetch_release() {
 	https://*) ;;
 	*) die "$name's release base $base isn't https" ;;
 	esac
+	if [ "$strict" = 1 ]; then
+		if [ "$name" = houston ]; then
+			printf '%s\n' "$pins" | sums_entry "$remote" >/dev/null ||
+				die "this gantry pins no digests for houston $version, so its provenance can't be checked, and GANTRY_REQUIRE_PROVENANCE refuses it: require a newer gantry in go.mod"
+		elif ! newer_than "$version" "$unattested"; then
+			die "gantry $version was published without build provenance, and GANTRY_REQUIRE_PROVENANCE refuses it: require a newer gantry in go.mod"
+		elif ! gh_checks_provenance; then
+			die "GANTRY_REQUIRE_PROVENANCE needs gh 2.70 or later to check gantry $version's build provenance, and there's none on PATH or it's older: install it, or unset GANTRY_REQUIRE_PROVENANCE"
+		fi
+	fi
 	partial=$cache/.$kept.$$
 	sums=$cache/.$kept.sums.$$
 	url=$base/$version/$remote
@@ -231,10 +255,6 @@ fetch_release() {
 	if [ -n "$pins" ] && want=$(printf '%s\n' "$pins" | sums_entry "$remote"); then
 		:
 	else
-		if [ "$name" = houston ] && [ "$strict" = 1 ]; then
-			rm -f "$partial"
-			die "this gantry pins no digests for houston $version, so its provenance can't be checked, and GANTRY_REQUIRE_PROVENANCE=1 refuses it: require a newer gantry in go.mod"
-		fi
 		if ! download "$sums" "$sums_url"; then
 			rm -f "$partial" "$sums"
 			die "$name $version published no SHA256SUMS at $sums_url"
@@ -257,12 +277,8 @@ fetch_release() {
 	fi
 	# The bundle comes from the same release, but only gantry's release
 	# workflow, running for this tag, could have signed it.
-	if [ "$name" = gantry ] && ! newer_than "$version" "$unattested" && [ "$strict" = 1 ]; then
-		rm -f "$partial" "$sums"
-		die "gantry $version was published without build provenance, and GANTRY_REQUIRE_PROVENANCE=1 refuses it: require a newer gantry in go.mod"
-	fi
 	if [ "$name" = gantry ] && newer_than "$version" "$unattested"; then
-		if gh attestation verify --help 2>/dev/null | grep -q -- --source-ref; then
+		if gh_checks_provenance; then
 			bundle=$cache/.$kept.provenance.$$
 			bundle_url=$base/$version/provenance.sigstore.json
 			if ! download "$bundle" "$bundle_url"; then
@@ -276,9 +292,6 @@ fetch_release() {
 				die "$remote from $version failed its build provenance check: $out"
 			fi
 			rm -f "$bundle"
-		elif [ "$strict" = 1 ]; then
-			rm -f "$partial" "$sums"
-			die "GANTRY_REQUIRE_PROVENANCE=1 needs gh 2.70 or later to check gantry $version's build provenance, and there's none on PATH or it's older: install it, or unset GANTRY_REQUIRE_PROVENANCE"
 		else
 			printf '%s\n' "bin/gantry: checked gantry $version against SHA256SUMS only; install gh 2.70 or later to check its build provenance too" >&2
 		fi
