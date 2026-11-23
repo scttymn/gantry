@@ -42,7 +42,9 @@ func generatedCheck(root string, out io.Writer) error {
 	}
 	for _, tool := range tools {
 		if output, err := runQuietlyIn(scratch, tool[0], tool[1:]...); err != nil {
-			out.Write(output)
+			// The generator's own words, then the error, which reports the
+			// failure whether or not they could be written.
+			_, _ = out.Write(output)
 			return fmt.Errorf("%s failed in a copy of the app (%v)", strings.Join(tool, " "), err)
 		}
 	}
