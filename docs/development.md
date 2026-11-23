@@ -52,15 +52,17 @@ conventions, not every possible path through a program. It cannot prove that a
 custom layout is wrong or that a data fetch delays rendering; those remain
 review/performance-measurement questions.
 
-For an intentional departure, commit `.gantry-check.json` in the project root:
+For an intentional departure, add an exception to `.gantry-check.json` in the
+project root. A new app has the file, with no exceptions:
 
 ```json
 {
+  "requireIssue": true,
   "exceptions": [
     {
       "rule": "raw-assets",
       "file": "app/downloads.go",
-      "reason": "This authenticated route serves exports, not scripts or styles."
+      "reason": "This authenticated route serves exports, not scripts or styles (#214)."
     }
   ]
 }
@@ -78,22 +80,11 @@ deleted, or an upgrade stopped the rule firing there, is reported as
 would hide the next violation of that rule in that file. It is advice so that
 an upgrade doesn't fail CI.
 
-To make every exception point at where it was decided, set `"requireIssue": true`.
-Each reason must then cite an issue (`#123`) or link an issue or decision record
-(`https://...`), and the scan fails on one that doesn't:
-
-```json
-{
-  "requireIssue": true,
-  "exceptions": [
-    {
-      "rule": "raw-assets",
-      "file": "app/downloads.go",
-      "reason": "This authenticated route serves exports, not scripts or styles (#214)."
-    }
-  ]
-}
-```
+A reason should point at where the exception was decided: an issue (`#123`) or
+a link to an issue or decision record (`https://...`). With `"requireIssue":
+true`, as a new app has, the scan fails on a reason without one. Without it, as
+in a file from before the setting existed, each such reason is reported as
+`exception-reason` advice instead.
 
 ## Browser warnings
 
@@ -115,12 +106,23 @@ opt into `web.Development` explicitly inside a development guard.
 A new app's Dockerfile builds production with `-tags nodevcheck`, so the
 deployed binary contains no source scanner at all; the dev stage keeps it.
 Under the tag `web.Development` is `web.Timing` alone and
-`web.DevelopmentWithRules` doesn't exist. An existing app adopts it by adding
-this line to its Dockerfile's build stage, after `FROM toolchain AS build`:
+`web.DevelopmentWithRules` doesn't exist. The test stage compiles the app with
+the tag too, so `bin/gantry test` fails on such a call before a deploy would.
+An app that calls `web.DevelopmentWithRules` passes it devcheck's rules, so it
+links devcheck whatever the tag; leave `nodevcheck` out of its Dockerfile.
+
+An existing app adopts the tag by adding this line to its Dockerfile's build
+stage, after `FROM toolchain AS build`, and
+`GOFLAGS="$GOFLAGS,nodevcheck" go build ./...` to its test stage's command,
+before `go test`:
 
 ```dockerfile
 ENV GOFLAGS="${GOFLAGS},nodevcheck"
 ```
+
+Both extend the toolchain stage's `-tags=` list, so they work only while
+`-tags=` is the last flag in its `GOFLAGS`. Otherwise, spell out the whole
+`-tags=` list with `nodevcheck` added.
 
 Injection happens before Gantry compresses the response. Only complete HTML
 pages with a body are transformed; streams, fragments, encoded responses,
