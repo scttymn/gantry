@@ -1,0 +1,12 @@
+-- +goose Up
+CREATE TABLE "workouts" (
+  "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  "date" date,
+  "name" text NOT NULL DEFAULT '',
+  "rx" text NOT NULL DEFAULT '',
+  "created_at" datetime NOT NULL,
+  "updated_at" datetime NOT NULL
+);
+
+-- +goose Down
+DROP TABLE "workouts";
