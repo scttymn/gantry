@@ -91,7 +91,7 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 		pic := &picture{name: name, key: key, ext: ext, contentType: contentType, body: f.body, width: width, height: height}
 		im.byName[name], im.byKey[key] = pic, pic
 	}
-	im.avif = &images.Pipeline{Dir: p.Dir, Encoder: images.AVIF{}, Quality: images.AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker}
+	im.avif = &images.Pipeline{Dir: p.Dir, Encoder: images.AVIF{}, Quality: images.AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker, MaxPixels: p.MaxPixels}
 	im.server = &images.Server{Pipeline: p, AVIF: im.avif, HasAVIF: im.withAVIF, Prefix: ImagesPrefix, Find: im.find}
 	a.images = im
 	return im
@@ -144,7 +144,7 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 		formats = formats[:1] // WebP alone: see images.AVIFSlow
 	}
 	for _, q := range formats {
-		p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker}
+		p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker, MaxPixels: q.MaxPixels}
 		n, err := p.Prepare(ctx, originals, 0)
 		made += n
 		if err != nil {
