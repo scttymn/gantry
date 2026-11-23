@@ -68,3 +68,22 @@ func TestPostgres(t *testing.T) {
 		t.Fatalf("databases %q", names)
 	}
 }
+
+func TestPostgresFixtures(t *testing.T) {
+	if os.Getenv("TEST_DATABASE_URL") == "" {
+		t.Skip("TEST_DATABASE_URL isn't set")
+	}
+	d := Postgres(t, func(ctx context.Context, d *db.DB) error {
+		_, err := d.Write.ExecContext(ctx, `CREATE TABLE posts (id bigserial PRIMARY KEY, title text NOT NULL, published boolean NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL)`)
+		return err
+	})
+	ids := Fixtures(t, d, fstest.MapFS{
+		"posts.yml": {Data: []byte("draft:\n  title: Draft\n  published: false\nlive:\n  title: Live\n  published: true\n")},
+	}, nil)
+	for label, want := range map[string]bool{"draft": false, "live": true} {
+		var published bool
+		if err := d.Read.QueryRow(`SELECT published FROM posts WHERE id = $1`, ids["posts"][label]).Scan(&published); err != nil || published != want {
+			t.Errorf("%s: published %v, want %v (%v)", label, published, want, err)
+		}
+	}
+}
