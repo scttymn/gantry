@@ -3,11 +3,12 @@ package db
 import (
 	"context"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 var tagsMigration = &fstest.MapFile{Data: []byte(`-- +goose Up
@@ -111,10 +112,7 @@ func TestMigrateOutOfOrder(t *testing.T) {
 }
 
 func TestSchemaPostgres(t *testing.T) {
-	url := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-	}
+	url := testenv.Postgres(t)
 	if _, err := exec.LookPath("pg_dump"); err != nil {
 		t.Skip("pg_dump isn't installed")
 	}

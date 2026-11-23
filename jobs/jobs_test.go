@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/testkit"
 )
 
@@ -28,12 +28,19 @@ type backupArgs struct {
 
 var start = time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 
-// queue is a queue on a fresh database, on a clock the test moves.
-func queue(t *testing.T, o Options) (*Queue, *db.DB, *testkit.FakeClock) {
+// onEngines runs test on SQLite, then on Postgres.
+func onEngines(t *testing.T, test func(t *testing.T, engine string)) {
+	for _, engine := range []string{"sqlite", "postgres"} {
+		t.Run(engine, func(t *testing.T) { test(t, engine) })
+	}
+}
+
+// queue is a queue on a fresh database of engine, on a clock the test moves.
+func queue(t *testing.T, engine string, o Options) (*Queue, *db.DB, *testkit.FakeClock) {
 	t.Helper()
-	// On Postgres when there's one to test on (a database per test), else SQLite.
 	var d *db.DB
-	if os.Getenv("TEST_DATABASE_URL") != "" {
+	if engine == "postgres" {
+		t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 		d = testkit.Postgres(t, nil)
 	} else {
 		var err error
@@ -72,9 +79,11 @@ func drain(t *testing.T, q *Queue) {
 	}
 }
 
-func TestEnqueueAndRun(t *testing.T) {
+func TestEnqueueAndRun(t *testing.T) { onEngines(t, testEnqueueAndRun) }
+
+func testEnqueueAndRun(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	var r ran
 	backup := Define(q, "backup", func(ctx context.Context, a backupArgs) error { r.add(a); return nil }, Opts[backupArgs]{})
 	if _, err := backup.Enqueue(ctx, backupArgs{Project: "shop", Keep: 7}); err != nil {
@@ -93,9 +102,11 @@ func TestEnqueueAndRun(t *testing.T) {
 }
 
 // Inside a transaction, a job is saved with the change or not at all.
-func TestEnqueueTx(t *testing.T) {
+func TestEnqueueTx(t *testing.T) { onEngines(t, testEnqueueTx) }
+
+func testEnqueueTx(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, _ := queue(t, Options{})
+	q, d, _ := queue(t, engine, Options{})
 	var r ran
 	backup := Define(q, "backup", func(ctx context.Context, a backupArgs) error { r.add(a); return nil }, Opts[backupArgs]{})
 	d.Tx(ctx, func(tx *db.Tx) error {
@@ -112,9 +123,11 @@ func TestEnqueueTx(t *testing.T) {
 	}
 }
 
-func TestScheduledAndPriority(t *testing.T) {
+func TestScheduledAndPriority(t *testing.T) { onEngines(t, testScheduledAndPriority) }
+
+func testScheduledAndPriority(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	var order []string
 	var mu sync.Mutex
 	job := Define(q, "note", func(ctx context.Context, s string) error {
@@ -146,9 +159,11 @@ func TestScheduledAndPriority(t *testing.T) {
 	}
 }
 
-func TestRetries(t *testing.T) {
+func TestRetries(t *testing.T) { onEngines(t, testRetries) }
+
+func testRetries(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	var tries atomic.Int32
 	var exhausted []string
 	flaky := Define(q, "flaky", func(ctx context.Context, a backupArgs) error {
@@ -192,9 +207,11 @@ func TestRetries(t *testing.T) {
 
 // No retries unless asked (Active Job's default), and Discard gives up at
 // once whatever the retries.
-func TestNoRetriesAndDiscard(t *testing.T) {
+func TestNoRetriesAndDiscard(t *testing.T) { onEngines(t, testNoRetriesAndDiscard) }
+
+func testNoRetriesAndDiscard(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	var once, discarded atomic.Int32
 	Define(q, "once", func(ctx context.Context, s string) error { once.Add(1); return errors.New("no") }, Opts[string]{}).Enqueue(ctx, "x")
 	Define(q, "discarded", func(ctx context.Context, s string) error {
@@ -222,9 +239,11 @@ func TestPolynomial(t *testing.T) {
 	}
 }
 
-func TestTimeout(t *testing.T) {
+func TestTimeout(t *testing.T) { onEngines(t, testTimeout) }
+
+func testTimeout(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	var err error
 	Define(q, "slow", func(ctx context.Context, s string) error {
 		select {
@@ -242,9 +261,11 @@ func TestTimeout(t *testing.T) {
 }
 
 // A panic is a failure like any other: logged, and the queue goes on.
-func TestPanic(t *testing.T) {
+func TestPanic(t *testing.T) { onEngines(t, testPanic) }
+
+func testPanic(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	var after atomic.Int32
 	Define(q, "boom", func(ctx context.Context, s string) error { panic("boom") }, Opts[string]{}).Enqueue(ctx, "x")
 	Define(q, "after", func(ctx context.Context, s string) error { after.Add(1); return nil }, Opts[string]{}).Enqueue(ctx, "x")
@@ -257,9 +278,11 @@ func TestPanic(t *testing.T) {
 
 // At most N at a time per key: a job over the limit waits its turn, or is
 // discarded when the limit says so; another key runs.
-func TestLimits(t *testing.T) {
+func TestLimits(t *testing.T) { onEngines(t, testLimits) }
+
+func testLimits(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	release := make(chan struct{})
 	var running, most atomic.Int32
 	deploy := Define(q, "deploy", func(ctx context.Context, a backupArgs) error {
@@ -294,7 +317,7 @@ func TestLimits(t *testing.T) {
 	close(release)
 
 	// A finished job frees its slot for the next.
-	q3, _, _ := queue(t, Options{})
+	q3, _, _ := queue(t, engine, Options{})
 	var ran3 atomic.Int32
 	one := Define(q3, "deploy", func(ctx context.Context, s string) error { ran3.Add(1); return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
@@ -306,7 +329,7 @@ func TestLimits(t *testing.T) {
 	}
 
 	// Discarding instead of waiting.
-	q2, _, _ := queue(t, Options{})
+	q2, _, _ := queue(t, engine, Options{})
 	var ran atomic.Int32
 	once := Define(q2, "sync", func(ctx context.Context, s string) error { ran.Add(1); return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }, Discard: true}})
@@ -324,9 +347,11 @@ func TestLimits(t *testing.T) {
 }
 
 // A limit held by a process that crashed expires (Solid Queue's 3 minutes).
-func TestLimitExpires(t *testing.T) {
+func TestLimitExpires(t *testing.T) { onEngines(t, testLimitExpires) }
+
+func testLimitExpires(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	job := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
 	job.Enqueue(ctx, "shop")
@@ -345,9 +370,11 @@ func TestLimitExpires(t *testing.T) {
 
 // A job that runs past its limit's Duration loses its slot to the next one;
 // once both finish, the limit is still To at once, not one more.
-func TestLimitOutlived(t *testing.T) {
+func TestLimitOutlived(t *testing.T) { onEngines(t, testLimitOutlived) }
+
+func testLimitOutlived(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
 	for range 4 {
@@ -379,9 +406,11 @@ func TestLimitOutlived(t *testing.T) {
 }
 
 // Workers claiming at once take no more than a limit's To between them.
-func TestLimitConcurrentClaims(t *testing.T) {
+func TestLimitConcurrentClaims(t *testing.T) { onEngines(t, testLimitConcurrentClaims) }
+
+func testLimitConcurrentClaims(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
 	for range 100 {
@@ -408,9 +437,11 @@ func TestLimitConcurrentClaims(t *testing.T) {
 
 // However many jobs over a discarding limit are ahead, they're dropped and
 // the job behind them runs.
-func TestLimitDiscardsMany(t *testing.T) {
+func TestLimitDiscardsMany(t *testing.T) { onEngines(t, testLimitDiscardsMany) }
+
+func testLimitDiscardsMany(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	var ran []string
 	mirror := Define(q, "mirror", func(ctx context.Context, s string) error { ran = append(ran, s); return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }, Discard: true}})
@@ -432,9 +463,11 @@ func TestLimitDiscardsMany(t *testing.T) {
 
 // A stalled worker whose job was claimed again doesn't free the slot the new
 // claim holds.
-func TestStaleWorkerLimit(t *testing.T) {
+func TestStaleWorkerLimit(t *testing.T) { onEngines(t, testStaleWorkerLimit) }
+
+func testStaleWorkerLimit(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
 	deploy.Enqueue(ctx, "shop")
@@ -457,9 +490,11 @@ func TestStaleWorkerLimit(t *testing.T) {
 
 // A job whose failure can't be saved stays claimed, to be run again, so it
 // isn't given up on: OnExhausted doesn't run.
-func TestSettleFails(t *testing.T) {
+func TestSettleFails(t *testing.T) { onEngines(t, testSettleFails) }
+
+func testSettleFails(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, _ := queue(t, Options{})
+	q, d, _ := queue(t, engine, Options{})
 	var exhausted atomic.Int32
 	Define(q, "work", func(ctx context.Context, s string) error { return errors.New("no") },
 		Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }}).Enqueue(ctx, "x")
@@ -496,9 +531,11 @@ func failWrites(t *testing.T, d *db.DB, event, when string) (undo func()) {
 
 // Jobs waiting on their limit don't hold up the ones behind them, however
 // many wait.
-func TestLimitHeadOfLine(t *testing.T) {
+func TestLimitHeadOfLine(t *testing.T) { onEngines(t, testLimitHeadOfLine) }
+
+func testLimitHeadOfLine(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{})
+	q, _, _ := queue(t, engine, Options{})
 	deploy := Define(q, "deploy", func(ctx context.Context, s string) error { return nil },
 		Opts[string]{Limit: &Limit[string]{To: 1, Key: func(s string) string { return s }}})
 	for range 25 {
@@ -516,11 +553,13 @@ func TestLimitHeadOfLine(t *testing.T) {
 // A worker that stalls past Dead, its job gone back and claimed again (by
 // another process, or another worker of its own), ends late: what it ends
 // with is dropped, not written over the new claim.
-func TestStaleWorker(t *testing.T) {
+func TestStaleWorker(t *testing.T) { onEngines(t, testStaleWorker) }
+
+func testStaleWorker(t *testing.T, engine string) {
 	for _, again := range []string{"alive", "stalled"} {
 		t.Run("claimed again by "+again, func(t *testing.T) {
 			ctx := context.Background()
-			q, _, clock := queue(t, Options{})
+			q, _, clock := queue(t, engine, Options{})
 			var calls, exhausted atomic.Int32
 			work := Define(q, "work", func(ctx context.Context, s string) error {
 				if calls.Add(1) == 1 {
@@ -609,9 +648,11 @@ func TestClaimReadFails(t *testing.T) {
 	}
 }
 
-func TestRecurring(t *testing.T) {
+func TestRecurring(t *testing.T) { onEngines(t, testRecurring) }
+
+func testRecurring(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, clock := queue(t, Options{})
+	q, d, clock := queue(t, engine, Options{})
 	var every, nightly atomic.Int32
 	Define(q, "sweep", func(ctx context.Context, s string) error { every.Add(1); return nil }, Opts[string]{}).Every(10*time.Minute, "x")
 	chicago, _ := time.LoadLocation("America/Chicago")
@@ -651,9 +692,11 @@ func TestRecurring(t *testing.T) {
 
 // A tick whose job isn't saved isn't recorded either: the next tick enqueues
 // the run, rather than finding it taken.
-func TestRecurringInsertFails(t *testing.T) {
+func TestRecurringInsertFails(t *testing.T) { onEngines(t, testRecurringInsertFails) }
+
+func testRecurringInsertFails(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, clock := queue(t, Options{})
+	q, d, clock := queue(t, engine, Options{})
 	var runs atomic.Int32
 	Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(10*time.Minute, "x")
 	undo := failWrites(t, d, "INSERT", "true")
@@ -670,9 +713,11 @@ func TestRecurringInsertFails(t *testing.T) {
 
 // A process whose ticker stalls past Keep doesn't enqueue the run it missed:
 // that run's tick may be cleared by then, and another process ran it.
-func TestRecurringStalledPastKeep(t *testing.T) {
+func TestRecurringStalledPastKeep(t *testing.T) { onEngines(t, testRecurringStalledPastKeep) }
+
+func testRecurringStalledPastKeep(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, clock := queue(t, Options{})
+	q, d, clock := queue(t, engine, Options{})
 	var runs atomic.Int32
 	sweep := func(q *Queue) {
 		Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(time.Hour, "x")
@@ -696,9 +741,11 @@ func TestRecurringStalledPastKeep(t *testing.T) {
 }
 
 // A recurring job's ticks are kept as long as finished jobs, then cleared.
-func TestTicksCleared(t *testing.T) {
+func TestTicksCleared(t *testing.T) { onEngines(t, testTicksCleared) }
+
+func testTicksCleared(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, clock := queue(t, Options{})
+	q, d, clock := queue(t, engine, Options{})
 	Define(q, "sweep", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Every(time.Hour, "x")
 	clock.Advance(time.Hour)
 	drain(t, q)
@@ -720,9 +767,11 @@ func TestTicksCleared(t *testing.T) {
 }
 
 // Finished jobs are kept a day, then cleared; failed ones stay.
-func TestClearing(t *testing.T) {
+func TestClearing(t *testing.T) { onEngines(t, testClearing) }
+
+func testClearing(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, d, clock := queue(t, Options{})
+	q, d, clock := queue(t, engine, Options{})
 	Define(q, "ok", func(ctx context.Context, s string) error { return nil }, Opts[string]{}).Enqueue(ctx, "x")
 	Define(q, "bad", func(ctx context.Context, s string) error { return errors.New("no") }, Opts[string]{}).Enqueue(ctx, "x")
 	drain(t, q)
@@ -745,9 +794,11 @@ func TestClearing(t *testing.T) {
 
 // A process that stops heartbeating (it crashed) has its claimed jobs put
 // back, for another to run.
-func TestCrashedProcess(t *testing.T) {
+func TestCrashedProcess(t *testing.T) { onEngines(t, testCrashedProcess) }
+
+func testCrashedProcess(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, clock := queue(t, Options{})
+	q, _, clock := queue(t, engine, Options{})
 	var r atomic.Int32
 	work := Define(q, "work", func(ctx context.Context, s string) error { r.Add(1); return nil }, Opts[string]{})
 	work.Enqueue(ctx, "x")
@@ -778,9 +829,11 @@ func TestCrashedProcess(t *testing.T) {
 // Run: workers per queue, at most the queue's concurrency at once, woken by
 // an enqueue; on shutdown, running jobs get their grace, then their
 // contexts end and they go back to the queue.
-func TestRun(t *testing.T) {
+func TestRun(t *testing.T) { onEngines(t, testRun) }
+
+func testRun(t *testing.T, engine string) {
 	ctx := context.Background()
-	q, _, _ := queue(t, Options{Queues: map[string]int{"default": 2}, Now: time.Now, Poll: 20 * time.Millisecond, Grace: 100 * time.Millisecond})
+	q, _, _ := queue(t, engine, Options{Queues: map[string]int{"default": 2}, Now: time.Now, Poll: 20 * time.Millisecond, Grace: 100 * time.Millisecond})
 	var running, most, done atomic.Int32
 	work := Define(q, "work", func(ctx context.Context, s string) error {
 		n := running.Add(1)
