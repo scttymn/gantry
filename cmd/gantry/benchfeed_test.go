@@ -67,12 +67,16 @@ func TestBenchFeedIsANewApp(t *testing.T) {
 			return err
 		}
 		target := filepath.Join(bench, rel)
-		got, _ := os.ReadFile(target)
+		got, err := os.ReadFile(target)
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		missing := err != nil
 		before, part, after := "", string(got), ""
-		if split, ok := benchFeedPart[rel]; ok {
+		if split, ok := benchFeedPart[rel]; ok && !missing {
 			before, part, after = split(string(got))
 		}
-		if part == string(want) {
+		if !missing && part == string(want) {
 			return nil
 		}
 		if *update {
