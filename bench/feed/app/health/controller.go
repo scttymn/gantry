@@ -8,6 +8,8 @@ import (
 
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/web"
+
+	"feed/app/models"
 )
 
 // Controller answers the health check.
@@ -18,8 +20,7 @@ type Controller struct {
 
 // Show is GET /health.
 func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
-	var one int
-	if err := c.DB.Read.QueryRowContext(r.Context(), `SELECT 1`).Scan(&one); err != nil {
+	if err := models.New(c.DB.Read).Ping(r.Context()); err != nil {
 		return web.JSON(w, http.StatusServiceUnavailable, struct {
 			Status string `json:"status"`
 			DB     string `json:"db"`

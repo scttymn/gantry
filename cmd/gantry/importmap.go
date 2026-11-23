@@ -12,13 +12,16 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // jspmAPI is jspm.org's generator, which resolves packages to their files,
-// importmap-rails' source; tests point it, and httpClient, elsewhere.
+// importmap-rails' source; tests point it, and httpClient, elsewhere. A
+// server that stops answering fails a download after a minute rather than
+// hanging the command.
 var (
 	jspmAPI    = "https://api.jspm.io/generate"
-	httpClient = http.DefaultClient
+	httpClient = &http.Client{Timeout: time.Minute}
 )
 
 // vendorDir is where pinned packages go, under the app's root: the skeleton
