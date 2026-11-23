@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -17,29 +18,42 @@ func execCommand(name string, args ...string) *exec.Cmd {
 	return cmd
 }
 
+// appFlags are the app's commands' own: --local, anywhere in them.
+func appFlags() (fs *flag.FlagSet, local *bool) {
+	fs = flagSet("app")
+	local = fs.Bool("local", false, "on this machine, not in the app's container")
+	return fs, local
+}
+
 // appCommand is `gantry db ...`, `gantry task ...` and `gantry tasks`: the
 // app's own command (`myapp db migrate`), run in its dev container by
 // houston exec, as bin/rails runs in the app's environment. With --local,
-// on this machine instead (go, and the app's tools, installed here).
-func appCommand(root string, args []string, errOut io.Writer) error {
-	local := false
-	var rest []string
-	for _, a := range args {
-		if a == "--local" {
-			local = true
-			continue
+// on this machine instead (go, and the app's tools, installed here). The
+// rest of its arguments are the app's, flags too.
+func appCommand(command string) func(root string, args []string, out, errOut io.Writer) error {
+	return func(root string, args []string, _, errOut io.Writer) error {
+		if len(args) > 0 && helpFlag(args[0]) {
+			return flag.ErrHelp
 		}
-		rest = append(rest, a)
+		fs, local := appFlags()
+		rest := []string{command}
+		for _, a := range args {
+			if name, ok := strings.CutPrefix(a, "--"); ok && fs.Lookup(name) != nil {
+				fs.Set(name, "true")
+				continue
+			}
+			rest = append(rest, a)
+		}
+		name, err := appBinary(root)
+		if err != nil {
+			return err
+		}
+		run := append([]string{"go", "run", "./cmd/" + name}, rest...)
+		if *local {
+			return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=development"}, run...)...))
+		}
+		return houston(root, append([]string{"exec"}, run...), errOut)
 	}
-	name, err := appBinary(root)
-	if err != nil {
-		return err
-	}
-	run := append([]string{"go", "run", "./cmd/" + name}, rest...)
-	if local {
-		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=development"}, run...)...))
-	}
-	return houston(root, append([]string{"exec"}, run...), errOut)
 }
 
 // houston runs houston with args in root: gantry dev, test, console, deploy

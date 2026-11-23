@@ -12,8 +12,9 @@ patterns; it covers a growing subset of them, not every performance concern.
 
 ## 1. Read the app before changing it
 
-- Read the app's own instructions and README, then `go.mod`, `compose.yml`,
-  `Dockerfile`, `app/routes.go`, and `app/shared/layout`.
+- Read the app's own instructions (`AGENTS.md`, which `gantry new` writes) and
+  README, then `go.mod`, `compose.yml`, `Dockerfile`, `app/routes.go`, and
+  `app/shared/layout`.
 - Check the pinned Gantry version and any `replace` directive or `go.work`.
   Use the APIs and generators that version provides. The documentation on
   `main` may describe features newer than the app's dependency.
@@ -108,9 +109,12 @@ Use the existing development server when it is already running.
 
 Use generators for a feature when they fit. Read `bin/gantry --help` and the
 generator's printed next steps. Generated code still needs application-specific
-wiring, validation and tests. The resource generator currently targets
-`admin/<table>` and expects a shared admin controller; inspect those dependencies
-before treating its output as a complete feature.
+wiring, validation and tests. `g resource posts ...` makes a top-level resource
+and `g resource admin/posts ...` one under any namespace. Its controllers share
+`app/shared/resource`, which the first resource writes and the app owns from
+then on. A namespaced resource is routed in its namespace's scope: give that
+scope the filter that guards it, such as `a.Auth.Required` from the `auth`
+recipe, since the generator can't know it.
 
 When the change needs migrations or regenerated queries/views, use the relevant
 steps in the app's container:
@@ -205,6 +209,22 @@ Within the user's deployment authorization, use the existing push-to-deploy
 workflow or `bin/gantry deploy --server --follow`. Confirm the intended commit
 is serving and check the affected live pages before reporting success. Creating
 a local development app does not itself require creating a production project.
+
+### The signing key
+
+`SECRET_KEY` signs password-reset links, flash and return-to cookies, email-code
+challenges and live-stream tokens. Outside development and test (`GANTRY_ENV`,
+which defaults to production) the app refuses to start without one of at least
+32 bytes. Generate it once with `openssl rand -hex 32` and store it as a Houston
+secret; never commit it or print it. Development and test keep a generated key
+in the database instead, so they need no setting.
+
+Upgrading: a production app deployed with a blank or short `SECRET_KEY` must set
+one before it upgrades, or it won't start. Changing the key invalidates
+outstanding reset links, flash, return-to and email-code cookies, and live-stream
+tokens; sessions are unaffected, as their cookies hold a random token rather
+than a signature. A `sign.Signer` built with a key under 32 bytes panics, so
+tests that construct one need a longer key (`strings.Repeat("test-key", 4)`).
 
 ### First-install password accounts
 

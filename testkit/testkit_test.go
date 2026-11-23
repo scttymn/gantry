@@ -19,7 +19,7 @@ CREATE TABLE settings (name text PRIMARY KEY, value text);
 func TestFixtures(t *testing.T) {
 	d := DB(t, func(ctx context.Context, d *db.DB) error { return d.Migrate(ctx, schema, "app_migrations") })
 	ids := Fixtures(t, d, fstest.MapFS{
-		"users.yml":    {Data: []byte("one:\n  email: one@example.com\n  digest: DIGEST\n  admin: true\ntwo:\n  email: two@example.com\n  digest: ~\n  admin: false\n")},
+		"users.yml":    {Data: []byte("one:\n  email: one@example.com\n  digest: DIGEST\n  admin: true\ntwo:\n  email: two@example.com\n  digest: ~\n  admin: false\nthree:\n  email: three@example.com\n  admin: True\nfour:\n  email: four@example.com\n  admin: FALSE\n")},
 		"settings.yml": {Data: []byte("theme:\n  name: theme\n  value: dark\n")},
 		"empty.yml":    {Data: []byte("")},
 		"README.md":    {Data: []byte("not a fixture")},
@@ -33,6 +33,12 @@ func TestFixtures(t *testing.T) {
 	d.Read.QueryRow(`SELECT digest, admin, created_at FROM users WHERE id = $1`, ids["users"]["one"]).Scan(&digest, &admin, &created)
 	if digest != "hashed" || !admin || time.Since(created) > time.Minute {
 		t.Errorf("row: %q %v %v", digest, admin, created)
+	}
+	for label, want := range map[string]bool{"two": false, "three": true, "four": false} {
+		var admin bool
+		if err := d.Read.QueryRow(`SELECT admin FROM users WHERE id = $1`, ids["users"][label]).Scan(&admin); err != nil || admin != want {
+			t.Errorf("%s: admin %v, want %v (%v)", label, admin, want, err)
+		}
 	}
 	var null *string
 	d.Read.QueryRow(`SELECT digest FROM users WHERE id = $1`, ids["users"]["two"]).Scan(&null)
@@ -64,5 +70,22 @@ func TestPostgres(t *testing.T) {
 	}
 	if names[0] == names[1] || !strings.HasPrefix(names[0], "test_") {
 		t.Fatalf("databases %q", names)
+	}
+}
+
+func TestPostgresFixtures(t *testing.T) {
+	t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
+	d := Postgres(t, func(ctx context.Context, d *db.DB) error {
+		_, err := d.Write.ExecContext(ctx, `CREATE TABLE posts (id bigserial PRIMARY KEY, title text NOT NULL, published boolean NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL)`)
+		return err
+	})
+	ids := Fixtures(t, d, fstest.MapFS{
+		"posts.yml": {Data: []byte("draft:\n  title: Draft\n  published: false\nlive:\n  title: Live\n  published: true\nshouted:\n  title: Shouted\n  published: TRUE\nhidden:\n  title: Hidden\n  published: False\n")},
+	}, nil)
+	for label, want := range map[string]bool{"draft": false, "live": true, "shouted": true, "hidden": false} {
+		var published bool
+		if err := d.Read.QueryRow(`SELECT published FROM posts WHERE id = $1`, ids["posts"][label]).Scan(&published); err != nil || published != want {
+			t.Errorf("%s: published %v, want %v (%v)", label, published, want, err)
+		}
 	}
 }

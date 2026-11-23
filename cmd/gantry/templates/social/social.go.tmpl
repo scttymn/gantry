@@ -16,7 +16,12 @@ func ConfigureSocial(a *Auth, getenv func(string) string) error {
 	}
 	a.Social = social
 	a.Views.Identities = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
-		return web.Render(w, r, http.StatusOK, socialIdentities(p))
+		// Not pageStatus: an app whose auth.go predates it can add this recipe.
+		status := http.StatusOK
+		if p.Status != 0 {
+			status = p.Status
+		}
+		return web.Render(w, r, status, socialIdentities(p))
 	}
 	return nil
 }

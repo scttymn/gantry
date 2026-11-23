@@ -32,15 +32,21 @@ func generate(t *testing.T, root string, args ...string) string {
 }
 
 // The generator's output is pinned: a change to it is a change to every
-// table an app generates next, so it shows up here, and in review.
+// table an app generates next, so it shows up here, and in review. The
+// helpers in app/shared, the same for every resource, are pinned once.
 func TestGolden(t *testing.T) {
 	for name, args := range map[string][]string{
-		"pillars":  {"admin/pillars", "title:string:required", "body:string", "position:position"},
-		"programs": {"admin/programs", "name:string:required", "blurb:text", "photo:photo", "cta:string", "position:position"},
-		"workouts": {"admin/workouts", "date:date:required", "name:string", "rx:text"},
+		"pillars":         {"admin/pillars", "title:string:required", "body:string", "position:position"},
+		"programs":        {"admin/programs", "name:string:required", "blurb:text", "photo:photo", "cta:string", "position:position"},
+		"workouts":        {"admin/workouts", "date:date:required", "name:string", "rx:text"},
+		"posts":           {"posts", "title:string:required", "body:text", "published_on:date"},
+		"events-postgres": {"editor/events", "name:string:required", "starts_on:date", "position:position"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := app(t)
+			if strings.HasSuffix(name, "-postgres") {
+				os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: postgresql\n"), 0o644)
+			}
 			generate(t, root, args...)
 			golden := filepath.Join("testdata", "golden", name)
 			filepath.WalkDir(filepath.Join(root, "app"), func(path string, d os.DirEntry, err error) error {
@@ -49,7 +55,11 @@ func TestGolden(t *testing.T) {
 				}
 				rel, _ := filepath.Rel(root, path)
 				got, _ := os.ReadFile(path)
+				gofmted(t, rel, got)
 				want := filepath.Join(golden, rel)
+				if strings.HasPrefix(filepath.ToSlash(rel), "app/shared/") {
+					want = filepath.Join("testdata", "golden", "resource-shared", rel)
+				}
 				if *update {
 					os.MkdirAll(filepath.Dir(want), 0o755)
 					os.WriteFile(want, got, 0o644)
@@ -67,7 +77,7 @@ func TestGolden(t *testing.T) {
 func TestResourceRules(t *testing.T) {
 	t.Run("the next steps name the route and the package", func(t *testing.T) {
 		out := generate(t, app(t), "admin/membership_options", "name:string:required", "position:position")
-		for _, want := range []string{`rt.Resources("/admin/membership_options", membershipoptions.Controller{Controller: adm}, requireAdmin)`, "example.com/gym/app/admin/membershipoptions"} {
+		for _, want := range []string{`rt.Scope("/admin", web.Pipeline{}, func(s *web.Scope) {`, `s.Resources("/membership_options", membershipoptions.Controller{Controller: resource.Controller{`, `"example.com/gym/app/admin/membershipoptions"`, "a.Auth.Required"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("no %q in\n%s", want, out)
 			}
@@ -101,7 +111,7 @@ func TestResourceRules(t *testing.T) {
 			}
 			// A PATCH's body isn't read before the handler (MethodOverride
 			// parses only a POST's), so it's read before the lock is taken.
-			if form, tx := strings.Index(update, "admin.Overlay("), strings.Index(update, "c.DB.Tx("); form < 0 || form > tx {
+			if form, tx := strings.Index(update, "resource.Overlay("), strings.Index(update, "c.DB.Tx("); form < 0 || form > tx {
 				t.Errorf("%s: Update reads the form inside its transaction:\n%s", engine, update)
 			}
 			sql, _ := os.ReadFile(filepath.Join(root, "app/models/pillars.sql"))
@@ -136,7 +146,7 @@ func TestResourceRules(t *testing.T) {
 	t.Run("what it can't make is said, and nothing is written", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"admin/pillars"}, {"admin/Pillars", "title:string"}, {"admin/pillars", "title:blob"}, {"admin/pillars", "title"},
-			{"admin/pillars", "title:string:unique"}, {"pillars", "title:string"},
+			{"admin/pillars", "title:string:unique"},
 		} {
 			root := app(t)
 			var out, errOut strings.Builder
