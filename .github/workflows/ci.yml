@@ -118,3 +118,11 @@ jobs:
           (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
           grep -qx "	github.com/scttymn/gantry $VERSION" "$probe/probe/go.mod" \
             || { echo "a new app's go.mod doesn't require $VERSION:"; cat "$probe/probe/go.mod"; exit 1; }
+      - name: The binary pins its Houston release's digests
+        # As the release checks them: a Houston bump without its digests
+        # (houstonSHA256SUMS) fails here, not once the tag is pushed.
+        run: |
+          houston=$(dist/gantry-linux-amd64 houston-release)
+          published=$(curl -fsSL --proto =https --retry 3 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+          pinned=$(dist/gantry-linux-amd64 houston-release --sha256)
+          [ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
