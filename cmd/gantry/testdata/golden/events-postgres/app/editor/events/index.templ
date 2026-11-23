@@ -1,0 +1,8 @@
+package events
+
+import "example.com/gym/app/shared/resource"
+
+// index is the list: each event's name and starts on.
+templ index(p resource.Page, rows []resource.Row) {
+	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Name", "Starts on"}, Rows: rows})
+}

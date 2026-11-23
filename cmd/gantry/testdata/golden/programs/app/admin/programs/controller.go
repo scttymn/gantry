@@ -9,8 +9,8 @@ import (
 
 	"github.com/scttymn/gantry/web"
 
-	"example.com/gym/app/admin"
 	"example.com/gym/app/models"
+	"example.com/gym/app/shared/resource"
 )
 
 const (
@@ -23,18 +23,18 @@ const (
 )
 
 // Controller is the programs' pages: the list, the forms, and deleting.
-type Controller struct{ admin.Controller }
+type Controller struct{ resource.Controller }
 
-var fields = []admin.Field{admin.F("name"), admin.F("blurb", admin.Type("text")), admin.F("photo", admin.Type("file")), admin.F("cta"), admin.Position}
+var fields = []resource.Field{resource.F("name"), resource.F("blurb", resource.Type("textarea")), resource.F("photo", resource.Type("file")), resource.F("cta"), resource.Position}
 
 // formValues are a program as its form holds them: text, as typed.
 func formValues(program models.Program) map[string]string {
-	return map[string]string{"name": program.Name, "blurb": program.Blurb, "cta": program.CTA, "position": admin.IntText(program.Position)}
+	return map[string]string{"name": program.Name, "blurb": program.Blurb, "cta": program.CTA, "position": resource.IntText(program.Position)}
 }
 
 // fromForm reads a form's values back into a program.
 func fromForm(v map[string]string) models.Program {
-	return models.Program{Name: v["name"], Blurb: v["blurb"], CTA: v["cta"], Position: admin.OptionalInt(v["position"])}
+	return models.Program{Name: v["name"], Blurb: v["blurb"], CTA: v["cta"], Position: resource.OptionalInt(v["position"])}
 }
 
 func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
@@ -42,11 +42,11 @@ func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	rows := make([]admin.Row, len(list))
+	rows := make([]resource.Row, len(list))
 	for i, program := range list {
-		rows[i] = admin.Row{ID: program.ID, Cells: []string{admin.ListText(program.Name), admin.ListText(program.Blurb)}}
+		rows[i] = resource.Row{ID: program.ID, Cells: []string{resource.ListText(program.Name), resource.ListText(program.Blurb)}}
 	}
-	return c.Render(w, r, http.StatusOK, title, func(p admin.AdminPage) templ.Component { return index(p, rows) })
+	return c.Render(w, r, http.StatusOK, title, func(p resource.Page) templ.Component { return index(p, rows) })
 }
 
 func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
@@ -54,7 +54,7 @@ func (c Controller) New(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
-	v := admin.Overlay(r, param, map[string]string{})
+	v := resource.Overlay(r, param, map[string]string{})
 	program := fromForm(v)
 	if errs := program.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, 0, v, errs)
@@ -90,7 +90,7 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	v := admin.Overlay(r, param, formValues(was))
+	v := resource.Overlay(r, param, formValues(was))
 	program := fromForm(v)
 	if errs := program.Errors(); len(errs) > 0 {
 		return c.form(w, r, http.StatusUnprocessableEntity, was.ID, v, errs)
@@ -111,7 +111,7 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	if err := c.Photos.Purge(r.Context(), recordType, program.ID, "photo"); err != nil {
+	if err := c.PurgePhoto(r.Context(), recordType, program.ID, "photo"); err != nil {
 		return err
 	}
 	if err := q.DeleteProgram(r.Context(), program.ID); err != nil {
@@ -122,11 +122,15 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 
 // form is the new or edit form, with what's wrong when it's sent back.
 func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
-	f := admin.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
+	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)
 	if id != 0 {
 		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
-		f.Photos = c.PhotoPreviews(r.Context(), recordType, id, "photo")
+		photos, err := c.PhotoPreviews(r.Context(), recordType, id, "photo")
+		if err != nil {
+			return err
+		}
+		f.Photos = photos
 	}
-	return c.Render(w, r, status, heading, func(p admin.AdminPage) templ.Component { return form(p, heading, f) })
+	return c.Render(w, r, status, heading, func(p resource.Page) templ.Component { return form(p, f) })
 }

@@ -1,8 +1,8 @@
 package {{.Package}}
 
-import "{{.Module}}/app/admin"
+import "{{.Module}}/app/shared/resource"
 
 // index is the list: each {{lower .Singular}}'s {{range $i, $f := .List}}{{if $i}} and {{end}}{{lower $f.Label}}{{end}}.
-templ index(p admin.AdminPage, rows []admin.Row) {
-	@admin.ResourceIndex(p, admin.ResourceList{Path: "{{.Table}}", Title: title, Singular: singular, Columns: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}"{{$f.Column}}"{{end -}} }, Rows: rows})
+templ index(p resource.Page, rows []resource.Row) {
+	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{ {{- range $i, $f := .List}}{{if $i}}, {{end}}"{{$f.Label}}"{{end -}} }, Rows: rows})
 }

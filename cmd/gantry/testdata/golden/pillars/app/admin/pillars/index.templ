@@ -1,8 +1,8 @@
 package pillars
 
-import "example.com/gym/app/admin"
+import "example.com/gym/app/shared/resource"
 
 // index is the list: each pillar's title and body.
-templ index(p admin.AdminPage, rows []admin.Row) {
-	@admin.ResourceIndex(p, admin.ResourceList{Path: "pillars", Title: title, Singular: singular, Columns: []string{"title", "body"}, Rows: rows})
+templ index(p resource.Page, rows []resource.Row) {
+	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Title", "Body"}, Rows: rows})
 }

@@ -23,6 +23,7 @@ DELETE FROM {{.Table}} WHERE id = sqlc.arg(id);
 {{- if .Position}}
 
 -- A new {{lower .Singular}} with no position goes last, as Rails' Positioned.
+-- BIGINT is int64 on both engines, as the position column is.
 -- name: Next{{.Model}}Position :one
-SELECT CAST(COALESCE(MAX(position), 0) + 1 AS INTEGER) AS position FROM {{.Table}};
+SELECT CAST(COALESCE(MAX(position), 0) + 1 AS BIGINT) AS position FROM {{.Table}};
 {{- end}}

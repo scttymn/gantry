@@ -1,0 +1,19 @@
+-- Newest first.
+
+-- name: ListPosts :many
+SELECT * FROM posts ORDER BY id DESC;
+
+-- name: GetPost :one
+SELECT * FROM posts WHERE id = sqlc.arg(id);
+
+-- name: CreatePost :one
+INSERT INTO posts (title, body, published_on, created_at, updated_at)
+VALUES (sqlc.arg(title), sqlc.arg(body), CAST(sqlc.narg(published_on) AS TEXT), sqlc.arg(now), sqlc.arg(now))
+RETURNING id;
+
+-- name: UpdatePost :exec
+UPDATE posts SET title = sqlc.arg(title), body = sqlc.arg(body), published_on = CAST(sqlc.narg(published_on) AS TEXT), updated_at = sqlc.arg(now)
+WHERE id = sqlc.arg(id);
+
+-- name: DeletePost :exec
+DELETE FROM posts WHERE id = sqlc.arg(id);

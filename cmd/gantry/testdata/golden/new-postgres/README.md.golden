@@ -37,7 +37,7 @@ All email uses `App.Mail`: controllers, jobs and authentication share one delive
 
 ## Generators
 ```sh
-bin/gantry g resource admin/posts title:string:required body:text
+bin/gantry g resource posts title:string:required body:text   # admin/posts: under /admin
 bin/gantry g migration add_email_to_users email:string
 bin/gantry g error-pages
 bin/gantry g fonts "Work Sans:400,600" "Instrument Serif:400,400i"   # Google Fonts, served from the app
