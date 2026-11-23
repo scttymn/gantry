@@ -100,6 +100,9 @@ func recipeGolden(t *testing.T, recipe string, args []string, files int, engine 
 	if written != files {
 		t.Errorf("wrote %d files, want %d", written, files)
 	}
+	if warnings, err := devcheck.Scan(dir); err != nil || len(warnings) != 0 {
+		t.Errorf("Strict: %+v %v", warnings, err)
+	}
 }
 
 func TestAPITokensRules(t *testing.T) {

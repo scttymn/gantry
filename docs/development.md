@@ -39,6 +39,18 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `raw-assets` | Advice | Avoid rebuilding asset serving outside Gantry's optimized pipeline | raw file server bypasses Gantry asset handling; use assets.Routes for scripts/styles, or document this route's separate purpose |
 | `development-guard` | Violation | Keep development-only middleware (source scans, timing, reload) out of production | web.Development, web.DevelopmentWithRules, web.Timing and web.Reload are development-only: call them inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception |
 | `environment-default` | Violation | Use Gantry's production defaults unless development is explicitly selected | GANTRY_ENV should default to production; opt into development explicitly |
+| `import-boundary` | Violation | Keep the app's layers one way (routes.go → resources → services → models, anything → shared) so each package is reusable and testable alone | app/models imports no web, templ or other app package; app/services no web or resource; app/shared no resource; a nested resource not its parent; nothing under app/ imports the routes package |
+| `view-db` | Violation | Keep pages cacheable and testable without a database: controllers load, views draw | a view uses models.New, models.Queries, db.DB or a DB's Read/Write pool; load the data in the controller's action and pass plain values to the component |
+| `raw-html` | Violation | Keep templ's escaping, which stops a visitor's text running as the page's HTML or script | templ.Raw and templ.JSUnsafeFuncCall skip escaping; write { value } (templ.URL for links), or document the escaping with an exception |
+| `env-outside-config` | Violation | Read the environment once, in config, so it's checked at start and tests set it as a value | os.Getenv in app/; add a field to config.Config and give it to what needs it |
+| `background-work` | Violation | Use jobs for work after the response, so a deploy or a crash doesn't lose it and failures are retried | a go statement, time.Sleep or time.AfterFunc in app/; enqueue a job (EnqueueIn, EnqueueAt), broadcast with live, or use sync.WaitGroup.Go for work the request waits for |
+| `http-client` | Violation | Bound every outbound request, so a slow server can't hold requests and jobs forever | http.DefaultClient, http.Get, Head, Post and PostForm have no timeout; send with an &http.Client{Timeout: ...} of your own |
+| `sql-outside-models` | Violation | Keep SQL in app/models, where sqlc checks it against the schema | raw SQL or a *sql.DB in app/ outside app/models; write the query in app/models/<table>.sql and call models.New(c.DB.Read).Name(ctx), or models.New(tx) in c.DB.Tx |
+| `cross-origin-bypass` | Violation | Keep cross-site request protection on every state-changing route but the callbacks that prove themselves | web.CrossOrigin's bypass patterns exempt every method and request they match; route the one callback with rt.CrossOriginCallback("POST /path", h), and have it check its own proof (OAuth state, a signature) |
+| `tx-defer` | Violation | Never leave a transaction open, holding its connection (on SQLite, the one writer) | a transaction is begun and committed with no deferred Rollback, so an early return or a panic leaves it open; defer tx.Rollback() right after Begin (it does nothing once committed), or use db.DB.Tx |
+| `read-then-write` | Advice | Save edits without losing one made meanwhile | a Get on the Read pool, then an Update or Delete on the Write pool, in one function; read and write in one c.DB.Tx with models.New(tx) |
+| `get-mutates` | Advice | Keep GETs safe to repeat, as prefetching browsers and crawlers assume | a GET handler (Index, Show, New, Edit, or a GET route's function) writes to the database; route it as POST and send it from a button in a form |
+| `inline-download` | Advice | Send uploads as downloads, so an uploaded HTML or SVG file can't run as the app's own page | http.ServeContent or ServeFile with no Content-Disposition serves a file inline; send uploads with web.Download or storage's routes, and serve inline only types checked to be images |
 
 <!-- /rules -->
 
@@ -51,6 +63,38 @@ custom equivalent guards require review and an exception. This checks specific
 conventions, not every possible path through a program. It cannot prove that a
 custom layout is wrong or that a data fetch delays rendering; those remain
 review/performance-measurement questions.
+
+The layout rules hold an app to [its layout](plans/gantry.md#an-apps-layout)
+and read only `app/`: `import-boundary`, `view-db`, `env-outside-config`,
+`background-work`, `sql-outside-models`, `read-then-write`, `get-mutates` and
+`inline-download`. `import-boundary` tells the app's own packages by the module
+path in `go.mod`, and sorts them by folder: `app/models`, `app/services/*`,
+`app/shared/*`, `app/mailers` and `app/jobs`, and every other folder is a
+resource. `view-db` and `raw-html` read a `.templ` file's components as text
+after its Go imports, so they follow the import's alias but not a value passed
+through a helper. `sql-outside-models` allows `database/sql`'s types sqlc's
+code uses (`sql.NullTime`, `sql.ErrNoRows`); it flags `*sql.DB`, `sql.Open`,
+and SQL run on a DB's `Read` or `Write` pool or a `*db.Tx` outside
+`app/models`. `background-work` allows `sync.WaitGroup.Go`, whose goroutines
+the request waits for. `http-client`, `raw-html`, `cross-origin-bypass` and
+`tx-defer` read every Go file, gantry's own included.
+
+The advice rules read one function at a time. `read-then-write` is a `Get…` on
+`models.New(c.DB.Read)` followed by an `Update…` or `Delete…` on
+`models.New(c.DB.Write)`. `get-mutates` is a write (`models.New(….Write)` or a
+`Tx`) in a GET action (the `Index`, `Show`, `New` and `Edit` that `Resources`
+routes to GET) or in a function routed inline to a GET pattern; a handler
+routed by name from another file isn't followed. Logout is POST-only in `auth`
+itself. `inline-download` is `http.ServeContent` or `ServeFile` in a function
+that never names `Content-Disposition`. A page cached through `Cached` isn't
+checked for per-visitor content: the cache never keeps a response that sets a
+cookie or is to a request with a session, and `bin/gantry verify` checks that
+no signed-in user's cached page is shown to anyone else.
+
+Upgrading: these rules are new in this release. An app that fails one fixes
+the code the message names, or adds an exception with its reason. Gantry's
+generators write code that passes them, so a new app, its resources and its
+recipes are clean.
 
 `bin/gantry check --json` prints the same scan as one JSON object, for tools
 and agents. Its field names are stable:
