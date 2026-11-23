@@ -21,9 +21,10 @@ import (
 // (a session's name, a CSRF token) mustn't be cached; that part belongs in
 // a fragment of its own.
 //
-// Only 200s are kept, and never a response that sets a cookie. Browsers are
-// told no-cache with an ETag and a Last-Modified, so they check back each
-// time and get a 304 when nothing changed. Last-Modified is when the page
+// Only 200s are kept, never a response that sets a cookie, and never one to
+// a request with an Authorization header. Browsers are told no-cache with
+// an ETag and a Last-Modified, so they check back each time and get a 304
+// when nothing changed. Last-Modified is when the page
 // last changed: its first render since the app started (a deploy), or the
 // first render that came out different from the one before (an edit in the
 // admin, say). Rendered again the same, it keeps its date. It's there for
@@ -82,12 +83,16 @@ func (c *PageCache) maxEntries() int {
 }
 
 // Handler serves next's GETs and HEADs from the cache, keyed by path and
-// query. Anything else goes straight to next. A filter that decides who may
-// see a page goes outside it, as Cached puts a scope's: inside, a kept page
-// is served without it.
+// query. Anything else goes straight to next, as does a request with
+// credentials (an Authorization header) and one whose response already sets
+// a cookie (a filter before the cache took a flash, say): neither is the
+// same for every visitor. A filter that decides who may see a page goes
+// outside it, as Cached puts a scope's: inside, a kept page is served
+// without it.
 func (c *PageCache) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		if (r.Method != http.MethodGet && r.Method != http.MethodHead) ||
+			r.Header.Get("Authorization") != "" || w.Header().Get("Set-Cookie") != "" {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+var flashKey = NewKey[string]("flash")
+
 // cached is a router with a page cache over a few routes that count their
 // renders, at a clock and data version the test moves.
 type cached struct {
@@ -74,7 +76,31 @@ func newCached(t *testing.T) *cached {
 		}
 		return nil
 	}
-	rt.Scope("/members", Pipeline{membersOnly}, func(s *Scope) { s.Cached("GET /page", page) })
+	staffOnly := func(w http.ResponseWriter, r *http.Request) error {
+		if r.Header.Get("X-Staff") == "" {
+			return Status(http.StatusForbidden, nil)
+		}
+		return nil
+	}
+	rt.Scope("/members", Pipeline{membersOnly}, func(s *Scope) {
+		s.Cached("GET /page", page)
+		s.Scope("/staff", Pipeline{staffOnly}, func(s *Scope) { s.Cached("GET /page", page) })
+	})
+	takeFlash := func(w http.ResponseWriter, r *http.Request) error {
+		if message := r.Header.Get("X-Flash"); message != "" {
+			ClearCookie(w, "flash")
+			Set(r, flashKey, message)
+		}
+		return nil
+	}
+	rt.Scope("/flash", Pipeline{takeFlash}, func(s *Scope) {
+		s.Cached("GET /page", func(w http.ResponseWriter, r *http.Request) error {
+			c.renders.Add(1)
+			message, _ := Get(r, flashKey)
+			io.WriteString(w, "<p>"+message+"</p>")
+			return nil
+		})
+	})
 	c.h = rt.Handler()
 	return c
 }
@@ -135,6 +161,39 @@ func TestPageCache(t *testing.T) {
 		anonymous := c.get("/members/page")
 		if anonymous.Code != http.StatusFound || anonymous.Header().Get("Location") != "/login" || strings.Contains(anonymous.Body.String(), "render") {
 			t.Fatalf("anonymous: %d %v %q", anonymous.Code, anonymous.Header(), anonymous.Body)
+		}
+	})
+	t.Run("a nested scope runs the outer filters, then its own, before the cache", func(t *testing.T) {
+		c := newCached(t)
+		if staff := c.get("/members/staff/page", "X-Member", "ada", "X-Staff", "yes"); staff.Code != 200 {
+			t.Fatalf("staff: %d", staff.Code)
+		}
+		if member := c.get("/members/staff/page", "X-Member", "grace"); member.Code != http.StatusForbidden || strings.Contains(member.Body.String(), "render") {
+			t.Fatalf("a member who isn't staff: %d %q", member.Code, member.Body)
+		}
+		if anonymous := c.get("/members/staff/page"); anonymous.Code != http.StatusFound || anonymous.Header().Get("Location") != "/login" {
+			t.Fatalf("anonymous: %d %v", anonymous.Code, anonymous.Header())
+		}
+	})
+	t.Run("a request with credentials neither fills nor reads the cache", func(t *testing.T) {
+		c := newCached(t)
+		signedIn := c.get("/page", "Authorization", "Bearer ada")
+		anonymous := c.get("/page")
+		if c.renders.Load() != 2 || anonymous.Body.String() == signedIn.Body.String() {
+			t.Fatalf("an anonymous visitor got the signed-in render: renders %d", c.renders.Load())
+		}
+		if c.get("/page", "Authorization", "Bearer ada"); c.renders.Load() != 3 {
+			t.Fatalf("a request with credentials was served the kept page: renders %d", c.renders.Load())
+		}
+	})
+	t.Run("a response a filter set a cookie on is never kept", func(t *testing.T) {
+		c := newCached(t)
+		flashed := c.get("/flash/page", "X-Flash", "saved")
+		if !strings.Contains(flashed.Body.String(), "saved") || flashed.Header().Get("Set-Cookie") == "" {
+			t.Fatalf("flashed: %v %q", flashed.Header(), flashed.Body)
+		}
+		if next := c.get("/flash/page"); strings.Contains(next.Body.String(), "saved") {
+			t.Fatalf("the next visitor got the flash: %q", next.Body)
 		}
 	})
 	t.Run("an error page is never kept", func(t *testing.T) {
