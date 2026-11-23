@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"go/format"
+	"image"
+	"image/jpeg"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -10,6 +13,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/images"
 )
 
 // steps records the commands gantry runs instead of running them; fail
@@ -458,12 +463,34 @@ func TestNewAppBuilds(t *testing.T) {
 	// reads that release's go.mod, which isn't published until it's tagged.
 	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-	for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
+	for _, step := range [][]string{{"templ", "generate"}, {"go", "run", "./cmd/shop", "assets"}, {"go", "vet", "./..."}, {"go", "test", "./..."}, {"go", "build", "-o", "shop", "./cmd/shop"}} {
 		cmd := exec.Command(step[0], step[1:]...)
 		cmd.Dir = dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
 		}
+	}
+	// Its binary is its pictures' resizing child (images.Child), with the
+	// app's pipeline and so its pixel limit.
+	var jpg bytes.Buffer
+	jpeg.Encode(&jpg, image.NewRGBA(image.Rect(0, 0, 400, 200)), nil)
+	os.WriteFile(filepath.Join(dir, "photo.jpg"), jpg.Bytes(), 0o644)
+	os.WriteFile(filepath.Join(dir, "bomb.gif"), []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00"), 0o644)
+	resize := func(src, dst string) (string, error) {
+		cmd := exec.Command(filepath.Join(dir, "shop"), images.ChildCommand, src, dst, "100", "80")
+		cmd.Dir = dir
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	if out, err := resize("photo.jpg", "copy.webp"); err != nil {
+		t.Fatalf("resize: %v\n%s", err, out)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "copy.webp"))
+	if w, h, ct, err := (&images.Pipeline{}).Dimensions(data); err != nil || w != 100 || h != 50 || ct != "image/webp" {
+		t.Errorf("the child's copy: %d×%d %s %v", w, h, ct, err)
+	}
+	if out, err := resize("bomb.gif", "bomb.webp"); err == nil || !strings.Contains(out, "too many pixels") {
+		t.Errorf("the child resized a bomb: %v\n%s", err, out)
 	}
 }
 
