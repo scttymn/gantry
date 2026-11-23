@@ -311,6 +311,39 @@ func TestNewRequiresThisRelease(t *testing.T) {
 	}
 }
 
+// AGENTS.md sends agents to the docs of the gantry go.mod requires, and its
+// layout map is the README's.
+func TestNewAgents(t *testing.T) {
+	was := releaseVersion
+	t.Cleanup(func() { releaseVersion = was })
+	releaseVersion = "v9.8.7"
+	root := t.TempDir()
+	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	agents, err := os.ReadFile(filepath.Join(root, "shop", "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"blob/v9.8.7/docs/agents.md", "blob/v9.8.7/docs/strict.md", "bin/gantry check --strict", "bin/gantry test"} {
+		if !strings.Contains(string(agents), want) {
+			t.Errorf("AGENTS.md has no %s:\n%s", want, agents)
+		}
+	}
+	if strings.Contains(string(agents), "blob/main/") {
+		t.Error("AGENTS.md links to docs on main, not the app's version")
+	}
+	readme, _ := os.ReadFile(filepath.Join(root, "shop", "README.md"))
+	layout := func(doc []byte) string {
+		_, after, _ := strings.Cut(string(doc), "## Where things go\n")
+		section, _, _ := strings.Cut(after, "\n## ")
+		return section
+	}
+	if layout(agents) == "" || layout(agents) != layout(readme) {
+		t.Errorf("AGENTS.md's layout map isn't the README's:\n%s\n---\n%s", layout(agents), layout(readme))
+	}
+}
+
 // A release is tagged with latestRelease raised to its tag: the release
 // workflow gives the tag, so nothing is published with it behind, and an
 // app made from a checkout never requires a release older than the newest.

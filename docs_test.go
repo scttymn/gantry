@@ -16,7 +16,7 @@ import (
 // keep its table rows in tables, link only to files and headings that exist,
 // and name in a decisions table only modules go.mod requires.
 func TestDocs(t *testing.T) {
-	files := []string{"README.md", "CONTRIBUTING.md", "llms.txt", "cmd/gantry/templates/new/README.md.tmpl"}
+	files := []string{"README.md", "CONTRIBUTING.md", "AGENTS.md", "llms.txt", "cmd/gantry/templates/new/README.md.tmpl", "cmd/gantry/templates/new/AGENTS.md.tmpl"}
 	for _, glob := range []string{"docs/*.md", "docs/plans/*.md"} {
 		matches, err := filepath.Glob(glob)
 		if err != nil || len(matches) == 0 {
@@ -74,6 +74,12 @@ func TestDocChecksCatchProblems(t *testing.T) {
 	sound := parseDoc("docs/x.md", "\n# Title\n\nSee [reload](other.md#reload-on-save), [setup](other.md#set-up-bingantry-twice), [plans](https://github.com/scttymn/gantry/tree/main/docs), [code](`x](y)`) and [below](#decisions).\n\n## Decisions\n| Need | Choice | Why |\n| :--- | ---: | --- |\n| Views | `github.com/a-h/templ/runtime` | Typed, as [its docs](https://pkg.go.dev/net/http) and https://example.com/a/b say |\n| CSRF | Go 1.25/1.26's `http.CrossOriginProtection`, as in github.com/a-h/templ. | Standard |\n| CLI | `github.com/spf13/cobra`. **Superseded:** `flag` | `github.com/spf13/cobra` is what Houston used |\n\n```sh\n| not a table\n```\n")
 	for _, p := range check(sound, read, required) {
 		t.Errorf("a sound doc has a problem: %d: %s", p.line, p.msg)
+	}
+
+	files["cmd/new/AGENTS.md.tmpl"] = parseDoc("cmd/new/AGENTS.md.tmpl", "# Agents\n\n## Where things go\n")
+	readme := parseDoc("cmd/new/README.md.tmpl", "# App\n\nSee [AGENTS.md](AGENTS.md#where-things-go), not [this](GONE.md).\n")
+	if got := check(readme, read, required); len(got) != 1 || !strings.Contains(got[0].msg, "cmd/new/GONE.md doesn't exist") {
+		t.Errorf("a template's link to the file its sibling template writes: %+v", got)
 	}
 }
 
@@ -219,6 +225,10 @@ func linkProblems(d doc, read func(string) (doc, bool)) []problem {
 			default:
 				file = path.Join(path.Dir(d.path), file)
 				linked, ok = read(file)
+				if !ok && strings.HasSuffix(d.path, ".tmpl") {
+					// The generator writes X.tmpl as X beside it.
+					linked, ok = read(file + ".tmpl")
+				}
 			}
 			if !ok {
 				problems = append(problems, problem{i + 1, fmt.Sprintf("link to %q: %s doesn't exist. Fix the path, or remove the link.", target, file)})
