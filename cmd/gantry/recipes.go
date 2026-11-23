@@ -170,7 +170,7 @@ Next:
        a.Auth.URL = func(p string) string { return "https://example.com" + p }
        a.Auth.Routes(rt)
        rt.Scope("/admin", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
-     Set Idle/Lifetime for session expiry and FirstUser.CreateUser for app-specific roles.
+     Adjust session Idle/Lifetime (30/90 days) and set FirstUser.CreateUser for app-specific roles.
   3. Open /login to finish first-install setup. In your terminal, retrieve its code:
        gantry task auth:setup-code
      On production, with Houston v0.5.10 or newer (houston login, no SSH):
@@ -262,7 +262,7 @@ Next:
        a.Auth.Routes(rt)
        rt.Scope("/account", web.Pipeline{a.Auth.Required}, func(s *web.Scope) { ... })
      Routes validates the mail and key configuration at startup.
-  4. Set session Idle/Lifetime and optional EmailCodes.DailyLimit for your app.
+  4. Adjust session Idle/Lifetime (30/90 days) and set optional EmailCodes.DailyLimit for your app.
      Schedule a.Auth.PruneLoginCodes(ctx), e.g. hourly, using Gantry jobs.
   5. gantry check --strict, then gantry test.
 

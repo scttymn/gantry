@@ -96,19 +96,15 @@ routes, and run tests. Generated code still needs wiring into `App`.
 
 ```go
 a.Auth = auth.New(a.DB, a.Signer, a.Mail, a.Mail.From, []byte(authCodeKey))
-a.Auth.Idle = 14 * 24 * time.Hour
-a.Auth.Lifetime = 30 * 24 * time.Hour
 a.Auth.Routes(rt)
 rt.Scope("/account", web.Pipeline{a.Auth.Required}, func(s *web.Scope) {
     // The signed-in user is available through auth.Current(r).
 })
 ```
 
-The session durations above are an example application policy; zero retains the
-existing Auth behavior without these expiry limits. The app owns the shared mail
-service and the authentication secret. Routes validates email-code configuration
-at startup
-and panics on a missing database, sender, valid From address or suitable key.
+The app owns the shared mail service and the authentication secret. Routes
+validates email-code configuration at startup and panics on a missing database,
+sender, valid From address or suitable key.
 
 ## Browser flow
 
@@ -133,6 +129,39 @@ or assigned. Apps with other required user fields supply
 `EmailCodes.CreateUser(ctx, tx, email)`. This hook runs only after verification,
 inside the consumption transaction; use the provided transaction and perform
 external work after commit. An error rolls back signup and consumption.
+
+## Sessions and sign-out
+
+Every sign-in method starts the same database session. A session ends 30 days
+after its last use (`Idle`) or 90 days after sign-in (`Lifetime`), whichever
+comes first. The cookie expires with `Lifetime`. Use is recorded at most hourly,
+so `Idle` counts in hours. The generated `auth.New` sets both values, so change
+them there. A zero value takes the default. `auth.NoLimit`, or any negative
+duration, turns that limit off. With both limits off, a session lasts until
+sign-out, as in Rails 8's generator.
+
+To sign out, send `POST` (or `DELETE`) to `/logout` from a form:
+
+```html
+<form method="post" action="/logout"><button type="submit">Sign out</button></form>
+```
+
+The generated `SignOut` component is this form. `GET /logout` is not a route.
+Any site can send a browser there with a link or a redirect, and cross-origin
+protection guards only the methods that change state.
+
+Password reset gives the same answer, equally fast, whether or not the address
+has an account. Auth looks up the address and sends the email after the
+response. A test that reads the reset email calls `a.Auth.Wait()` first. The
+reset pages send `Cache-Control: no-store` and `Referrer-Policy: no-referrer`,
+because the edit page's address carries the reset token.
+
+**Upgrading.** Apps that left `Idle` and `Lifetime` at zero now get the 30-day
+and 90-day limits. A session idle for more than 30 days, or signed in more than
+90 days ago, ends the next time it is used after the upgrade. Its user signs in
+again. To keep the old behavior, set both values to `auth.NoLimit`. A sign-out
+link (`<a href="/logout">`) no longer signs anyone out. Replace it with the form
+above.
 
 ## Shared Auth and existing applications
 
