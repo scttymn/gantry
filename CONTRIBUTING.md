@@ -24,9 +24,16 @@ Postgres's images, SQLite's C flags and build tags) are in
 app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
 page) are held to them by its test, which says where to change one.
 
-Every pull request and push to `main` runs the `ci` workflow: both passes,
-the cgo one again with `-race`, `go vet`, gofmt, staticcheck, govulncheck and
-the bench modules' tests (below). Run staticcheck and govulncheck with
+Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
+passes in (`internal/testenv`), e.g.
+`GANTRY_TEST_POSTGRES_URL=postgres://postgres:pw@host.docker.internal:5432/postgres?sslmode=disable bin/go go test ./...`.
+Without it they skip, except under `CI=true`, where they fail.
+
+Every pull request and push to `main` runs the `ci` workflow: both passes on
+SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
+staticcheck and govulncheck (`go vet`, staticcheck and govulncheck on the cgo
+build too), the bench modules' tests (below), and the release's build and its
+probe on a made-up tag. Run staticcheck and govulncheck with
 `bin/go go run honnef.co/go/tools/cmd/staticcheck@<version> ./...` and
 `bin/go go run golang.org/x/vuln/cmd/govulncheck@<version> ./...`, at the
 versions [`ci.yml`](.github/workflows/ci.yml) pins.

@@ -9,5 +9,5 @@ docker build -q --target toolchain -t gantry-toolchain . >/dev/null
 tty=; [ -t 0 ] && tty=-t
 exec docker run --rm -i $tty -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" \
   -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
-  -e GANTRY_TEST_POSTGRES_URL="${GANTRY_TEST_POSTGRES_URL:-}" \
+  -e GANTRY_TEST_POSTGRES_URL="${GANTRY_TEST_POSTGRES_URL:-}" -e CI \
   gantry-toolchain "$@"
