@@ -182,8 +182,9 @@ func TestNewVendorLicenses(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		license, _, ok := strings.Cut(string(got), "*/")
-		if _, license, ok = strings.Cut(license, "\n\n/*!\n"); !ok {
+		_, rest, opened := strings.Cut(string(got), "\n\n/*!\n")
+		license, _, closed := strings.Cut(rest, "*/")
+		if !opened || !closed {
 			t.Errorf("%s has no license comment after its first line", file)
 			continue
 		}
