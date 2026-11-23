@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -32,9 +34,14 @@ CREATE TABLE sessions (id integer PRIMARY KEY, user_id integer NOT NULL REFERENC
   bound_to text NOT NULL DEFAULT '');
 `)}}
 
-type fakeMail struct{ sent []mail.Message }
+type fakeMail struct {
+	mu   sync.Mutex
+	sent []mail.Message
+}
 
 func (f *fakeMail) Send(_ context.Context, m mail.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.sent = append(f.sent, m)
 	return nil
 }
@@ -61,6 +68,7 @@ func newApp(t *testing.T) *app {
 		URL: func(path string) string { return "https://example.com" + path }, Limits: &web.Limits{},
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return a.now },
 		Paths: Paths{AfterLogin: "/admin"}}
+	t.Cleanup(a.auth.Wait)
 	u, err := a.auth.CreateUser(context.Background(), " One@Example.com ", password)
 	if err != nil {
 		t.Fatal(err)
@@ -172,11 +180,19 @@ func TestSessions(t *testing.T) {
 			t.Fatalf("%d %v sessions %d", rec.Code, rec.Header(), a.count("sessions"))
 		}
 	})
-	t.Run("the session cookie is a random token, HttpOnly, Lax, lasting and Secure", func(t *testing.T) {
+	t.Run("GET /logout signs nobody out", func(t *testing.T) {
+		a := newApp(t)
+		a.signIn("one@example.com", password)
+		a.do("GET", "/logout", nil)
+		if a.cookie("session") == nil || a.count("sessions") != 1 || a.do("GET", "/admin", nil).Code != 200 {
+			t.Fatal("a GET, which a link from any site can send, ended the session")
+		}
+	})
+	t.Run("the session cookie is a random token, HttpOnly, Lax, lasting 90 days and Secure", func(t *testing.T) {
 		a := newApp(t)
 		a.signIn("one@example.com", password)
 		c := a.cookie("session")
-		if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge < 10*365*24*3600 || len(c.Value) < 40 {
+		if c == nil || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode || c.MaxAge != 90*24*3600 || len(c.Value) < 40 {
 			t.Fatalf("%+v", c)
 		}
 		var stored string
@@ -237,15 +253,24 @@ func TestSessions(t *testing.T) {
 	})
 }
 
+// sent is the email sent so far, once every reset asked for is sent.
+func (a *app) sent() []mail.Message {
+	a.auth.Wait()
+	a.mail.mu.Lock()
+	defer a.mail.mu.Unlock()
+	return a.mail.sent
+}
+
 // resetLink is the path in the last reset email.
 func (a *app) resetLink() string {
 	a.t.Helper()
-	if len(a.mail.sent) == 0 {
+	sent := a.sent()
+	if len(sent) == 0 {
 		a.t.Fatal("no email")
 	}
-	m := regexp.MustCompile(`https://example\.com(/passwords/\S+/edit)`).FindStringSubmatch(a.mail.sent[len(a.mail.sent)-1].Text)
+	m := regexp.MustCompile(`https://example\.com(/passwords/\S+/edit)`).FindStringSubmatch(sent[len(sent)-1].Text)
 	if m == nil {
-		a.t.Fatalf("no link in %q", a.mail.sent[len(a.mail.sent)-1].Text)
+		a.t.Fatalf("no link in %q", sent[len(sent)-1].Text)
 	}
 	return m[1]
 }
@@ -259,10 +284,11 @@ func TestPasswords(t *testing.T) {
 	t.Run("create", func(t *testing.T) {
 		a := newApp(t)
 		rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
-		if rec.Code != 303 || rec.Header().Get("Location") != "/login" || len(a.mail.sent) != 1 {
-			t.Fatalf("%d %v sent %d", rec.Code, rec.Header(), len(a.mail.sent))
+		sent := a.sent()
+		if rec.Code != 303 || rec.Header().Get("Location") != "/login" || len(sent) != 1 {
+			t.Fatalf("%d %v sent %d", rec.Code, rec.Header(), len(sent))
 		}
-		m := a.mail.sent[0]
+		m := sent[0]
 		if m.To != "one@example.com" || m.Subject != "Reset your password" || m.From != "Site <no-reply@example.com>" || !strings.Contains(m.Text, "15 minutes") {
 			t.Errorf("%+v", m)
 		}
@@ -270,7 +296,7 @@ func TestPasswords(t *testing.T) {
 	t.Run("create for an unknown user redirects but sends no mail", func(t *testing.T) {
 		a := newApp(t)
 		rec := a.do("POST", "/passwords", url.Values{"email_address": {"nobody@example.com"}})
-		if rec.Header().Get("Location") != "/login" || len(a.mail.sent) != 0 {
+		if rec.Header().Get("Location") != "/login" || len(a.sent()) != 0 {
 			t.Fatal("told apart from a real address")
 		}
 	})
@@ -357,11 +383,139 @@ func TestPasswords(t *testing.T) {
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		req.Header.Set("Sec-Fetch-Site", "same-origin")
 		a.h.ServeHTTP(httptest.NewRecorder(), req)
-		if len(a.mail.sent) != 1 || !strings.Contains(a.mail.sent[0].Text, "https://example.com/passwords/") || strings.Contains(a.mail.sent[0].Text, "evil") {
-			t.Fatalf("%+v", a.mail.sent)
+		sent := a.sent()
+		if len(sent) != 1 || !strings.Contains(sent[0].Text, "https://example.com/passwords/") || strings.Contains(sent[0].Text, "evil") {
+			t.Fatalf("%+v", sent)
+		}
+	})
+	t.Run("the answer doesn't wait for the email, so its time can't tell who has an account", func(t *testing.T) {
+		a := newApp(t)
+		slow := a.slowMail()
+		ctx, cancel := context.WithCancel(context.Background())
+		req := httptest.NewRequestWithContext(ctx, "POST", "https://example.com/passwords", strings.NewReader("email_address=one%40example.com"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Sec-Fetch-Site", "same-origin")
+		answered := make(chan *httptest.ResponseRecorder, 1)
+		go func() {
+			rec := httptest.NewRecorder()
+			a.h.ServeHTTP(rec, req)
+			answered <- rec
+		}()
+		select {
+		case rec := <-answered:
+			if rec.Code != 303 || rec.Header().Get("Location") != "/login" {
+				t.Errorf("%d %v", rec.Code, rec.Header())
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the answer waited for the email")
+		}
+		cancel()
+		slow.free()
+		a.auth.Wait()
+		slow.mu.Lock()
+		defer slow.mu.Unlock()
+		if len(slow.sent) != 1 || slow.ended[0] != nil {
+			t.Fatalf("sent %d, the context ended: %v", len(slow.sent), slow.ended)
+		}
+	})
+	t.Run("the reset pages are never stored, and never pass on their address", func(t *testing.T) {
+		a := newApp(t)
+		check := func(what string, rec *httptest.ResponseRecorder) {
+			t.Helper()
+			if rec.Header().Get("Cache-Control") != "no-store" || rec.Header().Get("Referrer-Policy") != "no-referrer" {
+				t.Errorf("%s: %d %v", what, rec.Code, rec.Header())
+			}
+		}
+		check("POST /passwords", a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}}))
+		link := a.resetLink()
+		for _, path := range []string{"/passwords/new", link} {
+			check("GET "+path, a.do("GET", path, nil))
+		}
+		check("PATCH", update(a, link, "a new password", "another one"))
+	})
+	t.Run("a panicking sender or a missing URL logs, and the server stays up", func(t *testing.T) {
+		a := newApp(t)
+		var logged bytes.Buffer
+		a.auth.Log = slog.New(slog.NewTextHandler(&logged, nil))
+		a.auth.Mail = panicMail{}
+		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
+		a.auth.Wait()
+		a.auth.Mail, a.auth.URL = a.mail, nil
+		a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}})
+		a.auth.Wait()
+		if out := logged.String(); !strings.Contains(out, "the sender broke") || !strings.Contains(out, "Auth.URL") {
+			t.Errorf("logged %q", out)
+		}
+	})
+	t.Run("at most 100 reset emails are in flight, and the rest are dropped", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Limits = nil
+		slow := a.slowMail()
+		for range 101 {
+			if rec := a.do("POST", "/passwords", url.Values{"email_address": {"one@example.com"}}); rec.Header().Get("Location") != "/login" {
+				t.Fatalf("%d %v", rec.Code, rec.Header())
+			}
+		}
+		slow.free()
+		a.auth.Wait()
+		slow.mu.Lock()
+		defer slow.mu.Unlock()
+		if len(slow.sent) != 100 {
+			t.Errorf("sent %d", len(slow.sent))
+		}
+	})
+	t.Run("Wait can run while resets are still being asked for", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Limits = nil
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for range 200 {
+				a.do("POST", "/passwords", url.Values{"email_address": {"nobody@example.com"}})
+			}
+		}()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+				a.auth.Wait()
+			}
 		}
 	})
 }
+
+// slowMail holds each email until free, and records whether the context it
+// was given had ended by then.
+type slowMail struct {
+	fakeMail
+	release chan struct{}
+	once    sync.Once
+	ended   []error
+}
+
+// slowMail makes the app's sender a slowMail, freed when the test ends if
+// not before, so Wait can't hang.
+func (a *app) slowMail() *slowMail {
+	s := &slowMail{release: make(chan struct{})}
+	a.auth.Mail = s
+	a.t.Cleanup(s.free)
+	return s
+}
+
+func (s *slowMail) free() { s.once.Do(func() { close(s.release) }) }
+
+func (s *slowMail) Send(ctx context.Context, m mail.Message) error {
+	<-s.release
+	s.mu.Lock()
+	s.ended = append(s.ended, ctx.Err())
+	s.mu.Unlock()
+	return s.fakeMail.Send(ctx, m)
+}
+
+type panicMail struct{}
+
+func (panicMail) Send(context.Context, mail.Message) error { panic("the sender broke") }
 
 func TestRequire(t *testing.T) {
 	t.Run("sends you to sign in, and back after", func(t *testing.T) {
@@ -399,6 +553,33 @@ func TestRequire(t *testing.T) {
 		req.AddCookie(a.cookie("session"))
 		if !a.auth.SignedIn(req) {
 			t.Error("not signed in with a live session")
+		}
+	})
+	t.Run("HasSessionCookie goes by the cookie alone, for the page cache", func(t *testing.T) {
+		a := &Auth{}
+		for _, c := range []struct {
+			name   string
+			cookie *http.Cookie
+			want   bool
+		}{
+			{"none", nil, false},
+			{"the session's", &http.Cookie{Name: "session", Value: "anything"}, true},
+			{"an empty one", &http.Cookie{Name: "session", Value: ""}, false},
+			{"another", &http.Cookie{Name: "flash", Value: "x"}, false},
+		} {
+			req := httptest.NewRequest("GET", "/", nil)
+			if c.cookie != nil {
+				req.AddCookie(c.cookie)
+			}
+			if got := a.HasSessionCookie(req); got != c.want {
+				t.Errorf("%s: %v", c.name, got)
+			}
+		}
+		renamed := &Auth{Cookie: "sid"}
+		req := httptest.NewRequest("GET", "/", nil)
+		req.AddCookie(&http.Cookie{Name: "sid", Value: "x"})
+		if !renamed.HasSessionCookie(req) {
+			t.Error("the app's own cookie name wasn't used")
 		}
 	})
 }
@@ -545,9 +726,43 @@ func TestSessionEnds(t *testing.T) {
 			t.Fatalf("lifetime: %d, %d sessions", rec.Code, a.count("sessions"))
 		}
 	})
-	t.Run("never, by default", func(t *testing.T) {
+	t.Run("30 days unused, by default", func(t *testing.T) {
 		a := newApp(t)
 		a.signIn("one@example.com", password)
+		a.now = a.now.Add(29 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("ended within 30 days")
+		}
+		a.now = a.now.Add(29 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+			t.Fatal("use didn't keep it")
+		}
+		a.now = a.now.Add(30 * 24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("idle: %d, %d sessions", rec.Code, a.count("sessions"))
+		}
+	})
+	t.Run("90 days after sign-in, however used, by default", func(t *testing.T) {
+		a := newApp(t)
+		a.signIn("one@example.com", password)
+		for range 89 {
+			a.now = a.now.Add(24 * time.Hour)
+			if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
+				t.Fatalf("ended at %v", a.now)
+			}
+		}
+		a.now = a.now.Add(24 * time.Hour)
+		if rec := a.do("GET", "/admin", nil); rec.Code != 302 || a.count("sessions") != 0 {
+			t.Fatalf("lifetime: %d, %d sessions", rec.Code, a.count("sessions"))
+		}
+	})
+	t.Run("never, with NoLimit", func(t *testing.T) {
+		a := newApp(t)
+		a.auth.Idle, a.auth.Lifetime = NoLimit, NoLimit
+		a.signIn("one@example.com", password)
+		if c := a.cookie("session"); c.MaxAge < 10*365*24*3600 {
+			t.Errorf("cookie lasts %d", c.MaxAge)
+		}
 		a.now = a.now.Add(5 * 365 * 24 * time.Hour)
 		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
 			t.Fatal("ended")

@@ -29,15 +29,19 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 
 ## Gantry defaults and strict mode
 
-| Rule | Severity | Default being checked |
-| --- | --- | --- |
-| `asset-url` | Violation | Content-versioned local scripts and styles through the asset pipeline |
-| `development-guard` | Violation | Calls to `web.Development` and `web.Timing` inside a positive `cfg.Development()` guard |
-| `environment-default` | Violation | The config helper's `GANTRY_ENV` fallback is `production` |
-| `migration-down` | Violation | Each migration in `db/migrations` has a `-- +goose Down` section, empty when it can't be undone |
-| `shared-layout` | Advice | Full HTML page shells belong in `app/shared`, rather than individual app views |
-| `raw-assets` | Advice | Review `http.FileServer`/`FileServerFS` routes that bypass the asset pipeline |
-| `form-scope` | Advice | Form enhancements target an explicit form rather than the page's first form |
+<!-- rules: generated from devcheck.DefaultRules() by go test ./devcheck -update -->
+
+| Rule | Severity | Purpose | Guidance |
+| --- | --- | --- | --- |
+| `asset-url` | Violation | Use Gantry's asset pipeline for cache invalidation, compression and reusable assets | local script or stylesheet uses a literal URL; use assets.Path/Styles/ImportMap so deployments replace cached copies; document an intentional alternative |
+| `form-scope` | Advice | Reuse form-scoped behavior safely as shared navigation evolves | document.querySelector('form') can select a navigation form; use a form ID or a Stimulus controller scoped to that form |
+| `shared-layout` | Advice | Keep asset loading and page enhancements in the shared layout | standalone page shell outside app/shared; prefer the shared layout so navigation, assets and development diagnostics stay consistent |
+| `raw-assets` | Advice | Avoid rebuilding asset serving outside Gantry's optimized pipeline | raw file server bypasses Gantry asset handling; use assets.Routes for scripts/styles, or document this route's separate purpose |
+| `development-guard` | Violation | Keep development-only middleware (source scans, timing, reload) out of production | web.Development, web.DevelopmentWithRules, web.Timing and web.Reload are development-only: call them inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception |
+| `environment-default` | Violation | Use Gantry's production defaults unless development is explicitly selected | GANTRY_ENV should default to production; opt into development explicitly |
+| `migration-down` | Violation | Keep rollback and testkit.Migrations checking every migration's undo | migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible |
+
+<!-- /rules -->
 
 Strict mode fails on violations. Advisory findings require context and stay
 visible in both the terminal and browser without failing CI. The Go checks use
@@ -49,15 +53,17 @@ conventions, not every possible path through a program. It cannot prove that a
 custom layout is wrong or that a data fetch delays rendering; those remain
 review/performance-measurement questions.
 
-For an intentional departure, commit `.gantry-check.json` in the project root:
+For an intentional departure, add an exception to `.gantry-check.json` in the
+project root. A new app has the file, with no exceptions:
 
 ```json
 {
+  "requireIssue": true,
   "exceptions": [
     {
       "rule": "raw-assets",
       "file": "app/downloads.go",
-      "reason": "This authenticated route serves exports, not scripts or styles."
+      "reason": "This authenticated route serves exports, not scripts or styles (#214)."
     }
   ]
 }
@@ -68,6 +74,18 @@ checks, and require a reason. Wildcards, unknown rules, unknown config fields,
 and empty reasons are rejected. Keep exceptions narrow and review this file
 alongside code changes. They suppress all findings of that rule in the named
 file; line numbers are intentionally not used because edits move lines.
+
+An exception that suppresses nothing, because the file was fixed, moved or
+deleted, or an upgrade stopped the rule firing there, is reported as
+`stale-exception` advice on `.gantry-check.json`. Remove it: left in place, it
+would hide the next violation of that rule in that file. It is advice so that
+an upgrade doesn't fail CI.
+
+A reason should point at where the exception was decided: an issue (`#123`) or
+a link to an issue or decision record (`https://...`). With `"requireIssue":
+true`, as a new app has, the scan fails on a reason without one. Without it, as
+in a file from before the setting existed, each such reason is reported as
+`exception-reason` advice instead.
 
 ## Browser warnings
 
@@ -85,6 +103,27 @@ source scan. The generated Compose configuration passes this setting through.
 CLI checks and timing remain available. Production and test environments do not
 activate diagnostics. Apps with a custom HTTP stack outside Gantry's router can
 opt into `web.Development` explicitly inside a development guard.
+
+A new app's Dockerfile builds production with `-tags nodevcheck`, so the
+deployed binary contains no source scanner at all; the dev stage keeps it.
+Under the tag `web.Development` is `web.Timing` alone and
+`web.DevelopmentWithRules` doesn't exist. The test stage compiles the app with
+the tag too, so `bin/gantry test` fails on such a call before a deploy would.
+An app that calls `web.DevelopmentWithRules` passes it devcheck's rules, so it
+links devcheck whatever the tag; leave `nodevcheck` out of its Dockerfile.
+
+An existing app adopts the tag by adding this line to its Dockerfile's build
+stage, after `FROM toolchain AS build`, and
+`GOFLAGS="$GOFLAGS,nodevcheck" go build ./...` to its test stage's command,
+before `go test`:
+
+```dockerfile
+ENV GOFLAGS="${GOFLAGS},nodevcheck"
+```
+
+Both extend the toolchain stage's `-tags=` list, so they work only while
+`-tags=` is the last flag in its `GOFLAGS`. Otherwise, spell out the whole
+`-tags=` list with `nodevcheck` added.
 
 Injection happens before Gantry compresses the response. Only complete HTML
 pages with a body are transformed; streams, fragments, encoded responses,

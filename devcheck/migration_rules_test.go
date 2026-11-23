@@ -23,7 +23,7 @@ func TestMigrationDown(t *testing.T) {
 		}
 	}
 
-	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"migration-down","file":"db/migrations/00003_titles.sql","reason":"Applied everywhere before Down sections were required."}]}`)
+	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"migration-down","file":"db/migrations/00003_titles.sql","reason":"Applied everywhere before Down sections were required (#59)."}]}`)
 	got, err = Scan(root)
 	if err != nil || len(got) != 1 || got[0].File != "db/migrations/00004_mentions.sql" {
 		t.Fatal(got, err)

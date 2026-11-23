@@ -44,9 +44,10 @@ configuration. Adding a built-in entry automatically reaches all consumers.
    mutation. Do not put secrets or entire source contents in a diagnostic.
 4. Update generators and examples to use the feature. Generated apps must pass
    Strict. Add a migration example so existing apps can adopt it.
-5. Update the rule catalog documentation and describe new strict failures in the
-   release notes. Apps pick up rule changes when their pinned Gantry version is
-   upgraded; exceptions stay explicit and reviewable.
+5. Regenerate the development guide's rule table with
+   `go test ./devcheck -update` (the test fails until you do) and describe new
+   strict failures in the release notes. Apps pick up rule changes when their
+   pinned Gantry version is upgraded; exceptions stay explicit and reviewable.
 
 For every new performance or development feature, record whether Strict coverage
 was added. If reliable detection is unavailable, document the gap and how to
@@ -76,20 +77,22 @@ findings, err := devcheck.ScanWithRules(projectRoot, rules)
 This small text-match example illustrates the API, not a built-in recommendation.
 An HTTP stack outside Gantry’s router can pass the same registry to
 `web.DevelopmentWithRules(handler, projectRoot, logger, rules)` inside its
-`cfg.Development()` guard. The standard CLI uses the built-in registry; project
-extensions require a compiled caller rather than arbitrary code in JSON.
+`cfg.Development()` guard. A build with `-tags nodevcheck`, as a new app's
+production build is, has no `web.DevelopmentWithRules`. The standard CLI uses
+the built-in registry; project extensions require a compiled caller rather than
+arbitrary code in JSON.
 
 Registries reject duplicate IDs, unknown severities and missing metadata or
 checks. Invalid source offsets and rule execution errors fail the scan with the
 rule and file named. Exception validation uses the supplied registry, so a
-custom rule gets the same exact-file, reason-required exception policy.
+custom rule gets the same exact-file, reason-required exception policy, and an
+exception for it that matches nothing is reported stale.
 
 ## Current coverage
 
-The current seven rules cover assets, broad form selection, shared page shells,
-raw file servers, development guards, environment fallbacks and migrations'
-down sections. Their exact
-limits and exception syntax are in [the development guide](development.md).
-Page-cache eligibility, image-pipeline adoption and render-blocking data fetches
-are future coverage areas, not checks that exist today. Some will need runtime
-measurement or richer analysis instead of static source matching.
+[The development guide](development.md#gantry-defaults-and-strict-mode) lists
+the current rules, generated from `DefaultRules()`, with their limits and
+exception syntax. Page-cache eligibility, image-pipeline adoption and
+render-blocking data fetches are future coverage areas, not checks that exist
+today. Some will need runtime measurement or richer analysis instead of static
+source matching.

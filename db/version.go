@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"hash/fnv"
 	"sync"
 )
 
-// ErrNoVersion: this engine can't tell when data changed (Postgres, so far).
+// ErrNoVersion: this engine can't tell when data changed. Neither SQLite
+// nor Postgres says so now; it stays for callers that check for it.
 var ErrNoVersion = errors.New("db: no data version on this engine")
 
 // versioner reads SQLite's data_version on a connection of its own: the
@@ -20,9 +22,13 @@ type versioner struct {
 
 // Version is a number that changes whenever the database's data does. Keep
 // it, and when a later call gives a different one, anything derived from
-// the data (a cached page, say) is stale. On Postgres it's ErrNoVersion.
+// the data (a cached page, say) is stale.
 func (d *DB) Version(ctx context.Context) (int64, error) {
-	if d.Engine != SQLite {
+	switch d.Engine {
+	case Postgres:
+		return d.postgresVersion(ctx)
+	case SQLite:
+	default:
 		return 0, ErrNoVersion
 	}
 	v := d.versioner
@@ -47,4 +53,21 @@ func (d *DB) Version(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return n, nil
+}
+
+// postgresVersion is the current snapshot, hashed: which transactions a
+// query would see now (pg_current_snapshot). One commits, or starts to
+// write, and it changes; while it's the same, so is every row a query can
+// see. It's the server's, so other databases' writes count too: a page
+// made again for nothing, never one kept stale. Unlike the WAL position,
+// which moves before a commit is visible, it can't be read ahead of the
+// data it stands for.
+func (d *DB) postgresVersion(ctx context.Context) (int64, error) {
+	var snapshot string
+	if err := d.Read.QueryRowContext(ctx, `SELECT pg_current_snapshot()::text`).Scan(&snapshot); err != nil {
+		return 0, err
+	}
+	h := fnv.New64a()
+	h.Write([]byte(snapshot))
+	return int64(h.Sum64()), nil
 }

@@ -236,6 +236,8 @@ func writeApp(dir string, a NewApp) error {
 		switch out {
 		case "gitignore":
 			out = ".gitignore"
+		case "gantry-check.json":
+			out = ".gantry-check.json"
 		case "assets/built/gitkeep":
 			// Kept so the folder is there for go:embed before a build.
 			out = "assets/built/.gitkeep"

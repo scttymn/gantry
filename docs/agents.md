@@ -1,4 +1,3 @@
-| Link previews and search descriptions | `meta.Tags` in `app/shared/layout`, with `layout.Site` (name, `SITE_URL`, default image) and each page's `Title`, `Description`, `Path` | Absolute addresses from the configured site address, not the request's host (pages are cached) |
 # Building an app with Gantry: a guide for agents
 
 You're an AI agent building or maintaining a Gantry application. This guide
@@ -46,6 +45,7 @@ an older CLI may not have `check`.
 | --- | --- | --- |
 | Routes and middleware | `web.NewRouter`, scopes and pipelines in `app/routes.go` | Shared error handling, authentication filters and the standard HTTP middleware |
 | Views | `.templ` views beside their resource's controller, rendered with `web.Render`, inside `app/shared/layout` | One page shell for navigation, metadata and assets |
+| Link previews and search descriptions | `meta.Tags` in `app/shared/layout`, with `layout.Site` (name, `SITE_URL`, default image) and each page's `Title`, `Description`, `Path` | Absolute addresses from the configured site address, not the request's host (pages are cached) |
 | Styles and scripts | The app's `assets` package: `Styles.Tag`, `ImportMap.Tag`, `Path`, and `Routes` | Gantry's inline-or-linked styles, content fingerprints, compression and caching |
 | Browser interactions | The generated Turbo and Stimulus setup; controllers in `assets/js/controllers` | Normal links and forms first, enhancements scoped to their own elements |
 | Public page caching | `web.PageCache` for explicitly selected pages identical for every visitor | Data-version invalidation, bounded cache size and a suitable maximum age |
@@ -76,10 +76,18 @@ that purpose if Strict flags it.
 
 Page caching is an explicit application decision. Do not wrap account pages,
 personalized responses or an entire authenticated router in a public page cache.
-Its key is the path and query, not the user's identity. Use `db.DB.Version` for
-database-driven invalidation where appropriate, and account for other data
-sources and time-dependent content. A clean Strict scan does not check this for
-you yet.
+Its key is the host, path and query, not the user's identity. `Cached` runs
+its scope's filters before the cache on every request, so `auth.Required` still
+turns away whoever it would, but everyone it lets in shares one copy of the
+page: cache a page behind it only when it's the same for every member, never
+one that reads `auth.Current`. Requests with an `Authorization` header or a
+`session` cookie (auth's default name) bypass the cache, and a response that
+sets a cookie or says `Cache-Control: private` or `no-store` is never kept. An
+app that renames its session cookie sets
+`rt.Cache.Skip = a.Auth.HasSessionCookie`; `Skip` replaces the default check.
+Use `db.DB.Version` for database-driven invalidation where appropriate, and
+account for other data sources and time-dependent content. A clean Strict scan
+does not check this for you yet.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user
@@ -152,8 +160,9 @@ integration; see [Browser warnings](development.md#browser-warnings).
 
 For a justified alternative, use an exact file/rule exception with a specific
 reason in `.gantry-check.json`. Explain why the framework pattern does not apply
-and how the intended behavior is preserved. Do not add blanket exceptions just
-to get a clean result. The [development guide](development.md) defines the seven
+and how the intended behavior is preserved, and cite the issue (`#123`) or
+decision record where it was agreed. Do not add blanket exceptions just
+to get a clean result. The [development guide](development.md) lists the
 current checks, their severities and exception syntax. Use `check --rules` to
 discover additions after an upgrade. [Strict's current coverage](strict.md#current-coverage)
 also identifies patterns that still require human or agent review.

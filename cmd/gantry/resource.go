@@ -44,6 +44,7 @@ type Resource struct {
 	List      []Field // the list's columns: the first two that read as text
 	Position  bool
 	Dates     bool
+	Postgres  bool   // sqlc.yaml's engine: Get…ForUpdate locks the row there
 	Base      string // "/admin/membership_options"
 }
 
@@ -111,6 +112,7 @@ func parseResource(root string, args []string) (Resource, error) {
 		return r, err
 	}
 	r.Module = mod
+	r.Postgres = sqlcEngine(root) == "postgresql"
 	return r, nil
 }
 
