@@ -24,14 +24,18 @@ type Recipe struct {
 
 var tokenPrefix = regexp.MustCompile(`\A[a-z][a-z0-9]{0,15}_\z`)
 
+func apiTokensFlags() (fs *flag.FlagSet, prefix *string) {
+	fs = flagSet("api-tokens")
+	prefix = fs.String("prefix", "api_", "`PREFIX_` every token starts with, so a leaked one is recognisable")
+	return fs, prefix
+}
+
 // generateAPITokens is `gantry g api-tokens [--prefix PREFIX]`: named API
 // tokens, written into the app (the api_tokens table, its queries, the
 // apitokens package with Issue and the Require filter, and their tests).
 func generateAPITokens(root string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("api-tokens", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	prefix := fs.String("prefix", "api_", "what every token starts with, so a leaked one is recognisable")
-	if err := fs.Parse(args); err != nil {
+	fs, prefix := apiTokensFlags()
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if !tokenPrefix.MatchString(*prefix) {
@@ -114,15 +118,19 @@ func relTo(root, path string) string {
 	return path
 }
 
+func authFlags() (fs *flag.FlagSet, emailCode, social, signup *bool) {
+	fs = flagSet("auth")
+	emailCode = fs.Bool("email-code", false, "passwordless email-code login")
+	social = fs.Bool("social", false, "add Google and Apple identities to existing auth")
+	signup = fs.Bool("signup", false, "create accounts after verifying email (with --email-code)")
+	return fs, emailCode, social, signup
+}
+
 // generateAuth writes app-owned schema and views around shared Gantry Auth,
 // including a one-time first-install setup flow for password authentication.
 func generateAuth(root string, args []string, out io.Writer) error {
-	fs := flag.NewFlagSet("auth", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	emailCode := fs.Bool("email-code", false, "passwordless email-code login")
-	social := fs.Bool("social", false, "add Google and Apple identities to existing auth")
-	signup := fs.Bool("signup", false, "create accounts after verifying email (with --email-code)")
-	if err := fs.Parse(args); err != nil {
+	fs, emailCode, social, signup := authFlags()
+	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 {

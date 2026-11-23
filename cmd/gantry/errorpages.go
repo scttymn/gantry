@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -21,6 +22,24 @@ var errorPages = []ErrorPage{
 	{404, "The page you were looking for doesn't exist.", "You may have mistyped the address, or the page may have moved."},
 	{422, "The change you wanted was rejected.", "Maybe you tried to change something you don't have access to, or the form was open too long. Go back and try again."},
 	{500, "Something went wrong.", "We've been told about it. Try again in a little while."},
+}
+
+func errorPagesFlags() (fs *flag.FlagSet, force *bool) {
+	fs = flagSet("error-pages")
+	force = fs.Bool("force", false, "replace the pages that are there")
+	return fs, force
+}
+
+// errorPagesCommand is `gantry g error-pages [--force]`.
+func errorPagesCommand(root string, args []string, out io.Writer) error {
+	fs, force := errorPagesFlags()
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageError{}
+	}
+	return generateErrorPages(root, *force, out)
 }
 
 // generateErrorPages writes assets/public/<status>.html (gantry's public

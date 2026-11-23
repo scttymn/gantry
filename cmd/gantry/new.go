@@ -78,39 +78,49 @@ var runQuietlyIn = func(dir, name string, args ...string) ([]byte, error) {
 	return cmd.CombinedOutput()
 }
 
+// newOptions are gantry new's flags.
+type newOptions struct {
+	db, module, gantry    string
+	skipHouston, inModule bool
+}
+
+func (o *newOptions) flags(name string) *flag.FlagSet {
+	fs := flagSet("new")
+	fs.StringVar(&o.db, "db", "sqlite", "the database: `sqlite|postgres`")
+	fs.StringVar(&o.module, "module", name, "the Go module's `PATH` (github.com/you/"+name+")")
+	fs.StringVar(&o.gantry, "gantry", "", "a gantry checkout's `PATH`, to build against with go.work (for developing both)")
+	fs.BoolVar(&o.skipHouston, "skip-houston", false, "write the files only: no houston init, go mod tidy, templ generate or git init")
+	fs.BoolVar(&o.inModule, "in-module", false, "an app in a folder of the module you're in (a monorepo): no go.mod of its own")
+	return fs
+}
+
 // newApp is `gantry new NAME [flags]`: the app's folder, in the main plan's
 // layout, then Houston's files and the generated code. With --in-module the
 // app is a folder of the module it's made in: it has no go.mod of its own,
 // and it's built from the module's root.
 func newApp(root string, args []string, out, errOut io.Writer) error {
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return errors.New("usage: gantry new NAME [--db sqlite|postgres] [--module PATH] [--gantry PATH] [--skip-houston]")
+		return usageError{}
 	}
 	name := args[0]
-	fs := flag.NewFlagSet("new", flag.ContinueOnError)
-	fs.SetOutput(errOut)
-	engine := fs.String("db", "sqlite", "the database: sqlite or postgres")
-	module := fs.String("module", name, "the Go module path (github.com/you/"+name+")")
-	gantryPath := fs.String("gantry", "", "a gantry checkout to build against, with go.work (for developing both)")
-	skipHouston := fs.Bool("skip-houston", false, "write the files only: no houston init, go mod tidy, templ generate or git init")
-	inModule := fs.Bool("in-module", false, "an app in a folder of the module you're in (a monorepo): no go.mod of its own")
-	if err := fs.Parse(args[1:]); err != nil {
+	var o newOptions
+	if err := parseFlags(o.flags(name), args[1:]); err != nil {
 		return err
 	}
 	if !appName.MatchString(name) || strings.HasSuffix(name, "-") {
 		return fmt.Errorf("%q: an app's name is lowercase letters, digits and dashes, starting with a letter", name)
 	}
-	if *engine != "sqlite" && *engine != "postgres" {
-		return fmt.Errorf("--db %s: sqlite or postgres", *engine)
+	if o.db != "sqlite" && o.db != "postgres" {
+		return fmt.Errorf("--db %s: sqlite or postgres", o.db)
 	}
 	dir := filepath.Join(root, name)
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
 		return fmt.Errorf("%s is there already, and isn't empty", name)
 	}
 
-	a := NewApp{Name: name, Title: title(name), Module: *module, Postgres: *engine == "postgres", Engine: "sqlite", Templ: templVersion, Work: "/app"}
-	if *inModule {
-		if *gantryPath != "" {
+	a := NewApp{Name: name, Title: title(name), Module: o.module, Postgres: o.db == "postgres", Engine: "sqlite", Templ: templVersion, Work: "/app"}
+	if o.inModule {
+		if o.gantry != "" {
 			return errors.New("--in-module and --gantry: point the module's go.mod at a gantry checkout with a replace instead")
 		}
 		root, path, err := enclosingModule(dir)
@@ -133,18 +143,18 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	if release == "" {
 		a.Gantry = latestRelease
 	}
-	if *gantryPath != "" {
-		abs, err := filepath.Abs(*gantryPath)
+	if o.gantry != "" {
+		abs, err := filepath.Abs(o.gantry)
 		if err != nil {
 			return err
 		}
 		if _, err := os.Stat(filepath.Join(abs, "go.mod")); err != nil {
-			return fmt.Errorf("--gantry %s: no gantry checkout there (no go.mod)", *gantryPath)
+			return fmt.Errorf("--gantry %s: no gantry checkout there (no go.mod)", o.gantry)
 		}
 		appAbs, _ := filepath.Abs(dir)
 		rel, err := filepath.Rel(appAbs, abs)
 		if err != nil || !strings.HasPrefix(rel, "..") {
-			return fmt.Errorf("--gantry %s: the checkout must be outside the app", *gantryPath)
+			return fmt.Errorf("--gantry %s: the checkout must be outside the app", o.gantry)
 		}
 		a.GantryPath, a.GantryMount = filepath.ToSlash(rel), filepath.ToSlash(filepath.Join("/app", rel))
 	} else if release == "" {
@@ -154,11 +164,11 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	if err := writeApp(dir, a); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "  wrote %s/ (%s, %s)\n", name, a.Module, *engine)
+	fmt.Fprintf(out, "  wrote %s/ (%s, %s)\n", name, a.Module, o.db)
 	if err := generateErrorPages(dir, false, io.Discard); err != nil {
 		return err
 	}
-	if *skipHouston {
+	if o.skipHouston {
 		fmt.Fprintf(out, "\nNext, in %s/: houston init --name %s, then gantry exec templ generate, gantry exec go mod tidy, and bin/gantry dev.\n", name, name)
 		return nil
 	}
