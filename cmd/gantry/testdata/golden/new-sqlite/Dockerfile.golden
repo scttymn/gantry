@@ -37,11 +37,15 @@ RUN templ generate -path /app
 # production serves and no picture is resized on request.
 RUN --mount=type=cache,id=shop-assets,target=/cache/assets,sharing=locked \
     go run ./cmd/shop assets /cache/assets && cp -a /cache/assets/. assets/built/
-CMD ["sh", "-c", "go vet ./... && go test ./..."]
+# The build as production compiles it too (nodevcheck, below), so code that
+# only the dev stage has, such as web.DevelopmentWithRules, fails here and
+# not at deploy.
+CMD ["sh", "-c", "go vet ./... && GOFLAGS=\"$GOFLAGS,nodevcheck\" go build ./... && go test ./..."]
 
 FROM toolchain AS build
 # nodevcheck: the production binary leaves out the development checks
-# (web.Development's source scanner); dev keeps them.
+# (web.Development's source scanner); dev keeps them. It extends -tags, so
+# -tags must stay the last flag in the toolchain's GOFLAGS.
 ENV GOFLAGS="${GOFLAGS},nodevcheck"
 COPY go.mod go.sum ./
 RUN go mod download
