@@ -57,16 +57,22 @@ What legitimately takes longer goes on past them:
 - Live streams (`live.Hub.Serve`) clear the write timeout and give each write
   its own instead, `live.Options.WriteTimeout` (10 s): a client that stops
   reading ends its stream rather than holding it.
-- A request body, read through the router, has the server's `ReadTimeout`
-  from each read rather than from the start, and its answer the
-  `WriteTimeout` from the last: a large upload on a slow connection is cut
-  off only once it stops.
-- `web.Download` and `storage`'s and `assets.Images`' files have the
-  `WriteTimeout` from each write: a large file to a slow client is cut off
-  only once it stops.
+- A request body read through the router, and an answer sent through
+  `web.Moving` (`web.Download` and the image server's files: storage's
+  originals and the copies it makes on request), keep pace with the server's
+  timeouts rather than ending at them. Each has the timeout from its start
+  and a second more for every 16 KiB it has moved, but never more than the
+  timeout from now. A large upload or download at a phone's pace goes on.
+  One that stops, or trickles in a byte at a time to hold the connection
+  open, is cut off as the timeout alone would cut it off. A form that
+  doesn't arrive in time is answered 408, with the `WriteTimeout` from then.
+- `assets.Images`' precompiled copies are sent from memory in one write,
+  under the `WriteTimeout` as it is.
 
-A handler of the app's own that answers slowly by design (a long report)
-extends its deadline with `http.NewResponseController(w).SetWriteDeadline`.
+A handler of the app's own that sends a large answer writes it through
+`web.Moving(w, r)`. One that is slow to start answering by design (a long
+report) extends its deadline with
+`http.NewResponseController(w).SetWriteDeadline`.
 
 ## HSTS
 
@@ -117,7 +123,8 @@ rt.Security = web.Security{
 The rest of Gantry's own needs nothing more. The development panel and
 reload script are files from the app itself, the development inbox sets a
 policy of its own, and the app's static error pages (`assets/public/404.html`
-…), plain files with their style inline, are sent without the app's policy.
+…), plain files with their style inline, are sent with a policy of their own
+that lets that style in and no inline script, in place of the app's.
 
 New apps ship the policy report-only. A page's own `style="…"` attribute,
 `<script>` without a `src`, `onclick=` handler or picture from another site
@@ -138,18 +145,21 @@ For existing apps, gantry's own changes:
   rather than appending to it, as nginx's `proxy_set_header
   X-Forwarded-Proto $scheme` and Go's `httputil.ProxyRequest.SetXForwarded`
   do.
-- **`web.Headers` takes a `web.Security`.** Only an app that builds its own
-  middleware stack calls it: `web.Headers(h, web.Security{})` is what it did.
-  `rt.Security` is the router's, zero by default: no HSTS and no policy
-  until the app sets them.
-- **Uploads and downloads count the server's timeouts from their last
-  progress**, so adding `ReadTimeout` and `WriteTimeout` doesn't cut them
-  off. With no timeouts on the server, nothing changes.
+- **`rt.Security` is new**, zero by default: no HSTS and no policy until the
+  app sets them. `web.Headers(h)` is unchanged; an app with its own
+  middleware stack uses `web.Security{…}.Headers(h)` for them.
+- **Uploads and downloads keep pace with the server's timeouts**, so adding
+  `ReadTimeout` and `WriteTimeout` doesn't cut off one still moving at a
+  phone's pace. With no timeouts on the server (or negative ones), nothing
+  changes.
+- **A form that fails to parse is 400**, or 408 when it didn't arrive in
+  time; 413 is only for one over its size limit. Before, all three were 413.
 - **Live streams end when a write waits 10 s** on a client that has stopped
   reading (`live.Options.WriteTimeout`). The browser reconnects, as it does
   after any dropped stream.
-- **Static error pages are sent without the app's policy**, and the
-  development panel's style is a stylesheet at `/_gantry/development.css`.
+- **Static error pages are sent with a policy of their own** when the app
+  has one, and the development panel's style is a stylesheet at
+  `/_gantry/development.css`.
 
 To adopt what new apps have, copy from a new app (`gantry new`):
 

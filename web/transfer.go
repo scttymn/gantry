@@ -6,12 +6,33 @@ import (
 	"time"
 )
 
+// minRate is the pace a transfer must keep to outlast the server's
+// ReadTimeout or WriteTimeout: 16 KiB a second, slower than a phone on a
+// poor connection.
+const minRate = 16 << 10
+
+// pace is when a transfer (a request's body, or an answer) is cut off. The
+// server's timeouts bound a whole request from its start, and a 25 MB
+// photo from a phone, or a large file to one, can outlast them while still
+// moving. So it gets the timeout from its start, and a second more for each
+// minRate bytes it has moved, but never more than the timeout from now: one
+// that keeps up minRate goes on, and one that stops, or trickles in a byte
+// at a time to hold the connection, is cut off as the timeout alone would.
+type pace struct {
+	start   time.Time
+	timeout time.Duration // the server's; none when it's 0 or less
+	moved   int64
+}
+
+func (p *pace) deadline(now time.Time) time.Time {
+	earned := p.start.Add(p.timeout + time.Duration(p.moved*int64(time.Second)/minRate))
+	if idle := now.Add(p.timeout); idle.Before(earned) {
+		return idle
+	}
+	return earned
+}
+
 // timeouts are the ReadTimeout and WriteTimeout of the server r came to.
-// They bound a whole request from its start, and a 25 MB photo from a
-// phone, or a large file to one, can outlast them while still moving: a
-// transfer's reads and writes push them out to that long from then
-// instead (nginx's client_body_timeout and send_timeout), so it's cut off
-// only once it stops. A server with no timeouts gets none.
 func timeouts(r *http.Request) (read, write time.Duration) {
 	if srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server); ok {
 		return srv.ReadTimeout, srv.WriteTimeout
@@ -19,44 +40,62 @@ func timeouts(r *http.Request) (read, write time.Duration) {
 	return 0, 0
 }
 
-// movingBody is a request's body, with the read timeout from each read. The
-// answer gets the write timeout from the last, so a slow upload can still
-// be answered.
+// movingBody is a request's body, paced by the server's ReadTimeout. The
+// answer has the WriteTimeout from when the body is cut off, so a slow
+// upload can still be answered, and one cut off told why.
 type movingBody struct {
 	io.ReadCloser
-	rc          *http.ResponseController
-	read, write time.Duration
-}
-
-func (b movingBody) Read(p []byte) (int, error) {
-	now := time.Now()
-	if b.read > 0 {
-		b.rc.SetReadDeadline(now.Add(b.read))
-	}
-	if b.write > 0 {
-		b.rc.SetWriteDeadline(now.Add(b.write))
-	}
-	return b.ReadCloser.Read(p)
-}
-
-// movingWriter is a response, with the write timeout from each write.
-type movingWriter struct {
-	http.ResponseWriter
 	rc    *http.ResponseController
+	read  pace
 	write time.Duration
 }
 
-func moving(w http.ResponseWriter, r *http.Request) http.ResponseWriter {
+func (b *movingBody) Read(p []byte) (int, error) {
+	by := time.Now()
+	if b.read.timeout > 0 {
+		by = b.read.deadline(by)
+		b.rc.SetReadDeadline(by)
+	}
+	if b.write > 0 {
+		b.rc.SetWriteDeadline(by.Add(b.write))
+	}
+	n, err := b.ReadCloser.Read(p)
+	b.read.moved += int64(n)
+	return n, err
+}
+
+// Moving is w for an answer that may take longer to send than the server's
+// WriteTimeout allows: a large file to a slow client. Each write has the
+// timeout from the answer's start and a second more for each 16 KiB sent,
+// but never more than the timeout from then, so a client reading at least
+// that fast isn't cut off, and one that stops or reads a trickle is.
+// web.Download uses it. It's w itself when the server has no WriteTimeout.
+func Moving(w http.ResponseWriter, r *http.Request) http.ResponseWriter {
 	_, write := timeouts(r)
-	if write == 0 {
+	if write <= 0 {
 		return w
 	}
-	return movingWriter{w, http.NewResponseController(w), write}
+	return &movingWriter{ResponseWriter: w, rc: http.NewResponseController(w), pace: pace{start: time.Now(), timeout: write}}
 }
 
-func (w movingWriter) Write(p []byte) (int, error) {
-	w.rc.SetWriteDeadline(time.Now().Add(w.write))
-	return w.ResponseWriter.Write(p)
+type movingWriter struct {
+	http.ResponseWriter
+	rc   *http.ResponseController
+	pace pace
 }
 
-func (w movingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+// Write paces p a piece at a time: io.Copy hands it a bytes.Reader's whole
+// body in one write.
+func (w *movingWriter) Write(p []byte) (n int, err error) {
+	for len(p) > 0 && err == nil {
+		w.rc.SetWriteDeadline(w.pace.deadline(time.Now()))
+		var m int
+		m, err = w.ResponseWriter.Write(p[:min(len(p), 32<<10)])
+		n += m
+		w.pace.moved += int64(m)
+		p = p[m:]
+	}
+	return n, err
+}
+
+func (w *movingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }

@@ -23,7 +23,6 @@ import (
 	"github.com/scttymn/gantry/live"
 	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
-	"github.com/scttymn/gantry/web"
 
 	"feed/app"
 	"feed/assets"
@@ -99,10 +98,6 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 // build opens the database, brings it up to date, and is the app on it,
 // its jobs defined. close closes the database.
 func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.App, close func(), err error) {
-	proxies, err := web.ParseProxies(cfg.TrustedProxies)
-	if err != nil {
-		return nil, nil, fmt.Errorf("TRUSTED_PROXIES: %w", err)
-	}
 	database, err := db.Open(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, nil, err
@@ -137,7 +132,6 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	}()
 	signer := sign.Signer{Key: key}
 	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
-		Proxies: web.Proxies{Trusted: proxies}, Production: cfg.Env == "production",
 		Secret: []byte(cfg.JWTSecret), Started: time.Now()}
 	if err := a.DefineJobs(); err != nil {
 		return nil, nil, err

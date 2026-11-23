@@ -185,7 +185,7 @@ func (rt *Router) Handler() http.Handler {
 	var h http.Handler = http.HandlerFunc(rt.route)
 	h = MethodOverride(h, DefaultBodyLimits)
 	h = CrossOrigin(h, func(w http.ResponseWriter, r *http.Request) { rt.Error(w, r, http.StatusUnprocessableEntity) }, rt.crossOriginCallbacks...)
-	h = Headers(h, rt.Security)
+	h = rt.Security.Headers(h)
 	h = rt.arrive(h)
 	h = withCurrent(h)
 	h = rt.Recover(h)

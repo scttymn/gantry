@@ -19,10 +19,12 @@ func secured(s Security) http.Handler {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Security = s
 	rt.Public = public{"404.html": "<style>h1{color:red}</style><h1>Not here</h1>"}
+	rt.Cache = &PageCache{}
 	rt.Handle("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
 		_, err := w.Write([]byte("<h1>home</h1>"))
 		return err
 	})
+	rt.Cached("GET /posts/{id}", func(w http.ResponseWriter, r *http.Request) error { return NotFound })
 	return rt.Handler()
 }
 
@@ -64,11 +66,15 @@ func TestHSTS(t *testing.T) {
 	if got := get(secured(Security{}), "/", "198.51.100.7", true).Get("Strict-Transport-Security"); got != "" {
 		t.Errorf("sent with no HSTS: %q", got)
 	}
+	// Under a second is max-age=0, which tells a browser to forget it.
+	if got := get(secured(Security{HSTS: 500 * time.Millisecond}), "/", "198.51.100.7", true).Get("Strict-Transport-Security"); got != "" {
+		t.Errorf("sent for half a second: %q", got)
+	}
 }
 
-// The policy is sent as the app says (enforced, or reported only), on every
-// answer but the app's static error pages, whose style is inline and has no
-// hash in it; they're plain files, with nothing in them to inject.
+// The policy is sent as the app says (enforced, or reported only). The app's
+// static error pages, plain files whose style is inline, get a policy of
+// their own that lets it in, from a cached route too.
 func TestCSP(t *testing.T) {
 	const policy = "default-src 'self'"
 	for _, tc := range []struct {
@@ -83,13 +89,34 @@ func TestCSP(t *testing.T) {
 		if page.Get(tc.send) != policy || page.Get(tc.omit) != "" {
 			t.Errorf("%s: %v", tc.send, page)
 		}
-		if notFound := get(h, "/nope", "198.51.100.7", true); notFound.Get(tc.send) != "" {
-			t.Errorf("%s on the static 404 page: %v", tc.send, notFound)
+		for _, path := range []string{"/nope", "/posts/1"} {
+			notFound := get(h, path, "198.51.100.7", true)
+			if got := notFound.Get(tc.send); got != staticPagePolicy || notFound.Get(tc.omit) != "" {
+				t.Errorf("%s on %s's static 404 page: %q", tc.send, path, got)
+			}
 		}
 	}
-	none := get(secured(Security{}), "/", "198.51.100.7", true)
-	if none.Get("Content-Security-Policy") != "" || none.Get("Content-Security-Policy-Report-Only") != "" {
-		t.Errorf("a policy with none set: %v", none)
+	none := secured(Security{})
+	for _, path := range []string{"/", "/nope"} {
+		h := get(none, path, "198.51.100.7", true)
+		if h.Get("Content-Security-Policy") != "" || h.Get("Content-Security-Policy-Report-Only") != "" {
+			t.Errorf("%s: a policy with none set: %v", path, h)
+		}
+	}
+	if !strings.Contains(staticPagePolicy, "style-src 'self' 'unsafe-inline'") || strings.Contains(staticPagePolicy, "script-src 'unsafe-inline'") {
+		t.Errorf("the static pages' policy: %s", staticPagePolicy)
+	}
+}
+
+// Headers alone is Rails' defaults, as before Security.
+func TestHeadersAlone(t *testing.T) {
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/", nil)
+	r.TLS = &tls.ConnectionState{}
+	Headers(http.NotFoundHandler()).ServeHTTP(w, r)
+	h := w.Header()
+	if h.Get("X-Frame-Options") != "SAMEORIGIN" || h.Get("Strict-Transport-Security") != "" || h.Get("Content-Security-Policy") != "" {
+		t.Errorf("%v", h)
 	}
 }
 

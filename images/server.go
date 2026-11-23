@@ -11,9 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/a-h/templ"
+
+	"github.com/scttymn/gantry/web"
 )
 
 // Server serves an app's copies at Prefix<key>/<name> (/photos/<key>/720w-q80.webp,
@@ -143,27 +144,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(year)+", immutable")
-	if srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server); ok && srv.WriteTimeout > 0 {
-		w = movingWriter{w, http.NewResponseController(w), srv.WriteTimeout}
-	}
-	http.ServeContent(w, r, "", info.ModTime(), f)
+	// A large original to a slow client can outlast the server's
+	// WriteTimeout while it's still being read.
+	http.ServeContent(web.Moving(w, r), r, "", info.ModTime(), f)
 }
-
-// movingWriter is a response with the server's WriteTimeout from each
-// write: it bounds a whole response, and a large original to a slow client
-// can outlast it while still moving (web.Download's rule).
-type movingWriter struct {
-	http.ResponseWriter
-	rc    *http.ResponseController
-	write time.Duration
-}
-
-func (w movingWriter) Write(p []byte) (int, error) {
-	w.rc.SetWriteDeadline(time.Now().Add(w.write))
-	return w.ResponseWriter.Write(p)
-}
-
-func (w movingWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // URL is a copy's address.
 func (s *Server) URL(key string, width, quality int) string {

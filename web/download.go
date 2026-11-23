@@ -12,12 +12,13 @@ import (
 // its folders dropped and anything but plain ASCII kept for browsers that
 // read the RFC 6266 form. A failure partway cuts the connection (the
 // router's rule), so a download is never mistaken for a whole one. Files on
-// disk go through http.ServeContent instead, which also resumes them. It
-// isn't cut off by the server's WriteTimeout while it's still moving.
+// disk go through http.ServeContent instead, which also resumes them. It's
+// sent through Moving, so a slow client isn't cut off by the server's
+// WriteTimeout while it keeps reading.
 func Download(w http.ResponseWriter, req *http.Request, filename, contentType string, r io.Reader) error {
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", disposition(filename))
-	_, err := io.Copy(moving(w, req), r)
+	_, err := io.Copy(Moving(w, req), r)
 	return err
 }
 
