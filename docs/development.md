@@ -14,7 +14,7 @@ and so does a generated file whose `.templ` or `.sql` is gone. It runs the
 `templ` and `sqlc` on the machine, which should be the versions the app's
 Dockerfile installs: a file another version made is reported as such.
 
-The checks read local `.html`, `.templ`, `.js`, and Go source files, without starting a
+The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
 built assets, Git metadata and test fixtures, and do not follow symlinks.
 
@@ -45,6 +45,7 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `raw-assets` | Advice | Avoid rebuilding asset serving outside Gantry's optimized pipeline | raw file server bypasses Gantry asset handling; use assets.Routes for scripts/styles, or document this route's separate purpose |
 | `development-guard` | Violation | Keep development-only middleware (source scans, timing, reload) out of production | web.Development, web.DevelopmentWithRules, web.Timing and web.Reload are development-only: call them inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception |
 | `environment-default` | Violation | Use Gantry's production defaults unless development is explicitly selected | GANTRY_ENV should default to production; opt into development explicitly |
+| `migration-down` | Violation | Keep rollback and testkit.Migrations checking every migration's undo | migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible |
 
 <!-- /rules -->
 

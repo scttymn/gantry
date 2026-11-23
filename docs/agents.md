@@ -236,9 +236,17 @@ a local development app does not itself require creating a production project.
 `SECRET_KEY` signs password-reset links, flash and return-to cookies, email-code
 challenges and live-stream tokens. Outside development and test (`GANTRY_ENV`,
 which defaults to production) the app refuses to start without one of at least
-32 bytes. Generate it once with `openssl rand -hex 32` and store it as a Houston
-secret; never commit it or print it. Development and test keep a generated key
-in the database instead, so they need no setting.
+32 bytes. `bin/gantry secret` prints a new one (32 random bytes, in hex); pipe it
+straight into Houston as a secret env var, so it is never committed or shown:
+
+```sh
+bin/gantry secret | houston secrets set SECRET_KEY --project NAME
+```
+
+`gantry new` writes development's own key to the app's `.env`, which git
+ignores and Houston never deploys. Each new app gets a different one; don't
+reuse it in production. Development and test with a blank `SECRET_KEY` keep a
+generated key in the database instead.
 
 Upgrading: a production app deployed with a blank or short `SECRET_KEY` must set
 one before it upgrades, or it won't start. Changing the key invalidates

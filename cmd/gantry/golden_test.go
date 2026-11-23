@@ -104,7 +104,7 @@ func TestGolden(t *testing.T) {
 					got[rel] = b
 				}
 			}
-			// A random password, checked by TestNewPostgresEnv.
+			// Random keys, checked by TestNewEnv.
 			delete(got, ".env")
 			for rel, b := range got {
 				if strings.HasPrefix(rel, "assets/js/vendor/") {

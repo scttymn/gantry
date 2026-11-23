@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# The ci workflow's checks, on this machine: what a pull request runs, step by
+# step, under its steps' names (TestBinCIRunsTheCIWorkflow holds the two the
+# same). The pre-push hook (.githooks/pre-push) runs it.
+#
+#   bin/ci           every step, as CI runs them
+#   bin/ci --fast    without the race detector and the release's build
+#
+# Tests on Postgres get GANTRY_TEST_POSTGRES_URL's server, or a throwaway
+# postgres:17 of their own; with neither they skip, and say so. Go's caches are
+# one for every checkout, outside them, cleaned past 5 GB; it stops before
+# starting with less than 20 GB free.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+fast=
+case "${1:-}" in
+	"") ;;
+	--fast) fast=1 ;;
+	*) echo "usage: bin/ci [--fast]" >&2; exit 2 ;;
+esac
+
+step() { printf '\n=== %s\n' "$1"; }
+
+# Everything it needs, before it starts: a hook that fails half an hour in
+# helps no one.
+need=(docker jq timeout)
+[ -n "$fast" ] || need+=(curl)
+for tool in "${need[@]}"; do
+	command -v "$tool" >/dev/null || { echo "bin/ci needs $tool, and it isn't on the PATH" >&2; exit 1; }
+done
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/gantry
+[ "$(uname -s)" = Darwin ] && cache=$HOME/Library/Caches/gantry
+mkdir -p "$cache"
+free=$(df -Pk "$cache" | awk 'NR == 2 { print $4 }')
+if [ "$free" -lt $((20 * 1024 * 1024)) ]; then
+	echo "bin/ci: $((free / 1024 / 1024)) GB free where Go's caches are ($cache), and it needs 20 GB: free some first" >&2
+	exit 1
+fi
+# A daemon that doesn't answer would hang the push: every docker call has a
+# time limit, the job's in ci.yml at most.
+timeout 10 docker ps >/dev/null 2>&1 || { echo "bin/ci: Docker isn't answering (docker ps): start it, then run bin/ci again" >&2; exit 1; }
+
+tmp=$(mktemp -d) postgres=gantry-ci-pg-$$ network=bridge ci=${CI:-}
+cleanup() {
+	timeout 30 docker rm -f "$postgres" >/dev/null 2>&1 || true
+	timeout 30 docker network rm "gantry-ci-$$" >/dev/null 2>&1 || true
+	rm -rf "$tmp"
+}
+trap cleanup EXIT
+
+timeout 1200 docker build -q --target toolchain -t gantry-toolchain . >/dev/null
+unset GANTRY_DIR
+toolchain() { # [GANTRY_DIR=DIR] toolchain [DOCKER-RUN-OPTION...] -- COMMAND...: in the toolchain's image, on the checkout (DIR of it, as bin/go)
+	local opts=()
+	while [ "$1" != -- ]; do opts+=("$1"); shift; done
+	shift
+	timeout 1800 docker run --rm -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" -v "$cache:/cache" \
+		-e GOMODCACHE=/cache/mod -e GOCACHE=/cache/build -e CI="$ci" ${opts[@]+"${opts[@]}"} gantry-toolchain "$@"
+}
+if [ -d "$cache/build" ] && [ "$(du -sk "$cache/build" | cut -f1)" -gt $((5 * 1024 * 1024)) ]; then
+	echo "bin/ci: Go's build cache ($cache/build) is over 5 GB: cleaning it" >&2
+	toolchain -- go clean -cache
+fi
+
+url=${GANTRY_TEST_POSTGRES_URL:-}
+if [ -z "$url" ] && timeout 30 docker network create "gantry-ci-$$" >/dev/null &&
+	timeout 300 docker run -d --name "$postgres" --network "gantry-ci-$$" -e POSTGRES_PASSWORD=gantry-tests \
+		postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf >/dev/null; then
+	for _ in $(seq 60); do
+		if timeout 10 docker exec "$postgres" pg_isready -q -U postgres -h 127.0.0.1 2>/dev/null; then
+			network=gantry-ci-$$ url="postgres://postgres:gantry-tests@$postgres:5432/postgres?sslmode=disable"
+			break
+		fi
+		sleep 1
+	done
+fi
+if [ -z "$url" ]; then
+	timeout 10 docker logs --tail 20 "$postgres" >&2 2>/dev/null || true
+	if [ "${GITHUB_ACTIONS:-}" = true ]; then
+		echo "bin/ci: no Postgres, and in GitHub Actions the Postgres tests must run" >&2
+		exit 1
+	fi
+	# Under CI, internal/testenv fails a test that has no Postgres: here it skips.
+	ci=
+	printf '\n%s\n%s\n%s\n\n' "!!!!!!!!" \
+		"!!! bin/ci: NO POSTGRES. GANTRY_TEST_POSTGRES_URL isn't set and a throwaway postgres:17 didn't start: the Postgres tests SKIP. CI runs them." \
+		"!!!!!!!!" >&2
+fi
+db=(--network "$network" -e GANTRY_TEST_POSTGRES_URL="$url")
+
+# An app's build: SQLite compiled from C, linked statically (CONTRIBUTING.md).
+cgo=(-e CGO_ENABLED=1 -e CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY")
+tags=-tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4
+static=(-ldflags "-linkmode external -extldflags -static")
+staticcheck=honnef.co/go/tools/cmd/staticcheck@v0.8.2
+govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.10.0
+
+step "Go tests"
+toolchain "${db[@]}" -- go test ./...
+echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
+toolchain "${db[@]}" "${cgo[@]}" -- go test "$tags" "${static[@]}" ./...
+
+if [ -z "$fast" ]; then
+	step "Race detector, on the app's build"
+	toolchain "${db[@]}" "${cgo[@]}" -- go test -race "$tags" "${static[@]}" ./...
+fi
+
+step "go vet"
+toolchain -- go vet ./...
+
+step "gofmt"
+unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
+[ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+
+step "staticcheck"
+toolchain -- go run "$staticcheck" ./...
+
+step "go vet and staticcheck, on the app's build"
+toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $staticcheck ./..."
+
+step "govulncheck"
+toolchain -- go run "$govulncheck" -format json ./... >"$tmp/vulns.json"
+toolchain "${cgo[@]}" -- go run "$govulncheck" -format json "$tags" ./... >>"$tmp/vulns.json"
+reached=$(jq -rs '[.[].finding | select(.trace[0].function) | .osv] | unique[]' "$tmp/vulns.json")
+echo "reached: ${reached:-none}"
+[ -z "$reached" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $reached"; exit 1; }
+
+step "The bench modules' tests"
+GANTRY_DIR=bench toolchain -- go test ./...
+GANTRY_DIR=bench/feed toolchain -- go test ./...
+
+if [ -n "$fast" ]; then
+	printf '\nbin/ci --fast: passed, without the race detector and the release build\n'
+	exit
+fi
+
+version=v99.99.99
+step "CLI binaries"
+timeout 1200 docker build --build-arg VERSION="$version" --target release --output type=local,dest="$tmp/dist" .
+# This machine's binary: the workflow runs linux-amd64, its runner's.
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
+gantry="$tmp/dist/gantry-$os-$arch"
+
+step "The binary's new app requires its release"
+mkdir "$tmp/probe"
+(cd "$tmp/probe" && "$gantry" new probe --skip-houston)
+grep -qx "	github.com/scttymn/gantry $version" "$tmp/probe/probe/go.mod" ||
+	{ echo "a new app's go.mod doesn't require $version:"; cat "$tmp/probe/probe/go.mod"; exit 1; }
+
+step "The binary pins its Houston release's digests"
+houston=$("$gantry" houston-release)
+published=$(curl -fsSL --proto =https --retry 3 --max-time 120 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+pinned=$("$gantry" houston-release --sha256)
+[ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
+
+printf '\nbin/ci: passed\n'

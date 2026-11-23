@@ -1,6 +1,6 @@
 // Package pins is the versions gantry and its apps build with. gantry new
 // writes them into an app; the copies kept by hand elsewhere (the
-// Dockerfile, the workflows, bin/bench, CONTRIBUTING.md) are held to these
+// Dockerfile, the workflows, bin/bench, bin/ci, CONTRIBUTING.md) are held to these
 // by its test.
 package pins
 

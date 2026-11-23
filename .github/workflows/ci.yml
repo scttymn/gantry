@@ -2,7 +2,8 @@
 # them (pure Go, then as an app builds: with cgo, linked statically) on SQLite
 # and Postgres, that build again under the race detector, then vet, gofmt,
 # staticcheck and govulncheck (vet, staticcheck and govulncheck on the app's
-# build too), the bench modules' tests, and the release's build and probe. A
+# build too), shellcheck on the shell scripts, the bench modules' tests, and
+# the release's build and probe. A
 # broken main shows here, not once the tag exists. CI reaches the tests, so a
 # missing Postgres fails them rather than skipping (internal/testenv).
 # No path is ignored: a required check has to report on every pull request.
@@ -75,6 +76,10 @@ jobs:
         run: |
           unformatted=$(bin/go find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+      - name: shellcheck
+        # An app's bin/gantry is the template rendered, which is its golden
+        # (TestNewGolden holds the two the same).
+        run: docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
       - name: staticcheck
         run: bin/go go run honnef.co/go/tools/cmd/staticcheck@v0.8.2 ./...
       - name: go vet and staticcheck, on the app's build

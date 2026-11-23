@@ -27,7 +27,7 @@ type Signer struct{ Key []byte }
 const minKey = 32
 
 // generate is what an error over a short or missing key says to do.
-const generate = "generate one with `openssl rand -hex 32` and set it in the app's environment (a Houston secret)"
+const generate = "generate one with `bin/gantry secret` and set it as the app's Houston secret env var: `bin/gantry secret | houston secrets set SECRET_KEY --project NAME`"
 
 // checkKey panics on a short key, first thing in Sign and Verify, so a
 // misconfigured Signer fails its first use whatever the token.
