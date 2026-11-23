@@ -70,30 +70,42 @@ func (j *Job[A]) recur(schedule string, a A, next func(time.Time) time.Time) {
 // tick enqueues each recurring job that's due, once however many processes
 // tick: its run is recorded with its job, in one transaction, and only the
 // process that records it enqueues it. Runs missed while nothing ticked
-// aren't made up: the next is the next after now (Solid Queue's).
+// aren't made up: the next is the next after now (Solid Queue's). A run
+// older than Keep isn't enqueued at all, as its tick may be cleared.
 func (q *Queue) tick(ctx context.Context) error {
 	now := q.now()
+	type run struct {
+		r  *recurring
+		at time.Time
+	}
 	q.mu.Lock()
-	due := []*recurring{}
+	due := []run{}
 	for _, r := range q.recur {
 		if !now.Before(r.due) {
-			due = append(due, r)
+			due = append(due, run{r, r.due})
 		}
 	}
 	q.mu.Unlock()
-	for _, r := range due {
+	for _, u := range due {
+		r := u.r
+		if u.at.Before(now.Add(-q.o.Keep)) {
+			q.mu.Lock()
+			r.due = r.next(now)
+			q.mu.Unlock()
+			continue
+		}
 		err := q.d.Tx(ctx, func(tx *db.Tx) error {
-			res, err := tx.ExecContext(ctx, `INSERT INTO gantry_job_ticks (task, run_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`, r.task, r.due)
+			res, err := tx.ExecContext(ctx, `INSERT INTO gantry_job_ticks (task, run_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`, r.task, u.at)
 			if err != nil {
 				return err
 			}
 			if n, _ := res.RowsAffected(); n == 1 {
 				if _, err := tx.ExecContext(ctx, `INSERT INTO gantry_jobs (queue, name, args, priority, run_at, limit_key, created_at)
-					VALUES ($1, $2, $3, $4, $5, $6, $7)`, r.queue, r.name, string(r.args), r.priority, r.due, r.key, now); err != nil {
+					VALUES ($1, $2, $3, $4, $5, $6, $7)`, r.queue, r.name, string(r.args), r.priority, u.at, r.key, now); err != nil {
 					return err
 				}
 				tx.AfterCommit(func() {
-					q.o.Log.Info("job enqueued", "job", r.name, "recurring", r.task, "at", r.due)
+					q.o.Log.Info("job enqueued", "job", r.name, "recurring", r.task, "at", u.at)
 					q.signal(r.queue)
 				})
 			}
