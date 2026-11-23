@@ -150,6 +150,55 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+// A page that leaks for one role alone is caught: each role's first visit
+// renders its own copy, not one an earlier role left in the cache.
+func TestVerifyLeakForOneRole(t *testing.T) {
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Cache = &web.PageCache{Skip: func(*http.Request) bool { return false }}
+	rt.Handle("GET /login", func(w http.ResponseWriter, r *http.Request) error {
+		http.SetCookie(w, &http.Cookie{Name: "session", Value: r.URL.Query().Get("as"), Path: "/"})
+		return nil
+	})
+	rt.Cached("GET /board", func(w http.ResponseWriter, r *http.Request) error {
+		toolbar := ""
+		if who, err := r.Cookie("session"); err == nil && strings.HasPrefix(who.Value, "admin") {
+			toolbar = "<nav>Signed in as " + who.Value + "</nav>"
+		}
+		fmt.Fprintf(w, "<!DOCTYPE html>%s<h1>Board</h1>", toolbar)
+		return nil
+	})
+	r := verify(t, rt, `
+features:
+  - name: sign-in
+    routes: [GET /up, GET /login]
+    role: public
+  - name: board
+    routes: [GET /board]
+    role: public
+    cacheable: true
+    visit:
+      - path: /board
+`, roles)
+	got := strings.Join(r.errors, "\n")
+	for _, want := range []string{"board: GET /board showed admin admin0's page to admin admin1", "board: GET /board showed admin admin0's page to a public visitor"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("no %q in:\n%s", want, got)
+		}
+	}
+}
+
+func TestProbe(t *testing.T) {
+	for path, want := range map[string]string{
+		"/news":              "/news?gantry-verify=admin",
+		"/news?page=2":       "/news?gantry-verify=admin&page=2",
+		"/news/?q=a+b&x=%2F": "/news/?gantry-verify=admin&q=a+b&x=%2F",
+	} {
+		if got := probe(t, path, Admin); got != want {
+			t.Errorf("probe(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
 // A feature map that doesn't say what Verify needs fails before anything
 // is visited.
 func TestFeaturesInvalid(t *testing.T) {

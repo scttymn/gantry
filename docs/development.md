@@ -180,7 +180,10 @@ it can sign in as:
 - Before anything else requests a cacheable page, user 0 of each signed-in role
   fetches it, then user 1 of that role and a public visitor do. If either is
   shown what only user 0's pages show, a signed-in visitor's copy was cached
-  for everyone, and the run fails.
+  for everyone, and the run fails. Each role does this at the page's URL with
+  a `gantry-verify=<role>` query added, a cache key of its own. So each role's
+  user 0 renders the page rather than getting another role's copy, and a leak
+  only admins trigger is caught too.
 
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is

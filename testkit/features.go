@@ -135,9 +135,11 @@ func rank(r Role) int { return slices.Index(allRoles, r) }
 //     (Links); a role before it is turned away (not a 2xx).
 //   - A cacheable feature's pages come from the page cache (an ETag and a
 //     Last-Modified, and a 304 for a browser that has the page), and no
-//     signed-in user's copy is shown to another, or to the public: the
-//     first to see each is a role's user 0, and user 1 and a public
-//     visitor mustn't be shown user 0's who.
+//     signed-in user's copy is shown to another, or to the public: for
+//     each role, its user 0 is the first to request the page (at a
+//     gantry-verify=<role> query of the role's own, so each role renders
+//     its own copy), and user 1 and a public visitor mustn't be shown
+//     user 0's who there.
 //
 // A feature for a role with no SignIn in roles fails.
 func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles Roles) {
@@ -261,16 +263,32 @@ func leaks(t testing.TB, h http.Handler, f Feature, path string, roles Roles) {
 		if who == "" {
 			continue
 		}
-		first.Get(path)
+		own := probe(t, path, role)
+		first.Get(own)
 		second := Browser(t, h)
 		other := signIn(second, 1)
-		if strings.Contains(second.Get(path).Body, who) {
+		if strings.Contains(second.Get(own).Body, who) {
 			t.Errorf("%s: GET %s showed %s %s's page to %s %s", f.Name, path, role, who, role, other)
 		}
-		if f.Role == Public && strings.Contains(Browser(t, h).Get(path).Body, who) {
+		if f.Role == Public && strings.Contains(Browser(t, h).Get(own).Body, who) {
 			t.Errorf("%s: GET %s showed %s %s's page to a public visitor", f.Name, path, role, who)
 		}
 	}
+}
+
+// probe is path with a query parameter of role's own, so the page cache
+// keeps each role's probe apart (its key is the host, path and query): a
+// role's user 0 renders the page, not an earlier role's copy.
+func probe(t testing.TB, path string, role Role) string {
+	t.Helper()
+	u, err := url.Parse(path)
+	if err != nil {
+		t.Fatalf("testkit: %q isn't a path: %v", path, err)
+	}
+	q := u.Query()
+	q.Set("gantry-verify", string(role))
+	u.RawQuery = q.Encode()
+	return u.String()
 }
 
 // cookies are the visitor's, as a request's header.
