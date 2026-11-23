@@ -113,6 +113,11 @@ step "gofmt"
 unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
 [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
 
+step "shellcheck"
+# An app's bin/gantry is the template rendered, which is its golden.
+timeout 600 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+	bin/go bin/bench cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
+
 step "staticcheck"
 toolchain -- go run "$staticcheck" ./...
 
