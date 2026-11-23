@@ -19,6 +19,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/scttymn/gantry/internal/gomod"
 	"github.com/scttymn/gantry/internal/pins"
 )
 
@@ -305,26 +306,13 @@ const (
 	emptyPostgresSchema = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n"
 )
 
-// enclosingModule is the module dir is in: its root and its path, from the
-// nearest go.mod at or above dir.
+// enclosingModule is gomod.Enclosing, its missing go.mod said for --in-module.
 func enclosingModule(dir string) (root, path string, err error) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", "", err
+	root, path, err = gomod.Enclosing(dir)
+	if errors.Is(err, gomod.ErrNoModule) {
+		err = errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
 	}
-	for d := abs; ; d = filepath.Dir(d) {
-		if data, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
-					return d, strings.TrimSpace(m), nil
-				}
-			}
-			return "", "", fmt.Errorf("%s names no module", filepath.Join(d, "go.mod"))
-		}
-		if filepath.Dir(d) == d {
-			return "", "", errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
-		}
-	}
+	return root, path, err
 }
 
 // write writes a generated file, a Go one as gofmt would (a template that

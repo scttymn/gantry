@@ -133,6 +133,9 @@ func TestAPITokensInModule(t *testing.T) {
 	if !strings.Contains(string(b), `"example.com/big/apps/control/app/models"`) {
 		t.Errorf("imports:\n%s", b)
 	}
+	if warnings, err := devcheck.Scan(dir); err != nil || len(warnings) != 0 {
+		t.Errorf("Strict: %+v %v", warnings, err)
+	}
 }
 
 // A new app with the recipe applied migrates, generates its queries,

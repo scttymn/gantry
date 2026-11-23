@@ -23,7 +23,9 @@ func appPackage(file string) (string, bool) {
 }
 
 // layer is where an app package sits in "routes.go → resources → services →
-// models, and anything → shared". mailers and jobs are none of these.
+// models, and anything → shared", but for models: app/shared holds page
+// shells and resource helpers, which import web and templ. mailers and jobs
+// are none of these.
 func layer(pkg string) string {
 	first, _, _ := strings.Cut(pkg, "/")
 	switch {
@@ -267,9 +269,60 @@ func (p pools) name(lhs []ast.Expr, rhs []ast.Expr) {
 		if id, ok := l.(*ast.Ident); ok {
 			if pool := p.of(rhs[i]); pool != "" {
 				p.named[id.Name] = pool
+			} else {
+				delete(p.named, id.Name)
 			}
 		}
 	}
+}
+
+// txClosure is the function a db.Tx call runs, x.Tx(ctx, fn), nil for
+// anything else.
+func txClosure(n ast.Node) *ast.FuncLit {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || len(call.Args) != 2 {
+		return nil
+	}
+	if sel, ok := call.Fun.(*ast.SelectorExpr); !ok || sel.Sel.Name != "Tx" {
+		return nil
+	}
+	fn, _ := call.Args[1].(*ast.FuncLit)
+	return fn
+}
+
+// visitFunctions calls visit once for each function, with a walk of its own
+// nodes: what a Tx closure in it does is the function's, and any other
+// function literal (a handler routed inline) is a function of its own.
+func visitFunctions(s *Source, visit func(walk func(func(ast.Node)), aliases map[string]string, offset func(token.Pos) int)) error {
+	return visitNodes(s, func(n ast.Node, stack []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
+		var body *ast.BlockStmt
+		switch fn := n.(type) {
+		case *ast.FuncDecl:
+			body = fn.Body
+		case *ast.FuncLit:
+			if txClosure(stack[len(stack)-2]) != fn {
+				body = fn.Body
+			}
+		}
+		if body == nil {
+			return
+		}
+		visit(func(f func(ast.Node)) {
+			own := map[*ast.FuncLit]bool{}
+			ast.Inspect(body, func(n ast.Node) bool {
+				if fn := txClosure(n); fn != nil {
+					own[fn] = true
+				}
+				if fn, ok := n.(*ast.FuncLit); ok && !own[fn] {
+					return false
+				}
+				if n != nil {
+					f(n)
+				}
+				return true
+			})
+		}, aliases, offset)
+	})
 }
 
 func appModels(s *Source, aliases map[string]string) string {
@@ -285,17 +338,13 @@ func checkReadThenWrite(s *Source, report func(int, string)) error {
 	if _, ok := appPackage(s.Path); !ok {
 		return nil
 	}
-	return visitNodes(s, func(n ast.Node, _ []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			return
-		}
+	return visitFunctions(s, func(walk func(func(ast.Node)), aliases map[string]string, offset func(token.Pos) int) {
 		p := pools{models: appModels(s, aliases), named: map[string]string{}}
 		if p.models == "" {
 			return
 		}
 		read := ""
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
+		walk(func(n ast.Node) {
 			switch n := n.(type) {
 			case *ast.AssignStmt:
 				p.name(n.Lhs, n.Rhs)
@@ -308,7 +357,7 @@ func checkReadThenWrite(s *Source, report func(int, string)) error {
 			case *ast.CallExpr:
 				sel, ok := n.Fun.(*ast.SelectorExpr)
 				if !ok {
-					return true
+					return
 				}
 				switch method := sel.Sel.Name; p.of(sel.X) {
 				case "Read":
@@ -321,7 +370,6 @@ func checkReadThenWrite(s *Source, report func(int, string)) error {
 					}
 				}
 			}
-			return true
 		})
 	})
 }
@@ -426,14 +474,10 @@ func checkInlineDownload(s *Source, report func(int, string)) error {
 	if _, ok := appPackage(s.Path); !ok {
 		return nil
 	}
-	return visitNodes(s, func(n ast.Node, _ []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
-		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
-			return
-		}
+	return visitFunctions(s, func(walk func(func(ast.Node)), aliases map[string]string, offset func(token.Pos) int) {
 		var serves []*ast.CallExpr
 		disposition := false
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
+		walk(func(n ast.Node) {
 			switch n := n.(type) {
 			case *ast.BasicLit:
 				if n.Kind == token.STRING && strings.Contains(strings.ToLower(n.Value), "content-disposition") {
@@ -444,7 +488,6 @@ func checkInlineDownload(s *Source, report func(int, string)) error {
 					serves = append(serves, n)
 				}
 			}
-			return true
 		})
 		if disposition {
 			return

@@ -3,6 +3,7 @@ package devcheck
 import (
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -51,7 +52,7 @@ import (
 			"vendor/x/app/models/m.go":       "package models\n\nimport \"net/http\"\n",
 			"app/posts/controller_test.go":   "package posts\n\nimport \"example.com/shop/app\"\n",
 			"app/admin/events/controller.go": "package events\n\nimport \"example.com/shop/app/admin/staff\"\n",
-			"app/services/signup/signup.go":  "package signup\n\nimport \"example.com/shop/app/mailers\"\n",
+			"app/services/signup/signup.go":  "package signup\n\nimport (\n\t\"example.com/shop/app/mailers\"\n\t\"example.com/shop/app/shared/ui\"\n)\n",
 			"app/shared/ui/flash.go":         "package ui\n\nimport \"example.com/shop/app/jobs\"\n",
 		}, nil},
 
@@ -92,7 +93,8 @@ templ index(list []models.Post, newest models.Post) {
 		{"unescaped HTML", "raw-html", map[string]string{
 			"app/posts/show.templ": "package posts\n\ntempl show(body string) {\n\t@templ.Raw(body)\n}\n",
 			"app/posts/body.go":    "package posts\n\nimport t \"github.com/a-h/templ\"\n\nfunc body(s string) t.Component { return t.Raw(s) }\nfunc js(s string) t.ComponentScript { return t.JSUnsafeFuncCall(s) }\n",
-		}, []string{"app/posts/body.go:5", "app/posts/body.go:6", "app/posts/show.templ:4"}},
+			"app/posts/note.templ": "package posts\n\nimport t \"github.com/a-h/templ\"\n\ntempl note(body string) {\n\t@t.Raw(body)\n}\n",
+		}, []string{"app/posts/body.go:5", "app/posts/body.go:6", "app/posts/note.templ:6", "app/posts/show.templ:4"}},
 		{"escaped HTML", "raw-html", map[string]string{
 			"app/posts/show.templ": "package posts\n\n// templ.Raw would skip escaping.\ntempl show(body, link string) {\n\t<a href={ templ.URL(link) }>{ body }</a>\n}\n",
 			"app/posts/body.go":    "package posts\n\nimport \"github.com/a-h/templ\"\n\n// Raw is not templ.Raw.\nfunc Raw(s string) templ.SafeURL { return templ.URL(s) }\n",
@@ -255,7 +257,18 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 	}
 	return write.DeletePost(r.Context(), post.ID)
 }
-`}, []string{"app/posts/controller.go:10", "app/posts/controller.go:19"}},
+`, "app/routes.go": `package app
+
+import "example.com/shop/app/models"
+
+func (a *App) Router() *web.Router {
+	rt.Handle("PATCH /posts/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		post, _ := models.New(a.DB.Read).GetPost(r.Context(), 1)
+		return models.New(a.DB.Write).UpdatePost(r.Context(), post.ID)
+	})
+	return rt
+}
+`}, []string{"app/posts/controller.go:10", "app/posts/controller.go:19", "app/routes.go:8"}},
 		{"read and written in one transaction", "read-then-write", map[string]string{"app/posts/controller.go": `package posts
 
 import "example.com/shop/app/models"
@@ -284,6 +297,35 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	models.New(c.DB.Write).UpdatePost(r.Context(), 1)
 	_, err := models.New(c.DB.Read).GetPost(r.Context(), 1)
 	return err
+}
+
+func (c Controller) Publish(w http.ResponseWriter, r *http.Request) error {
+	q := models.New(c.DB.Write)
+	if _, err := models.New(c.DB.Read).GetPost(r.Context(), 1); err != nil {
+		return err
+	}
+	return c.DB.Tx(r.Context(), func(tx *db.Tx) error {
+		q = models.New(tx)
+		post, err := q.GetPostForUpdate(r.Context(), 1)
+		if err != nil {
+			return err
+		}
+		return q.UpdatePost(r.Context(), post.ID)
+	})
+}
+`, "app/routes.go": `package app
+
+import "example.com/shop/app/models"
+
+func (a *App) Router() *web.Router {
+	rt.Handle("GET /posts/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		_, err := models.New(a.DB.Read).GetPost(r.Context(), 1)
+		return err
+	})
+	rt.Handle("DELETE /posts/{id}", func(w http.ResponseWriter, r *http.Request) error {
+		return models.New(a.DB.Write).DeletePost(r.Context(), 1)
+	})
+	return rt
 }
 `}, nil},
 
@@ -360,7 +402,23 @@ func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
 	http.ServeContent(w, r, info.Name(), info.ModTime(), f)
 	return nil
 }
-`}, []string{"app/files/controller.go:7"}},
+`, "app/routes.go": `package app
+
+import "net/http"
+
+func (a *App) Router() *web.Router {
+	rt.Handle("GET /exports/{name}", func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Content-Disposition", "attachment")
+		http.ServeContent(w, r, "export.csv", a.Started, export(r))
+		return nil
+	})
+	rt.Handle("GET /uploads/{key}", func(w http.ResponseWriter, r *http.Request) error {
+		http.ServeContent(w, r, "upload", a.Started, upload(r))
+		return nil
+	})
+	return rt
+}
+`}, []string{"app/files/controller.go:7", "app/routes.go:12"}},
 		{"an upload sent as a download", "inline-download", map[string]string{"app/files/controller.go": `package files
 
 import (
@@ -468,17 +526,34 @@ func TestRuleMessages(t *testing.T) {
 	}
 }
 
-func TestModulePath(t *testing.T) {
-	for gomod, want := range map[string]string{
-		"module example.com/shop\n\ngo 1.27\n":       "example.com/shop",
-		"// a comment\nmodule \"example.com/q\"\n":   "example.com/q",
-		"module example.com/c // trailing\n":         "example.com/c",
-		"modules example.com/x\n":                    "",
-		"":                                           "",
-		"go 1.27\nrequire (\n\tmodule.org/x v1\n)\n": "",
-	} {
-		if got := modulePath([]byte(gomod)); got != want {
-			t.Errorf("modulePath(%q) = %q, want %q", gomod, got, want)
-		}
+// An app made with gantry new --in-module has no go.mod of its own: its
+// packages are under the enclosing module's path, and the rules that tell
+// the app's own packages still do.
+func TestInModuleApp(t *testing.T) {
+	root := t.TempDir()
+	put(t, root, "go.mod", "module example.com/big\n\ngo 1.27\n")
+	app := filepath.Join(root, "apps", "control")
+	put(t, app, "app/models/posts.go", "package models\n\nimport \"example.com/big/apps/control/app/posts\"\n")
+	put(t, app, "app/posts/index.templ", "package posts\n\nimport \"example.com/big/apps/control/app/models\"\n\ntempl index(c Controller) {\n\t{ models.New(c.Read) }\n}\n")
+	put(t, app, "app/posts/controller.go", `package posts
+
+import "example.com/big/apps/control/app/models"
+
+func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
+	post, _ := models.New(c.DB.Read).GetPost(r.Context(), 1)
+	return models.New(c.DB.Write).UpdatePost(r.Context(), post.ID)
+}
+`)
+	got, err := Scan(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var at []string
+	for _, w := range got {
+		at = append(at, fmt.Sprintf("%s:%d %s", w.File, w.Line, w.Rule))
+	}
+	want := []string{"app/models/posts.go:3 import-boundary", "app/posts/controller.go:7 read-then-write", "app/posts/index.templ:6 view-db"}
+	if !reflect.DeepEqual(at, want) {
+		t.Fatalf("got %v, want %v", at, want)
 	}
 }

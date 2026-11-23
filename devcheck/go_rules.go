@@ -80,11 +80,22 @@ func checkRawHTML(s *Source, report func(int, string)) error {
 		return "templ." + name + " puts its argument in the page unescaped, so text a visitor wrote runs as the page's own HTML or script (stored XSS); write { value } and let templ escape it, attributes and URLs included (templ.URL), or document the escaping with an exception"
 	}
 	if strings.HasSuffix(s.Path, ".templ") {
+		_, file, err := goHeader(s)
+		if file == nil {
+			return err
+		}
+		names := []string{"templ"} // templ generate imports it unaliased in every file
+		for alias, imp := range importAliases(file) {
+			if imp == templPkg && alias != "_" && alias != "." {
+				names = append(names, regexp.QuoteMeta(alias))
+			}
+		}
+		raw := regexp.MustCompile(`\b(?:` + strings.Join(names, "|") + `)\s*\.\s*(Raw|JSUnsafeFuncCall)\s*\(`)
 		offset, body, err := templBody(s)
 		if err != nil {
 			return err
 		}
-		for _, m := range templRaw.FindAllStringSubmatchIndex(body, -1) {
+		for _, m := range raw.FindAllStringSubmatchIndex(body, -1) {
 			report(offset+m[0], unescaped(body[m[2]:m[3]]))
 		}
 		return nil
@@ -95,8 +106,6 @@ func checkRawHTML(s *Source, report func(int, string)) error {
 		}
 	})
 }
-
-var templRaw = regexp.MustCompile(`\btempl\s*\.\s*(Raw|JSUnsafeFuncCall)\s*\(`)
 
 // goHeader is GoAST's, but no file and no error for a .templ file whose Go
 // header doesn't parse: templ generate refuses it, and the HTML rules still

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"text/template"
 	"time"
+
+	"github.com/scttymn/gantry/internal/gomod"
 )
 
 // Recipe is what a recipe's templates are filled with.
@@ -99,16 +101,10 @@ func appModule(root string) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, "cmd")); err != nil {
 		return "", errors.New("no cmd/ here: run gantry at the app's root")
 	}
-	modRoot, path, err := enclosingModule(root)
-	if err != nil {
+	if _, _, err := enclosingModule(root); err != nil {
 		return "", err
 	}
-	abs, _ := filepath.Abs(root)
-	rel, err := filepath.Rel(modRoot, abs)
-	if err != nil || rel == "." {
-		return path, err
-	}
-	return path + "/" + filepath.ToSlash(rel), nil
+	return gomod.ImportPath(root)
 }
 
 func relTo(root, path string) string {

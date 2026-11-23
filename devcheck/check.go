@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/scttymn/gantry/internal/gomod"
 )
 
 const (
@@ -37,8 +39,9 @@ type Rule struct {
 
 // Source is one project-relative file. A scan shares its lazy Go parse across
 // applicable rules, avoiding repeated parsing. It is scoped to this scan only.
-// Module is the project's module path, from the go.mod at the scan's root
-// ("" without one), so a rule can tell the app's own packages by import path.
+// Module is the scan root's import path, from the nearest go.mod at or above
+// it ("" without one; an --in-module app's is under its module's path), so a
+// rule can tell the app's own packages by import path.
 type Source struct {
 	Path, Text, Module string
 	parsed             bool
@@ -60,17 +63,6 @@ func (s *Source) GoAST() (*token.FileSet, *ast.File, error) {
 		s.file, s.parseErr = parser.ParseFile(s.set, s.Path, s.Text, mode)
 	}
 	return s.set, s.file, s.parseErr
-}
-
-// modulePath is go.mod's module line, "" when there's none.
-func modulePath(gomod []byte) string {
-	for _, line := range strings.Split(string(gomod), "\n") {
-		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "module"); ok && rest != "" && (rest[0] == ' ' || rest[0] == '\t') {
-			rest, _, _ = strings.Cut(rest, "//")
-			return strings.Trim(strings.TrimSpace(rest), `"`)
-		}
-	}
-	return ""
 }
 
 var ruleID = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
@@ -112,11 +104,7 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 			extensions[ext] = append(extensions[ext], r)
 		}
 	}
-	gomod, err := os.ReadFile(filepath.Join(root, "go.mod"))
-	if err != nil && !os.IsNotExist(err) {
-		return nil, err
-	}
-	module := modulePath(gomod)
+	module, _ := gomod.ImportPath(root)
 	var warnings []Warning
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

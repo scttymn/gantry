@@ -39,7 +39,7 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `raw-assets` | Advice | Avoid rebuilding asset serving outside Gantry's optimized pipeline | raw file server bypasses Gantry asset handling; use assets.Routes for scripts/styles, or document this route's separate purpose |
 | `development-guard` | Violation | Keep development-only middleware (source scans, timing, reload) out of production | web.Development, web.DevelopmentWithRules, web.Timing and web.Reload are development-only: call them inside a positive cfg.Development() guard, or document a custom equivalent guard with an exception |
 | `environment-default` | Violation | Use Gantry's production defaults unless development is explicitly selected | GANTRY_ENV should default to production; opt into development explicitly |
-| `import-boundary` | Violation | Keep the app's layers one way (routes.go → resources → services → models, anything → shared) so each package is reusable and testable alone | app/models imports no web, templ or other app package; app/services no web or resource; app/shared no resource; a nested resource not its parent; nothing under app/ imports the routes package |
+| `import-boundary` | Violation | Keep the app's layers one way (routes.go → resources → services → models, and app/shared for all but models, which import no other app package) so each package is reusable and testable alone | app/models imports no web, templ or other app package; app/services no web or resource; app/shared no resource; a nested resource not its parent; nothing under app/ imports the routes package |
 | `view-db` | Violation | Keep pages cacheable and testable without a database: controllers load, views draw | a view uses models.New, models.Queries, db.DB or a DB's Read/Write pool; load the data in the controller's action and pass plain values to the component |
 | `raw-html` | Violation | Keep templ's escaping, which stops a visitor's text running as the page's HTML or script | templ.Raw and templ.JSUnsafeFuncCall skip escaping; write { value } (templ.URL for links), or document the escaping with an exception |
 | `env-outside-config` | Violation | Read the environment once, in config, so it's checked at start and tests set it as a value | os.Getenv in app/; add a field to config.Config and give it to what needs it |
@@ -67,10 +67,13 @@ review/performance-measurement questions.
 The layout rules hold an app to [its layout](plans/gantry.md#an-apps-layout)
 and read only `app/`: `import-boundary`, `view-db`, `env-outside-config`,
 `background-work`, `sql-outside-models`, `read-then-write`, `get-mutates` and
-`inline-download`. `import-boundary` tells the app's own packages by the module
-path in `go.mod`, and sorts them by folder: `app/models`, `app/services/*`,
-`app/shared/*`, `app/mailers` and `app/jobs`, and every other folder is a
-resource. `view-db` and `raw-html` read a `.templ` file's components as text
+`inline-download`. `import-boundary` tells the app's own packages by the app's
+import path, from the nearest `go.mod` at or above it (an `--in-module` app's
+is under its module's path), and sorts them by folder: `app/models`,
+`app/services/*`, `app/shared/*`, `app/mailers` and `app/jobs`, and every other
+folder is a resource. Anything but models may import `app/shared`: models
+import no other app package, and shared's page shells and helpers import web
+and templ. `view-db` and `raw-html` read a `.templ` file's components as text
 after its Go imports, so they follow the import's alias but not a value passed
 through a helper. `sql-outside-models` allows `database/sql`'s types sqlc's
 code uses (`sql.NullTime`, `sql.ErrNoRows`); it flags `*sql.DB`, `sql.Open`,
@@ -79,7 +82,9 @@ and SQL run on a DB's `Read` or `Write` pool or a `*db.Tx` outside
 the request waits for. `http-client`, `raw-html`, `cross-origin-bypass` and
 `tx-defer` read every Go file, gantry's own included.
 
-The advice rules read one function at a time. `read-then-write` is a `Get…` on
+The advice rules read one function at a time: a handler routed inline is a
+function of its own, and a `c.DB.Tx` closure is part of the function that
+calls `Tx`. `read-then-write` is a `Get…` on
 `models.New(c.DB.Read)` followed by an `Update…` or `Delete…` on
 `models.New(c.DB.Write)`. `get-mutates` is a write (`models.New(….Write)` or a
 `Tx`) in a GET action (the `Index`, `Show`, `New` and `Edit` that `Resources`
