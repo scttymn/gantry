@@ -196,7 +196,8 @@ database leak. Rotation invalidates outstanding codes and resets keyed rate
 limit buckets; sessions are unaffected.
 
 Tests inject a capturing sender. Development uses the shared persistent inbox.
-Apps can also explicitly point SMTP at a separate local capture service. `mail.Log` is rejected in code mode because it logs a summary
+Apps can also explicitly point SMTP at a separate local capture service, with
+`SMTP_TLS=none` when it doesn't offer TLS. `mail.Log` is rejected in code mode because it logs a summary
 without delivering a code. There is no shared development OTP or bypass code.
 
 Delivery happens after the challenge transaction commits, without holding the

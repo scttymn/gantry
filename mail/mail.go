@@ -25,20 +25,46 @@ type Sender interface {
 	Send(context.Context, Message) error
 }
 
-// SMTP sends through a server, over TLS when the server offers it (port 587's
-// STARTTLS), authenticating with the strongest mechanism both sides support.
+// SMTP sends through a server, over TLS unless TLS says otherwise,
+// authenticating with the strongest mechanism both sides support.
 type SMTP struct {
 	Host               string
 	Port               int // 587 when zero
 	Username, Password string
+	TLS                TLS
 }
+
+// TLS is how SMTP encrypts its connection. The zero value is TLSMandatory.
+type TLS int
+
+const (
+	// TLSMandatory uses implicit TLS on port 465 and requires STARTTLS on any
+	// other port, refusing to send when the server doesn't offer it.
+	TLSMandatory TLS = iota
+	// TLSOpportunistic uses STARTTLS when the server offers it and sends in
+	// plaintext otherwise, so an attacker on the network can strip it.
+	TLSOpportunistic
+	// TLSNone never encrypts, for a relay on a trusted network.
+	TLSNone
+)
 
 func (s SMTP) Send(ctx context.Context, m Message) error {
 	msg, err := m.msg(time.Now())
 	if err != nil {
 		return err
 	}
-	opts := []gomail.Option{gomail.WithPort(cmp(s.Port, 587)), gomail.WithTLSPortPolicy(gomail.TLSOpportunistic), gomail.WithTimeout(15 * time.Second)}
+	port := cmp(s.Port, 587)
+	opts := []gomail.Option{gomail.WithPort(port), gomail.WithTimeout(15 * time.Second)}
+	switch {
+	case s.TLS == TLSNone:
+		opts = append(opts, gomail.WithTLSPolicy(gomail.NoTLS))
+	case port == 465:
+		opts = append(opts, gomail.WithSSL())
+	case s.TLS == TLSOpportunistic:
+		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSOpportunistic))
+	default:
+		opts = append(opts, gomail.WithTLSPolicy(gomail.TLSMandatory))
+	}
 	if s.Username != "" {
 		opts = append(opts, gomail.WithSMTPAuth(gomail.SMTPAuthAutoDiscover), gomail.WithUsername(s.Username), gomail.WithPassword(s.Password))
 	}
