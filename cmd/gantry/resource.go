@@ -46,6 +46,10 @@ type Resource struct {
 	Postgres  bool   // the app's engine: its queries bind dates differently
 	Base      string // "/admin/membership_options", or "/membership_options"
 	Folder    string // "app/admin/membershipoptions", or "app/membershipoptions"
+	// NamespaceCode: app/<namespace> has code of its own (an admin package
+	// with its layout, say), not only resources' folders, which g resource
+	// writes. The resource doesn't use it.
+	NamespaceCode bool
 }
 
 var columnName = regexp.MustCompile(`\A[a-z][a-z0-9_]*\z`)
@@ -112,6 +116,11 @@ func parseResource(root string, args []string) (Resource, error) {
 		r.Base = "/" + r.Namespace + r.Base
 		r.Folder = "app/" + r.Namespace + "/" + r.Package
 		top = r.Namespace
+		for _, pattern := range []string{"*.go", "*.templ"} {
+			if found, _ := filepath.Glob(filepath.Join(root, "app", r.Namespace, pattern)); len(found) > 0 {
+				r.NamespaceCode = true
+			}
+		}
 	}
 	if appFolders[top] {
 		return r, fmt.Errorf("app/%s is the app's own folder: name the resource something else", top)
@@ -216,6 +225,14 @@ func nextSteps(r Resource) string {
 	if len(r.Photos) > 0 {
 		route += "     Its photos are kept in App's Storage, a.Storage: g storage and its next\n     steps give App one.\n"
 	}
+	var own string
+	if r.NamespaceCode {
+		own = fmt.Sprintf(`     app/%[1]s has code of its own, which this resource doesn't use: its pages are
+     app/shared/resource's, drawn in app/shared/layout. For the look of
+     app/%[1]s's own pages, have %[2]s/index.templ and form.templ draw the
+     list and the form in app/%[1]s's layout instead.
+`, r.Namespace, r.Folder)
+	}
 	return fmt.Sprintf(`
 Next:
   1. In app/routes.go, import
@@ -224,7 +241,7 @@ Next:
 %s  2. gantry db migrate, then gantry exec sqlc generate, gantry exec templ generate
      and gantry exec go mod tidy.
   3. Finish it by hand: its rules (app/models/%s.go), labels, hints and choices.
-`, r.Module, r.Folder, r.Module, route, r.Table)
+%s`, r.Module, r.Folder, r.Module, route, r.Table, own)
 }
 
 // modulePath is the app's module, from its go.mod.

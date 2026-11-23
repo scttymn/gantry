@@ -11,6 +11,7 @@ import (
 
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/devcheck"
+	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/testkit"
 )
 
@@ -55,6 +56,33 @@ func TestResourcePaths(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A namespace with code of its own (an app/admin package, with the
+// admin's layout) isn't what a resource there uses: the next steps say so,
+// and how to give its pages that look. Resources the generator wrote there
+// before aren't such code.
+func TestResourceInNamespaceWithItsOwnCode(t *testing.T) {
+	const note = "app/admin has code of its own"
+	root := app(t)
+	out := generate(t, root, "admin/events", "name:string")
+	if strings.Contains(out, note) {
+		t.Errorf("a namespace of generated resources only:\n%s", out)
+	}
+	out = generate(t, root, "admin/posts", "title:string")
+	if strings.Contains(out, note) {
+		t.Errorf("a namespace of generated resources only:\n%s", out)
+	}
+	os.WriteFile(filepath.Join(root, "app", "admin", "layout.go"), []byte("package admin\n"), 0o644)
+	out = generate(t, root, "admin/staff", "name:string")
+	for _, want := range []string{note, "app/shared/resource", "app/admin/staff/index.templ and form.templ"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+	if out := generate(t, root, "pages", "title:string"); strings.Contains(out, "code of its own") {
+		t.Errorf("a top-level resource:\n%s", out)
+	}
 }
 
 // The helpers every resource uses are the app's once written: the next
@@ -145,8 +173,8 @@ func TestResourceBuilds(t *testing.T) {
 					t.Skip(tool + " isn't installed: run it in the toolchain (bin/go)")
 				}
 			}
-			if tc.engine == "postgres" && os.Getenv("GANTRY_TEST_POSTGRES_URL") == "" {
-				t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
+			if tc.engine == "postgres" {
+				t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 			}
 			repo, _ := filepath.Abs("../..")
 			mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
@@ -156,7 +184,6 @@ func TestResourceBuilds(t *testing.T) {
 			}
 			var baseline *db.DB
 			if tc.engine == "postgres" {
-				t.Setenv("TEST_DATABASE_URL", os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 				baseline = testkit.Postgres(t, migrate)
 			} else {
 				baseline = testkit.DB(t, migrate)
@@ -168,7 +195,6 @@ func TestResourceBuilds(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			env := append(os.Environ(), "TEST_DATABASE_URL="+os.Getenv("GANTRY_TEST_POSTGRES_URL"))
 			for _, step := range [][]string{
 				{"sqlc", "generate"},
 				{"templ", "generate"},
@@ -178,7 +204,7 @@ func TestResourceBuilds(t *testing.T) {
 				{"go", "test", "./..."},
 			} {
 				cmd := exec.Command(step[0], step[1:]...)
-				cmd.Dir, cmd.Env = dir, env
+				cmd.Dir = dir
 				out, err := cmd.CombinedOutput()
 				if err != nil {
 					t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
