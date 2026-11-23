@@ -110,6 +110,9 @@ func (o *newOptions) flags(name string) *flag.FlagSet {
 // app is a folder of the module it's made in: it has no go.mod of its own,
 // and it's built from the module's root.
 func newApp(root string, args []string, out, errOut io.Writer) error {
+	if len(args) > 0 && helpFlag(args[0]) {
+		return flag.ErrHelp
+	}
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return usageError{}
 	}

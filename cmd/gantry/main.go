@@ -163,12 +163,19 @@ func flagSet(name string) *flag.FlagSet {
 // there's more to say than its usage, then shows its usage.
 type usageError struct{ why error }
 
+func (e usageError) Unwrap() error { return e.why }
+
 func (e usageError) Error() string {
 	if e.why == nil {
 		return "usage"
 	}
 	return "usage: " + e.why.Error()
 }
+
+// helpFlag asks a command for its usage where its flags aren't parsed:
+// gantry new --help, gantry db -h. A word ("help") may be an app's name or
+// its command's own argument, so only the flags are.
+func helpFlag(arg string) bool { return arg == "-h" || arg == "--help" }
 
 // parseFlags is fs.Parse, its errors a usage error.
 func parseFlags(fs *flag.FlagSet, args []string) error {

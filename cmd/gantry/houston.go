@@ -32,6 +32,9 @@ func appFlags() (fs *flag.FlagSet, local *bool) {
 // rest of its arguments are the app's, flags too.
 func appCommand(command string) func(root string, args []string, out, errOut io.Writer) error {
 	return func(root string, args []string, _, errOut io.Writer) error {
+		if len(args) > 0 && helpFlag(args[0]) {
+			return flag.ErrHelp
+		}
 		fs, local := appFlags()
 		rest := []string{command}
 		for _, a := range args {

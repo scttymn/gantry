@@ -60,6 +60,26 @@ func TestUsage(t *testing.T) {
 	}
 }
 
+// A command's --help or -h is its usage, asked for: on stdout, exit 0.
+func TestCommandHelp(t *testing.T) {
+	for _, c := range commands {
+		if c.flags == nil && c.name != "new" {
+			continue
+		}
+		for _, help := range []string{"--help", "-h"} {
+			args := append(strings.Fields(c.name), help)
+			if c.name == "g fonts" {
+				args = append(strings.Fields(c.name), "Work Sans", help)
+			}
+			var out, errOut strings.Builder
+			code := run(args, t.TempDir(), &out, &errOut)
+			if code != 0 || out.String() != "usage: "+c.synopsis()+"\n" || errOut.String() != "" {
+				t.Errorf("%q: exit %d\nstdout: %s\nstderr: %s", args, code, out.String(), errOut.String())
+			}
+		}
+	}
+}
+
 // docsWithCommands are where gantry's commands are shown to people and
 // agents: what they run is what they copy from here.
 var docsWithCommands = []string{"README.md", "docs/*.md", "llms.txt", "cmd/gantry/templates/new/README.md.tmpl"}
