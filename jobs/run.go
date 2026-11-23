@@ -20,6 +20,7 @@ type claimed struct {
 	Args     []byte
 	Attempts int
 	Key      string
+	By       string // the process that claimed it
 }
 
 // claim takes the next job due on queue for process: the highest priority,
@@ -27,10 +28,13 @@ type claimed struct {
 // whose limit is full (and dropping it, when its limit says to). false: none.
 func (q *Queue) claim(ctx context.Context, queue, process string) (claimed, bool, error) {
 	q.mu.Lock()
-	var names []any
+	var names, discards []any
 	for name, r := range q.defs {
 		if r.queue() == queue {
 			names = append(names, name)
+			if _, _, discard := r.limit(); discard {
+				discards = append(discards, name)
+			}
 		}
 	}
 	q.mu.Unlock()
@@ -40,37 +44,49 @@ func (q *Queue) claim(ctx context.Context, queue, process string) (claimed, bool
 	var got claimed
 	found := false
 	err := q.d.Tx(ctx, func(tx *db.Tx) error {
-		in := ""
 		args := []any{queue, q.now()}
-		for i, n := range names {
-			if i > 0 {
-				in += ", "
+		in := func(vs []any) string {
+			s := ""
+			for i, v := range vs {
+				if i > 0 {
+					s += ", "
+				}
+				args = append(args, v)
+				s += fmt.Sprintf("$%d", len(args))
 			}
-			in += fmt.Sprintf("$%d", i+3)
-			args = append(args, n)
+			return s
+		}
+		// Jobs whose limit is full are left out: enough of them would fill
+		// the LIMIT and hide the jobs behind them that could run. A limit
+		// that discards keeps its jobs in, to drop them.
+		free := `NOT EXISTS (SELECT 1 FROM gantry_job_semaphores WHERE gantry_job_semaphores.key = gantry_jobs.limit_key AND value <= 0)`
+		if len(discards) > 0 {
+			free = `(` + free + ` OR name IN (` + in(discards) + `))`
 		}
 		lock := ""
 		if q.d.Engine == db.Postgres {
 			lock = " FOR UPDATE SKIP LOCKED"
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT id, name, args, attempts, limit_key FROM gantry_jobs
-			WHERE queue = $1 AND state = 'ready' AND run_at <= $2 AND name IN (`+in+`)
+			WHERE queue = $1 AND state = 'ready' AND run_at <= $2 AND name IN (`+in(names)+`) AND `+free+`
 			ORDER BY priority, run_at, id LIMIT 20`+lock, args...)
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		var candidates []claimed
 		for rows.Next() {
-			var c claimed
+			c := claimed{By: process}
 			var raw string
 			if err := rows.Scan(&c.ID, &c.Name, &raw, &c.Attempts, &c.Key); err != nil {
-				rows.Close()
 				return err
 			}
 			c.Args = []byte(raw)
 			candidates = append(candidates, c)
 		}
-		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
 		for _, c := range candidates {
 			if c.Key != "" {
 				ok, err := q.acquire(ctx, tx, c)
@@ -117,12 +133,16 @@ func (q *Queue) acquire(ctx context.Context, tx *db.Tx, c claimed) (bool, error)
 	return n == 1, err
 }
 
-// release frees c's slot of its limit.
+// release frees c's slot of its limit. Never past To: a slot that expired
+// while c ran may have gone to another job already, and isn't c's to free.
 func (q *Queue) release(ctx context.Context, c claimed) {
 	if c.Key == "" {
 		return
 	}
-	if _, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_job_semaphores SET value = value + 1 WHERE key = $1`, c.Key); err != nil {
+	q.mu.Lock()
+	to, _, _ := q.defs[c.Name].limit()
+	q.mu.Unlock()
+	if _, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_job_semaphores SET value = value + 1 WHERE key = $1 AND value < $2`, c.Key, to); err != nil {
 		q.o.Log.Error("jobs: freeing a limit", "key", c.Key, "err", err)
 	}
 }
@@ -155,32 +175,42 @@ func (q *Queue) execute(runCtx context.Context, c claimed) {
 	switch {
 	case err == nil:
 		q.o.Log.Info("job finished", "job", c.Name, "id", c.ID, "took", time.Since(began))
-		q.settle(bg, `UPDATE gantry_jobs SET state = 'finished', finished_at = $1 WHERE id = $2`, now, c.ID)
+		q.settle(bg, c, `state = 'finished', finished_at = $1`, now)
 	case runCtx.Err() != nil:
 		// Shutting down: back to the queue, this attempt not counted.
 		q.o.Log.Info("job put back", "job", c.Name, "id", c.ID)
-		q.settle(bg, `UPDATE gantry_jobs SET state = 'ready', attempts = attempts - 1, claimed_by = '', claimed_at = NULL WHERE id = $1`, c.ID)
+		q.settle(bg, c, `state = 'ready', attempts = attempts - 1, claimed_by = '', claimed_at = NULL`)
 	default:
 		retry := r.retry()
 		var d discarded
 		if !errors.As(err, &d) && c.Attempts < retry.Attempts {
 			wait := retry.wait(c.Attempts)
 			q.o.Log.Warn("job failed; it'll be tried again", "job", c.Name, "id", c.ID, "attempt", c.Attempts, "in", wait, "err", err)
-			q.settle(bg, `UPDATE gantry_jobs SET state = 'ready', run_at = $1, error = $2, claimed_by = '', claimed_at = NULL WHERE id = $3`, now.Add(wait), err.Error(), c.ID)
+			q.settle(bg, c, `state = 'ready', run_at = $1, error = $2, claimed_by = '', claimed_at = NULL`, now.Add(wait), err.Error())
 			return
 		}
 		q.o.Log.Error("job failed", "job", c.Name, "id", c.ID, "attempts", c.Attempts, "err", err)
-		q.settle(bg, `UPDATE gantry_jobs SET state = 'failed', error = $1, finished_at = $2 WHERE id = $3`, err.Error(), now, c.ID)
-		if !errors.As(err, &d) {
+		if lost := q.settle(bg, c, `state = 'failed', error = $1, finished_at = $2`, err.Error(), now); !lost && !errors.As(err, &d) {
 			r.exhausted(bg, c.Args, err)
 		}
 	}
 }
 
-func (q *Queue) settle(ctx context.Context, query string, args ...any) {
-	if _, err := q.d.Write.ExecContext(ctx, query, args...); err != nil {
-		q.o.Log.Error("jobs: settling a job", "err", err)
+// settle sets c's job's columns as set says, if c's claim still holds it. A
+// worker stalled past Dead finds its job gone back, and maybe claimed again:
+// lost, its result is dropped.
+func (q *Queue) settle(ctx context.Context, c claimed, set string, args ...any) (lost bool) {
+	query := fmt.Sprintf(`UPDATE gantry_jobs SET %s WHERE id = $%d AND state = 'claimed' AND claimed_by = $%d`, set, len(args)+1, len(args)+2)
+	res, err := q.d.Write.ExecContext(ctx, query, append(args, c.ID, c.By)...)
+	if err != nil {
+		q.o.Log.Error("jobs: settling a job", "job", c.Name, "id", c.ID, "err", err)
+		return false
 	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		q.o.Log.Warn("job lost its claim while it ran; its result is dropped", "job", c.Name, "id", c.ID)
+		return true
+	}
+	return false
 }
 
 // Drain runs every job that's due, recurring ones included, in the caller,
@@ -306,7 +336,7 @@ func (q *Queue) beat(ctx context.Context, process string) error {
 
 // maintain keeps the tables: a process silent for Dead has crashed, so the
 // jobs it claimed go back (and those of no process at all); limits held
-// past their time free; finished jobs older than Keep go.
+// past their time free; finished jobs and recurring ticks older than Keep go.
 func (q *Queue) maintain(ctx context.Context) error {
 	now := q.now()
 	return q.d.Tx(ctx, func(tx *db.Tx) error {
@@ -320,6 +350,7 @@ func (q *Queue) maintain(ctx context.Context) error {
 				AND claimed_at < $1`, []any{now.Add(-q.o.Dead)}},
 			{`DELETE FROM gantry_job_semaphores WHERE expires_at < $1`, []any{now}},
 			{`DELETE FROM gantry_jobs WHERE state = 'finished' AND finished_at < $1`, []any{now.Add(-q.o.Keep)}},
+			{`DELETE FROM gantry_job_ticks WHERE run_at < $1`, []any{now.Add(-q.o.Keep)}},
 		} {
 			if _, err := tx.ExecContext(ctx, stmt.query, stmt.args...); err != nil {
 				return err

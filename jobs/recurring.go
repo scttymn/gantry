@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/adhocore/gronx"
+	"github.com/scttymn/gantry/db"
 )
 
 // recurring is a job enqueued on a schedule (Solid Queue's recurring.yml,
@@ -67,9 +68,9 @@ func (j *Job[A]) recur(schedule string, a A, next func(time.Time) time.Time) {
 }
 
 // tick enqueues each recurring job that's due, once however many processes
-// tick: its run is recorded first, and only the process that records it
-// enqueues it. Runs missed while nothing ticked aren't made up: the next is
-// the next after now (Solid Queue's).
+// tick: its run is recorded with its job, in one transaction, and only the
+// process that records it enqueues it. Runs missed while nothing ticked
+// aren't made up: the next is the next after now (Solid Queue's).
 func (q *Queue) tick(ctx context.Context) error {
 	now := q.now()
 	q.mu.Lock()
@@ -81,17 +82,25 @@ func (q *Queue) tick(ctx context.Context) error {
 	}
 	q.mu.Unlock()
 	for _, r := range due {
-		res, err := q.d.Write.ExecContext(ctx, `INSERT INTO gantry_job_ticks (task, run_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`, r.task, r.due)
-		if err != nil {
-			return err
-		}
-		if n, _ := res.RowsAffected(); n == 1 {
-			if _, err := q.d.Write.ExecContext(ctx, `INSERT INTO gantry_jobs (queue, name, args, priority, run_at, limit_key, created_at)
-				VALUES ($1, $2, $3, $4, $5, $6, $7)`, r.queue, r.name, string(r.args), r.priority, r.due, r.key, now); err != nil {
+		err := q.d.Tx(ctx, func(tx *db.Tx) error {
+			res, err := tx.ExecContext(ctx, `INSERT INTO gantry_job_ticks (task, run_at) VALUES ($1, $2) ON CONFLICT DO NOTHING`, r.task, r.due)
+			if err != nil {
 				return err
 			}
-			q.o.Log.Info("job enqueued", "job", r.name, "recurring", r.task, "at", r.due)
-			q.signal(r.queue)
+			if n, _ := res.RowsAffected(); n == 1 {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO gantry_jobs (queue, name, args, priority, run_at, limit_key, created_at)
+					VALUES ($1, $2, $3, $4, $5, $6, $7)`, r.queue, r.name, string(r.args), r.priority, r.due, r.key, now); err != nil {
+					return err
+				}
+				tx.AfterCommit(func() {
+					q.o.Log.Info("job enqueued", "job", r.name, "recurring", r.task, "at", r.due)
+					q.signal(r.queue)
+				})
+			}
+			return nil
+		})
+		if err != nil {
+			return err
 		}
 		q.mu.Lock()
 		r.due = r.next(now)
