@@ -12,13 +12,15 @@ import (
 // benchFeedOwn is what bench/feed has of its own in place of what gantry
 // new writes, and why: the challenge's API, where a new app has a page.
 var benchFeedOwn = map[string]string{
-	"app/routes.go":     "the challenge's routes",
-	"app/home_test.go":  "the API's 404 and the bench's routes",
-	"config/config.go":  "JWT_SECRET",
-	"cmd/feed/main.go":  "the app's JWT secret and start time",
-	"db/schema.sql":     "the challenge's tables",
-	"db/seeds/seeds.go": "the challenge's users and posts",
-	"sqlc.yaml":         "emit_json_tags: a row is the API's JSON",
+	"app/routes.go":        "the challenge's routes",
+	"app/home_test.go":     "the API's 404 and the bench's routes",
+	"app/features_test.go": "the API's bearer token signs a visitor in",
+	"test/features.yaml":   "the challenge's routes",
+	"config/config.go":     "JWT_SECRET",
+	"cmd/feed/main.go":     "the app's JWT secret and start time",
+	"db/schema.sql":        "the challenge's tables",
+	"db/seeds/seeds.go":    "the challenge's users and posts",
+	"sqlc.yaml":            "emit_json_tags: a row is the API's JSON",
 }
 
 // benchFeedPart is a file bench/feed keeps gantry new's copy of inside text
