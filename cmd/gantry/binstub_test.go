@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"text/template"
 	"time"
@@ -24,15 +25,15 @@ type releaseServer struct {
 	mu    sync.Mutex
 	hits  map[string]int
 	files map[string][]byte
-	pause time.Duration
+	pause atomic.Int64 // a time.Duration, set with the server already serving
 }
 
 func newReleaseServer(t *testing.T) *releaseServer {
 	t.Helper()
 	rs := &releaseServer{hits: map[string]int{}, files: map[string][]byte{}}
 	rs.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if rs.pause > 0 && !strings.HasSuffix(r.URL.Path, "/SHA256SUMS") {
-			time.Sleep(rs.pause)
+		if pause := time.Duration(rs.pause.Load()); pause > 0 && !strings.HasSuffix(r.URL.Path, "/SHA256SUMS") {
+			time.Sleep(pause)
 		}
 		rs.mu.Lock()
 		rs.hits[r.URL.Path]++
@@ -461,7 +462,7 @@ func TestBinstubUsesCheckoutCLI(t *testing.T) {
 
 func TestBinstubConcurrentInstall(t *testing.T) {
 	dir, rs, env := appWithCLIs(t, "v0.11.3")
-	rs.pause = 200 * time.Millisecond
+	rs.pause.Store(int64(200 * time.Millisecond))
 	var wg sync.WaitGroup
 	codes := make([]int, 2)
 	outs := make([]string, 2)

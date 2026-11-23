@@ -169,7 +169,7 @@ func TestClock(t *testing.T) {
 	if now().Year() != 2030 {
 		t.Errorf("after Set: %v", now())
 	}
-	if now() != now() {
+	if a, b := now(), now(); !a.Equal(b) {
 		t.Error("time moved by itself")
 	}
 }
