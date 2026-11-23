@@ -2,8 +2,9 @@ package db
 
 import (
 	"context"
-	"os"
 	"testing"
+
+	"github.com/scttymn/gantry/internal/testenv"
 )
 
 type settings struct {
@@ -51,10 +52,7 @@ func checkJSON(t *testing.T, d *DB) {
 func TestJSON(t *testing.T) { checkJSON(t, openTemp(t)) }
 
 func TestJSONPostgres(t *testing.T) {
-	url := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-	if url == "" {
-		t.Skip("GANTRY_TEST_POSTGRES_URL isn't set")
-	}
+	url := testenv.Postgres(t)
 	d, err := Open(context.Background(), url)
 	if err != nil {
 		t.Fatal(err)

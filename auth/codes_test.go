@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/scttymn/gantry/db"
+	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/mail"
 	"github.com/scttymn/gantry/sign"
 	"github.com/scttymn/gantry/testkit"
@@ -72,11 +72,7 @@ CREATE INDEX auth_code_limits_expiry ON auth_code_limits(expires_at);`
 	}
 	var d *db.DB
 	if engine == "postgres" {
-		server := os.Getenv("GANTRY_TEST_POSTGRES_URL")
-		if server == "" {
-			t.Skip("GANTRY_TEST_POSTGRES_URL not set")
-		}
-		t.Setenv("TEST_DATABASE_URL", server)
+		t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
 		d = testkit.Postgres(t, migrate)
 	} else {
 		d = testkit.DB(t, migrate)
@@ -376,7 +372,7 @@ func independentAuth(t *testing.T, a *Auth) *Auth {
 		}
 		address = "sqlite://" + filename
 	} else {
-		u, err := url.Parse(os.Getenv("GANTRY_TEST_POSTGRES_URL"))
+		u, err := url.Parse(testenv.Postgres(t))
 		if err != nil {
 			t.Fatal(err)
 		}

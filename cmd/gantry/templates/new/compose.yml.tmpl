@@ -21,6 +21,7 @@ services:
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
       SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms; blank: a key kept in the database
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
 {{- if .Postgres}}

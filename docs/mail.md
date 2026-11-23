@@ -37,8 +37,9 @@ The generated `config.Config` owns a `mail.Config`, read with
 | `MAIL_DRIVER` | `inbox`, `smtp`, `disabled`, or summary-only `log`; blank chooses the environment default |
 | `MAIL_FROM` | Default From address, including an optional display name |
 | `SMTP_HOST` | The provider's SMTP host |
-| `SMTP_PORT` | SMTP port, default 587 |
+| `SMTP_PORT` | SMTP port, default 587; 465 uses implicit TLS |
 | `SMTP_USERNAME` / `SMTP_PASSWORD` | Provider credentials |
+| `SMTP_TLS` | `mandatory` (blank), `opportunistic` or `none` |
 | `MAIL_INBOX_PATH` | Optional local capture file; default `DATA_DIR/mail-inbox.sqlite3` |
 
 With a blank driver, development captures mail even if SMTP settings exist.
@@ -46,6 +47,14 @@ Tests disable delivery. Other environments use SMTP when a host is configured;
 otherwise sends return `mail.ErrDisabled`. An explicitly chosen driver overrides
 that default, but `inbox` always requires development. SMTP requires a valid
 `MAIL_FROM`; the inbox supplies `Gantry <no-reply@example.test>` when omitted.
+
+SMTP requires TLS. Port 465 connects with implicit TLS; any other port must
+offer STARTTLS, or the send fails rather than putting credentials, login codes
+and reset links on the network in plaintext. `SMTP_TLS=opportunistic` sends in
+plaintext when the server doesn't offer STARTTLS, which an attacker on the
+network can force by stripping it. `SMTP_TLS=none` never encrypts, for a relay
+on a trusted network such as a local capture service. Any other value stops
+startup. The development inbox doesn't use SMTP and ignores the setting.
 
 New apps expose delivery settings in Compose. Store production provider
 credentials in Houston secrets. `MAIL_INBOX_PATH`, when needed, can be added to
@@ -99,6 +108,16 @@ if a.Mail != nil && a.Mail.Inbox != nil {
 
 No production schema migration is needed. The development inbox owns its separate
 local store. Keep production application data and capture data separate.
+
+### Upgrading: SMTP requires TLS
+
+SMTP used to send in plaintext when the server didn't offer STARTTLS. It now
+fails instead, and port 465 uses implicit TLS. Providers that offer STARTTLS on
+587, such as Resend, need no change. An app relaying
+through a server without TLS must set `SMTP_TLS=none` (or `opportunistic`), and
+a custom `mail.SMTP` sender sets `TLS: mail.TLSNone`. Add
+`SMTP_TLS: ${SMTP_TLS:-}` to the app's Compose environment to pass the setting
+through.
 
 Strict cannot reliably tell whether a custom sender is deliberate, a test fake,
 or duplicated transport configuration. Review new email features for reuse of
