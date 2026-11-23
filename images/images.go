@@ -94,11 +94,11 @@ func AVIFSlow() string {
 	return ""
 }
 
-// AVIFFor is p's AVIF: the same folder, widths, readers and maker, AVIF at
-// AVIFQuality. An app's Server offers it first (Server.AVIF).
+// AVIFFor is p's AVIF: the same folder, widths, readers, maker and pixel
+// limit, AVIF at AVIFQuality. An app's Server offers it first (Server.AVIF).
 func AVIFFor(p *Pipeline) *Pipeline {
 	return &Pipeline{Dir: p.Dir, Encoder: AVIF{}, Quality: AVIFQuality, Widths: p.Widths, Decoders: p.Decoders, Maker: p.Maker,
-		PlaceholderWidth: p.PlaceholderWidth, PlaceholderQuality: p.PlaceholderQuality}
+		PlaceholderWidth: p.PlaceholderWidth, PlaceholderQuality: p.PlaceholderQuality, MaxPixels: p.MaxPixels}
 }
 
 // encoderFor is the encoder that writes a file named so: a copy's name says

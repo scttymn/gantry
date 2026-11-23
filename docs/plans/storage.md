@@ -16,8 +16,8 @@ From converting Esther Pictures (Phoenix) to gantry (2026-09-30). Its admin uplo
 - `Attach(ctx, ref, file)`: `has_one_attached`. The file is written first (whole, then renamed in), analysed (its type from its bytes, and its size as shown), and the blob and attachment rows go in together, replacing the ref's attachment, whose blob is purged. `AttachBlob` attaches a blob that's already stored (a restore). `Detach` removes the attachment and keeps the blob; `Purge` removes both and the files. `Unattached` lists blobs attached to nothing, for an app's sweep. `Store` stores a blob attached to nothing (Rails' `create_and_upload!`), and `Blob` finds one by key, attached or not.
 - `Find(ctx, ref)`, and `All(ctx, recordType, name)` for a page's list, keyed by record id.
 - Pictures: the images package's standard way. `Img(blob, images.Img)` draws a `<picture>` of AVIF and WebP copies at every width up to the picture's own; `Warm` makes the missing copies through the polite child (stopping at `images.ErrNoRoom`, carried on at the next start or upload), and `Attach` asks for a warming. `Placeholders`, when set, make the 32 px blur too.
-- Serving: `Storage` is an `http.Handler` at `Prefix` ("/storage/"): a picture's copies, and any blob's original at `/storage/<key>/original`, only for blobs attached to something. Keys are Rails': 28 random lowercase letters and digits.
-- `FileFrom(r, field)`: the uploaded file of a multipart form. What an app accepts (types, size) is its own validation.
+- Serving: `Storage` is an `http.Handler` at `Prefix` ("/storage/"): a picture's copies, and any blob's original at `/storage/<key>/original`, only for blobs attached to something. An original is a download under its file name (`Content-Disposition: attachment`, `nosniff`, a sandboxing CSP): its type is whatever its uploader made it, and an HTML page or SVG served inline would run its script on the app's origin. Keys are Rails': 28 random lowercase letters and digits.
+- `FileFrom(r, field)`: the uploaded file of a multipart form. What an app accepts (types, size) is its own validation, except a picture over the pipeline's `MaxPixels` (50 megapixels by default): `Attach` refuses it with `images.ErrTooManyPixels`, read from its header before anything decodes it.
 
 Not now: `has_many_attached`, other services (S3), direct uploads. Moving the gym site onto `storage` comes after Esther; then `gantry g resource`'s `photo` type, which writes code against the gym's own photos service today, writes it against `storage`.
 
@@ -30,7 +30,8 @@ Not now: `has_many_attached`, other services (S3), direct uploads. Moving the gy
 | Detach keeps the blob; AttachBlob attaches it again; Unattached lists it | `storage.TestDetachAndAttachBlob` |
 | Purge removes rows, file and copies | `storage.TestPurge` |
 | Find and All return attached blobs with their sizes | `storage.TestFind` |
-| Only attached blobs are served: copies and originals; others 404 | `storage.TestServe` |
+| Only attached blobs are served: copies and originals; others 404. An original (text, HTML, SVG) is a sandboxed download | `storage.TestServe` |
+| A picture over `MaxPixels` isn't stored | `storage.TestAttach` |
 | Img draws AVIF and WebP sources sized to the picture | `storage.TestImg` |
 | Warm makes the missing copies, stops at ErrNoRoom, analyses blobs without a size | `storage.TestWarm` |
 | A Rails-made database's rows are read as they are | `storage.TestRailsRows` |

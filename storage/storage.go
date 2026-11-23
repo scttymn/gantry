@@ -49,7 +49,8 @@ type Storage struct {
 	// Root/<key[0:2]>/<key[2:4]>/<key>, and pictures' copies are under
 	// Root/variants.
 	Root string
-	// Prefix is where files are served: "/storage/" when empty.
+	// Prefix is where files are served: "/storage/" when empty. A picture
+	// is served as its copies; any other file as itself, as a download.
 	Prefix string
 	// Images makes pictures' copies (WebP, by default). A server's makes
 	// them in a child (images.Child), which the app's main starts before
@@ -142,7 +143,8 @@ func (s *Storage) Path(key string) string {
 // Attach stores f and attaches it at ref in place of what ref had, whose
 // blob is purged (to keep that blob, Detach it first). The file is written
 // first, then the rows go in together, so a crash leaves at most a file
-// nothing names. A picture's copies are made in the background.
+// nothing names. A picture's copies are made in the background. A picture
+// over the pipeline's MaxPixels isn't stored: images.ErrTooManyPixels.
 func (s *Storage) Attach(ctx context.Context, ref Ref, f File) (Blob, error) {
 	return s.store(ctx, &ref, f)
 }
@@ -160,6 +162,8 @@ func (s *Storage) store(ctx context.Context, ref *Ref, f File) (Blob, error) {
 	if width, height, contentType, err := s.Images.Dimensions(f.Data); err == nil {
 		b.ContentType, b.Width, b.Height = contentType, width, height
 		metadata["width"], metadata["height"], metadata["analyzed"] = width, height, true
+	} else if errors.Is(err, images.ErrTooManyPixels) {
+		return Blob{}, err
 	} else {
 		b.ContentType = http.DetectContentType(f.Data)
 	}
@@ -434,7 +438,7 @@ func (s *Storage) find(ctx context.Context, key string) (images.Original, bool, 
 	if err != nil {
 		return images.Original{}, false, err
 	}
-	return images.Original{Path: s.Path(b.Key), ContentType: b.ContentType, Width: b.Width}, true, nil
+	return images.Original{Path: s.Path(b.Key), ContentType: b.ContentType, Width: b.Width, Filename: b.Filename}, true, nil
 }
 
 // ServeHTTP serves at Prefix a picture's copies (/storage/<key>/720w-q80.webp)

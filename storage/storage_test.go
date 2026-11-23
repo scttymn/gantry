@@ -119,8 +119,11 @@ func TestAttach(t *testing.T) {
 	}
 	// A picture claiming more pixels than the pipeline reads is refused.
 	bomb := []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
-	if b, err := s.Attach(ctx, clip(3), File{Filename: "bomb.gif", Data: bomb}); err == nil {
-		t.Errorf("stored a bomb: %+v", b)
+	if b, err := s.Attach(ctx, clip(3), File{Filename: "bomb.gif", Data: bomb}); !errors.Is(err, images.ErrTooManyPixels) {
+		t.Errorf("stored a bomb: %+v %v", b, err)
+	}
+	if _, ok, _ := s.Find(ctx, clip(3)); ok {
+		t.Error("attached a bomb")
 	}
 }
 
