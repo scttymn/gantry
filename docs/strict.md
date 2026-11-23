@@ -46,8 +46,8 @@ configuration. Adding a built-in entry automatically reaches all consumers.
    Strict. Add a migration example so existing apps can adopt it.
 5. Regenerate the development guide's rule table with
    `go test ./devcheck -update` (the test fails until you do) and describe new
-   strict failures in the release notes. Apps pick up rule changes when their pinned Gantry version is
-   upgraded; exceptions stay explicit and reviewable.
+   strict failures in the release notes. Apps pick up rule changes when their
+   pinned Gantry version is upgraded; exceptions stay explicit and reviewable.
 
 For every new performance or development feature, record whether Strict coverage
 was added. If reliable detection is unavailable, document the gap and how to
@@ -92,6 +92,7 @@ exception for it that matches nothing is reported stale.
 
 [The development guide](development.md#gantry-defaults-and-strict-mode) lists
 the current rules, generated from `DefaultRules()`, with their limits and
-exception syntax. Page-cache eligibility, image-pipeline adoption and render-blocking data fetches
-are future coverage areas, not checks that exist today. Some will need runtime
-measurement or richer analysis instead of static source matching.
+exception syntax. Page-cache eligibility, image-pipeline adoption and
+render-blocking data fetches are future coverage areas, not checks that exist
+today. Some will need runtime measurement or richer analysis instead of static
+source matching.
