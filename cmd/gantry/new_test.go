@@ -440,6 +440,8 @@ func TestAppCommands(t *testing.T) {
 		{[]string{"task", "backfill", "--dry-run"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "task", "backfill", "--dry-run"}},
 		{[]string{"tasks"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "tasks"}},
 		{[]string{"db", "migrate", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "db", "migrate"}},
+		{[]string{"routes"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "routes"}},
+		{[]string{"routes", "--json", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "routes", "--json"}},
 		{[]string{"dev", "--as", "login"}, []string{"houston", "dev", "--as", "login"}},
 		{[]string{"test"}, []string{"houston", "test"}},
 		{[]string{"deploy", "--server"}, []string{"houston", "deploy", "--server"}},

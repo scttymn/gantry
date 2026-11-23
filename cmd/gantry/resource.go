@@ -202,7 +202,7 @@ func generateResource(root string, args []string, out io.Writer) error {
 }
 
 // nextSteps are what wires a resource into the app, as code to paste: a
-// top-level one in Handler (Rails' resources :posts), a namespaced one in
+// top-level one in Router (Rails' resources :posts), a namespaced one in
 // its namespace's scope (namespace :admin), behind the filter that guards
 // it, which the generator can't know.
 func nextSteps(r Resource) string {
@@ -210,12 +210,12 @@ func nextSteps(r Resource) string {
 	if len(r.Photos) > 0 {
 		shared += ", Photos: a.Storage"
 	}
-	route := fmt.Sprintf(`     and route it, in Handler:
+	route := fmt.Sprintf(`     and route it, in Router:
        rt.Resources(%q, %s.Controller{Controller: resource.Controller{
            %s}}, nil)
 `, r.Base, r.Package, shared)
 	if r.Namespace != "" {
-		route = fmt.Sprintf(`     and route it in Handler, in /%[1]s's scope (one for every %[1]s resource):
+		route = fmt.Sprintf(`     and route it in Router, in /%[1]s's scope (one for every %[1]s resource):
        rt.Scope("/%[1]s", web.Pipeline{}, func(s *web.Scope) {
            s.Resources("/%[2]s", %[3]s.Controller{Controller: resource.Controller{
                %[4]s}}, nil)

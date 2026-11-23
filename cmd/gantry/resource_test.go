@@ -218,7 +218,7 @@ func TestResourceBuilds(t *testing.T) {
 }
 
 // wire does in app/routes.go what g resource's next steps say: their
-// imports (each once, as a person adds one), and their code, in Handler.
+// imports (each once, as a person adds one), and their code, in Router.
 func wire(t *testing.T, dir, out string) {
 	t.Helper()
 	_, next, ok := strings.Cut(out, "\nNext:\n")
