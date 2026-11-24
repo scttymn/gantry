@@ -175,7 +175,12 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 	} else {
 		jobsDone <- nil
 	}
-	defer func() { stopJobs(); <-jobsDone }()
+	defer func() {
+		stopJobs()
+		if err := <-jobsDone; err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("jobs stopped", "err", err)
+		}
+	}()
 	errs := make(chan error, 1)
 	go func() { errs <- server.Serve(ln) }()
 	select {

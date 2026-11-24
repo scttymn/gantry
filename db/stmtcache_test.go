@@ -493,20 +493,22 @@ func TestStatementCacheAfterCancel(t *testing.T) {
 	}
 
 	ctx, cancel = context.WithCancel(context.Background())
-	rows, err := pool.QueryContext(ctx, each, int64(1)<<40)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !rows.Next() {
-		t.Fatalf("no first row: %v", rows.Err())
-	}
-	cancel()
-	for rows.Next() {
-	}
-	if rows.Err() == nil {
-		t.Error("reading to 2^40 finished")
-	}
-	rows.Close()
+	func() {
+		rows, err := pool.QueryContext(ctx, each, int64(1)<<40)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		if !rows.Next() {
+			t.Fatalf("no first row: %v", rows.Err())
+		}
+		cancel()
+		for rows.Next() {
+		}
+		if rows.Err() == nil {
+			t.Error("reading to 2^40 finished")
+		}
+	}()
 	if got := ints(t, pool, each, 3); !reflect.DeepEqual(got, []int{1, 2, 3}) {
 		t.Errorf("after the cancelled read: %v", got)
 	}

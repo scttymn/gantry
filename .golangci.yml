@@ -51,49 +51,15 @@ linters:
           deny:
             - pkg: github.com/scttymn/gantry/devcheck
               desc: devcheck is the development source scanner; keep it out of the packages an app links (#34).
-        # #33's boundaries, as an app lays them out (bench/feed): imports go
-        # routes → resources → services → models.
-        app-models:
-          files: ["**/app/models/**"]
-          deny:
-            - pkg: net/http
-              desc: models know the database, not requests; take values from the controller (#33).
-            - pkg: github.com/scttymn/gantry/web
-              desc: models know the database, not requests; take values from the controller (#33).
-            - pkg: github.com/a-h/templ
-              desc: models return values that views render, not views (#33).
-            - pkg: feed/app
-              desc: models are the bottom layer and import no other app package (#33).
-        app-services:
-          files: ["**/app/services/**"]
-          list-mode: lax
-          deny:
-            - pkg: github.com/scttymn/gantry/web
-              desc: services are called by resources, not by requests; take values from the controller (#33).
-            - pkg: feed/app
-              desc: services may import models and shared, never a resource (#33).
-          allow:
-            - feed/app/models
-            - feed/app/shared
-            - feed/app/services
-        app-shared:
-          files: ["**/app/shared/**"]
-          list-mode: lax
-          deny:
-            - pkg: feed/app
-              desc: shared code is imported by resources, never the other way (#33).
-          allow:
-            - feed/app/models
-            - feed/app/shared
-            - feed/app/services
   exclusions:
     # Close, Flush and printing to stdout or stderr: errors only a caller
     # that already failed would see.
     presets: [std-error-handling]
     rules:
-      # Tests are left to fail on what they check, at first (#54).
+      # Tests are left to fail on what they check for errcheck and forbidigo;
+      # bodyclose, rowserrcheck and sqlclosecheck run on tests too (#113).
       - path: _test\.go$
-        linters: [bodyclose, errcheck, forbidigo, rowserrcheck, sqlclosecheck]
+        linters: [errcheck, forbidigo]
       # testkit runs in an app's tests, as they do.
       - path: ^testkit/
         linters: [errcheck]
@@ -103,17 +69,6 @@ linters:
       # failed write has no one to go to, as ResponseWriter.Write's;
       - linters: [errcheck]
         source: JSON\(w, status,
-      # bench/feed's wait for its jobs to stop at shutdown, which is what
-      # gantry new writes (TestBenchFeedIsANewApp): a Run that failed while
-      # the server ran is dropped there unseen, to change in the template;
-      - path: ^bench/feed/cmd/feed/main\.go$
-        linters: [errcheck]
-        source: <-jobsDone
-      # and a failed init's output, written to the CLI's error output, in a
-      # file open pull requests edit (#81, #83).
-      - path: ^cmd/gantry/new\.go$
-        linters: [errcheck]
-        text: errOut\.Write
       # web.Sent has no error to return a failed parse in (a form over its
       # limit, or a malformed one), so it reads what parsed. Returning it
       # changes Sent's signature and every generated controller: not yet.

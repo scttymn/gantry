@@ -77,11 +77,16 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 	both(queryAnswer, `   `)
 
 	both(func(q Querier, query string, args ...any) answer {
-		rows, err := q.QueryContext(t.Context(), query, args...)
-		if err != nil {
+		if err := func() error {
+			rows, err := q.QueryContext(t.Context(), query, args...)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			return rows.Err()
+		}(); err != nil {
 			return answer{Err: err.Error()}
 		}
-		rows.Close()
 		return queryAnswer(q, `SELECT count(*) FROM things WHERE name = 'asked'`)
 	}, `INSERT INTO things (name) VALUES ('asked') ON CONFLICT DO NOTHING`)
 
@@ -166,6 +171,9 @@ func TestSQLiteCCompileOptions(t *testing.T) {
 			var o string
 			rows.Scan(&o)
 			m[o] = true
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
 		}
 		return m
 	}

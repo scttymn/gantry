@@ -668,6 +668,120 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 `}), nil},
+
+		{"imperative JS timers", "js-timer", map[string]string{"assets/js/controllers/poll_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    setTimeout(() => this.refresh(), 500)
+    window.setInterval(() => this.refresh(), 2000)
+    globalThis.requestAnimationFrame(() => this.draw())
+    self.requestIdleCallback(() => this.warm())
+  }
+}
+`}, []string{"assets/js/controllers/poll_controller.js:5", "assets/js/controllers/poll_controller.js:6", "assets/js/controllers/poll_controller.js:7", "assets/js/controllers/poll_controller.js:8"}},
+		{"no imperative JS timers in comments, strings, methods or vendor", "js-timer", map[string]string{
+			"assets/js/controllers/clean_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    const note = "setTimeout(fn, 10)"
+    const tpl = ` + "`" + `requestAnimationFrame(draw)` + "`" + `
+    this.mySetTimeout(10)
+    scheduler.setInterval(10)
+    const re = /setTimeout\(/
+    return [note, tpl, re]
+  }
+}
+`,
+			"assets/js/vendor/lib.js": "setTimeout(() => {}, 10)\n",
+		}, nil},
+
+		{"raw DOM HTML sinks", "raw-dom-html", map[string]string{"assets/js/controllers/render_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  show(html) {
+    this.element.innerHTML = html
+    this.element.innerHTML += html
+    this.element.outerHTML = html
+    this.element.insertAdjacentHTML("beforeend", html)
+    document.write(html)
+    document.writeln(html)
+  }
+}
+`}, []string{"assets/js/controllers/render_controller.js:5", "assets/js/controllers/render_controller.js:6", "assets/js/controllers/render_controller.js:7", "assets/js/controllers/render_controller.js:8", "assets/js/controllers/render_controller.js:9", "assets/js/controllers/render_controller.js:10"}},
+		{"safe DOM updates and innerHTML reads", "raw-dom-html", map[string]string{
+			"assets/js/controllers/safe_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  show(text) {
+    this.element.textContent = text
+    const empty = this.element.innerHTML === ""
+    const same = this.element.outerHTML == ""
+    const literal = "el.innerHTML = x"
+    return [empty, same, literal]
+  }
+}
+`,
+			"assets/js/vendor/lib.js": "el.innerHTML = x\n",
+		}, nil},
+
+		{"Stimulus controller leaks global listeners", "stimulus-listener", map[string]string{
+			"assets/js/controllers/shortcut_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    document.addEventListener("keydown", this.onKey)
+    window.addEventListener("resize", this.onResize)
+  }
+}
+`,
+			"assets/js/controllers/empty_disconnect_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    window.addEventListener("scroll", this.onScroll)
+  }
+  disconnect() {
+    this.active = false
+  }
+}
+`,
+		}, []string{"assets/js/controllers/empty_disconnect_controller.js:5", "assets/js/controllers/shortcut_controller.js:5", "assets/js/controllers/shortcut_controller.js:6"}},
+		{"Stimulus controller cleans up global listeners", "stimulus-listener", map[string]string{
+			"assets/js/controllers/remove_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    document.addEventListener("keydown", this.onKey)
+  }
+  disconnect() {
+    document.removeEventListener("keydown", this.onKey)
+  }
+}
+`,
+			"assets/js/controllers/abort_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    this.ac = new AbortController()
+    window.addEventListener("resize", this.onResize, { signal: this.ac.signal })
+  }
+  disconnect() {
+    this.ac.abort()
+  }
+}
+`,
+			"assets/js/controllers/element_controller.js": `import { Controller } from "@hotwired/stimulus"
+
+export default class extends Controller {
+  connect() {
+    this.element.addEventListener("click", this.onClick)
+  }
+}
+`,
+			"assets/js/plain.js": "document.addEventListener(\"turbo:load\", () => {})\n",
+		}, nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()

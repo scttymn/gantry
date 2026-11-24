@@ -116,7 +116,9 @@ func TestClientLeaves(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/gone", nil)
 	go func() { time.Sleep(50 * time.Millisecond); cancel() }()
-	http.DefaultClient.Do(req)
+	if resp, err := http.DefaultClient.Do(req); err == nil {
+		resp.Body.Close()
+	}
 	select {
 	case <-stopped:
 	case <-time.After(5 * time.Second):

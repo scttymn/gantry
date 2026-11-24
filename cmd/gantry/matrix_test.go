@@ -157,12 +157,16 @@ func TestGeneratorMatrix(t *testing.T) {
 				}
 				for n, row := range a.rows {
 					name := rowName(row.args)
+					var after func(t *testing.T)
+					if engine == "sqlite" && i == 0 && n == len(a.rows)-1 {
+						after = func(t *testing.T) { lintApp(t, dir) }
+					}
 					ok := cell(name, func(t *testing.T) {
 						out := gantryAt(t, dir, start.Add(time.Duration(n+1)*time.Minute), row.args...)
 						if row.then != nil {
 							row.then(t, dir, out)
 						}
-					}, nil)
+					}, after)
 					if !ok {
 						return
 					}
@@ -214,6 +218,15 @@ func buildApp(t *testing.T, dir, engine string) {
 	var out strings.Builder
 	if err := generatedCheck(dir, &out); err != nil {
 		t.Errorf("check --generated: %v\n%s", err, out.String())
+	}
+}
+
+func lintApp(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("go", "run", "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@"+pins.GolangciLint, "run", "./...")
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("golangci-lint: %v\n%s", err, out)
 	}
 }
 

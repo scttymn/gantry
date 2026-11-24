@@ -40,7 +40,7 @@ type NewApp struct {
 	// the Houston release bin/gantry downloads
 	Houston string
 	// The versions and build flags gantry builds with (internal/pins).
-	Templ, Go, GolangImage, SqlcImage, PostgresImage, SQLiteCFlags, SQLiteTags string
+	Templ, Go, GolangciLint, GolangImage, SqlcImage, PostgresImage, SQLiteCFlags, SQLiteTags string
 	// With --gantry: the checkout, relative to the app (go.work and the dev
 	// container's mount), and where the container sees it.
 	GantryPath, GantryMount string
@@ -122,7 +122,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	}
 
 	a := NewApp{Name: name, Title: title(name), Module: o.module, Postgres: o.db == "postgres", Engine: "sqlite", Work: "/app",
-		Templ: pins.Templ, Go: pins.Go, GolangImage: pins.GolangImage, SqlcImage: pins.SqlcImage, PostgresImage: pins.PostgresImage,
+		Templ: pins.Templ, Go: pins.Go, GolangciLint: pins.GolangciLint, GolangImage: pins.GolangImage, SqlcImage: pins.SqlcImage, PostgresImage: pins.PostgresImage,
 		SQLiteCFlags: pins.SQLiteCFlags, SQLiteTags: pins.SQLiteTags}
 	if o.inModule {
 		if o.gantry != "" {
@@ -198,7 +198,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		if step[1] == "init" {
 			var output []byte
 			if output, err = runQuietlyIn(dir, step[0], step[1:]...); err != nil {
-				errOut.Write(output)
+				fmt.Fprint(errOut, string(output))
 			}
 		} else {
 			err = runIn(dir, step[0], step[1:]...)
@@ -223,6 +223,11 @@ func writeApp(dir string, a NewApp) error {
 			out = ".gitignore"
 		case "gantry-check.json":
 			out = ".gantry-check.json"
+		case "golangci.yml":
+			if a.InModule {
+				return nil
+			}
+			out = ".golangci.yml"
 		case "github/workflows/ci.yml":
 			if a.InModule {
 				return nil

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/scttymn/gantry/internal/pins"
 	"github.com/scttymn/gantry/testkit"
 	"gopkg.in/yaml.v3"
 )
@@ -161,6 +162,12 @@ func TestNewCI(t *testing.T) {
 		if want := []string{"check --strict", "check --generated", "test", "verify"}; !reflect.DeepEqual(runs, want) {
 			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
 		}
+		if want := "golangci-lint@" + pins.GolangciLint + " run ./..."; !strings.Contains(string(ci), want) {
+			t.Errorf("%s: ci.yml doesn't run %q:\n%s", engine, want, ci)
+		}
+		if _, err := os.Stat(filepath.Join(root, "shop", ".golangci.yml")); err != nil {
+			t.Errorf("%s: no .golangci.yml: %v", engine, err)
+		}
 		if strings.Contains(string(ci), "secrets.") || !strings.Contains(string(ci), "GH_TOKEN: ${{ github.token }}") {
 			t.Errorf("%s: its token isn't the job's own:\n%s", engine, ci)
 		}
@@ -169,8 +176,10 @@ func TestNewCI(t *testing.T) {
 	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
 		t.Fatal(stderr)
 	}
-	if _, err := os.Stat(filepath.Join(root, "apps", "control", ".github")); err == nil {
-		t.Error("an app in a module has a .github of its own")
+	for _, absent := range []string{".github", ".golangci.yml"} {
+		if _, err := os.Stat(filepath.Join(root, "apps", "control", absent)); err == nil {
+			t.Errorf("an app in a module has a %s of its own", absent)
+		}
 	}
 }
 

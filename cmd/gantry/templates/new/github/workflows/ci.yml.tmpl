@@ -32,5 +32,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: bin/gantry check --strict
       - run: bin/gantry check --generated
+      - name: golangci-lint
+        run: docker run --rm -v "$PWD:/app" -w /app {{.Name}}-toolchain go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@{{.GolangciLint}} run ./...
       - run: bin/gantry test
       - run: bin/gantry verify

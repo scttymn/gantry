@@ -213,13 +213,19 @@ func TestTimes(t *testing.T) {
 		d.Write.Exec(`INSERT INTO posts (id, title, created_at) VALUES (13, 'rails', '2026-09-27 15:30:01.500000')`)
 		d.Write.Exec(`INSERT INTO posts (id, title, created_at) VALUES (14, 'go', ?)`, at.Add(2*time.Second).Truncate(time.Second))
 		var ids []int
-		rows, _ := d.Read.Query(`SELECT id FROM posts WHERE id >= 10 ORDER BY created_at`)
+		rows, err := d.Read.Query(`SELECT id FROM posts WHERE id >= 10 ORDER BY created_at`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
 		for rows.Next() {
 			var id int
 			rows.Scan(&id)
 			ids = append(ids, id)
 		}
-		rows.Close()
+		if err := rows.Err(); err != nil {
+			t.Fatal(err)
+		}
 		if want := []int{10, 11, 12, 13, 14}; !equal(ids, want) {
 			t.Fatalf("order %v, want %v", ids, want)
 		}

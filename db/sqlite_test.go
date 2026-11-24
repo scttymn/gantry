@@ -76,14 +76,18 @@ func TestSQLiteCancelAfterAnswer(t *testing.T) {
 	}
 	defer conn.Close()
 	for range 50 {
-		qctx, cancel := context.WithCancel(ctx)
-		rows, err := conn.QueryContext(qctx, `SELECT i FROM n`)
-		if err != nil {
-			t.Fatal(err)
-		}
-		rows.Next()
-		cancel()
-		rows.Close()
+		func() {
+			qctx, cancel := context.WithCancel(ctx)
+			rows, err := conn.QueryContext(qctx, `SELECT i FROM n`)
+			if err != nil {
+				cancel()
+				t.Fatal(err)
+			}
+			defer rows.Close()
+			rows.Next()
+			cancel()
+			_ = rows.Err()
+		}()
 		var sum int
 		if err := conn.QueryRowContext(ctx, `SELECT sum(a.i * b.i) FROM n a, n b WHERE a.i < 300`).Scan(&sum); err != nil {
 			t.Fatalf("the next query, after another's context was done: %v", err)
@@ -97,8 +101,13 @@ func TestSQLiteReturningFailsAtClose(t *testing.T) {
 	mustExec(t, d, `CREATE TABLE children (id integer PRIMARY KEY, parent integer REFERENCES parents (id) DEFERRABLE INITIALLY DEFERRED)`)
 	rows, err := d.Query(`INSERT INTO children (parent) VALUES (7) RETURNING id`)
 	if err == nil {
+		defer rows.Close()
 		rows.Next()
-		err = rows.Close()
+		if closeErr := rows.Close(); closeErr != nil {
+			err = closeErr
+		} else {
+			err = rows.Err()
+		}
 	}
 	if err == nil || !strings.Contains(err.Error(), "FOREIGN KEY") {
 		t.Errorf("a child without its parent, its RETURNING row read and closed: %v", err)
