@@ -8,7 +8,7 @@ const (
 	// Go is go.mod's go line, which a new app's go.mod and go.work have too.
 	Go = "1.27.4"
 	// Templ is go.mod's templ, so an app generates with the one gantry builds with.
-	Templ = "v0.3.1020"
+	Templ = "v0.3.1118"
 	// GolangImage is the toolchain stage's base: gantry's (bin/go) and an app's.
 	// The images are tag@digest, the multi-arch index's: the digest is what's
 	// pulled. They're bumped by hand, with their copies (CONTRIBUTING.md).

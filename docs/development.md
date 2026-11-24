@@ -14,6 +14,13 @@ and so does a generated file whose `.templ` or `.sql` is gone. It runs the
 `templ` and `sqlc` on the machine, which should be the versions the app's
 Dockerfile installs: a file another version made is reported as such.
 
+Upgrading: this release builds with templ v0.3.1118, so an app's go.mod gets
+it too. Code an older templ made doesn't compile against it (it calls
+`templ.JoinURLErrs` and `templ.ResolveAttributeValue`, which are gone). Change
+the app's Dockerfile to `go install github.com/a-h/templ/cmd/templ@v0.3.1118`,
+then run `templ generate` and commit what it rewrites; `bin/gantry check
+--generated` names any file still made by the old one.
+
 The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
 built assets, Git metadata and test fixtures, and do not follow symlinks.
