@@ -80,7 +80,6 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 			all([]string{"Dockerfile", "cmd/gantry/templates/new/Dockerfile.tmpl"}, `postgresql-client-(\d+)`)},
 		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", append(
 			all(workflows, `image: (postgres:\S+)`),
-			handCopy{"internal/pins/Dockerfile", `(?m)^FROM (postgres:\S+)`},
 			handCopy{"bin/ci", `\b(postgres:\d+@sha256:[0-9a-f]+)`},
 		)},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
@@ -104,7 +103,7 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 }
 
 // An image is pinned by its digest, which is what's pulled; its tag is for
-// people and Dependabot. Go's image is go.mod's Go series.
+// people. Go's image is go.mod's Go series.
 func TestImagesArePinned(t *testing.T) {
 	pinned := regexp.MustCompile(`\A[\w./-]+:([\w.-]+)@sha256:[0-9a-f]{64}\z`)
 	for name, image := range map[string]string{"GolangImage": GolangImage, "SqlcImage": SqlcImage, "PostgresImage": PostgresImage} {
