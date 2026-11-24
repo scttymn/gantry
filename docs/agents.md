@@ -125,7 +125,10 @@ and `g resource admin/posts ...` one under any namespace. Its controllers share
 `app/shared/resource`, which the first resource writes and the app owns from
 then on. A namespaced resource is routed in its namespace's scope: give that
 scope the filter that guards it, such as `a.Auth.Required` from the `auth`
-recipe, since the generator can't know it.
+recipe, since the generator can't know it. A resource's edit form sends its
+row's `lock_version`, so it doesn't save over a change made while it was open;
+[Edit forms and lock_version](development.md#edit-forms-and-lock_version) says
+what the user sees then, and how to opt in a resource made before it.
 
 When the change needs migrations or regenerated queries/views, use the relevant
 steps in the app's container:

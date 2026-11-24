@@ -326,6 +326,74 @@ Copy a new app's `test/features.yaml` and `app/features_test.go`, then:
 
 `bin/gantry test` then lists the routes the map is missing.
 
+## Edit forms and lock_version
+
+A table that `g resource` or `g migration create_<table>` makes has a
+`lock_version` column, `integer NOT NULL DEFAULT 0` on both engines. A
+resource's edit form sends the row's `lock_version` in a hidden field, and
+`Update` compares it with the row's in the transaction that reads and writes
+the row. When they match, it saves the form and adds one to `lock_version`.
+When they don't, someone saved the record after the form was drawn: `Update`
+writes nothing, and answers 409 with the form again. The fields are what was
+sent, the hidden `lock_version` is the row's, and the form's errors say:
+
+> Someone else changed this record while you were editing. Review the current
+> values and submit again.
+
+Submitting that form again saves it. A form sent without `lock_version` gets
+the same answer.
+
+Upgrading: tables made before this release have no `lock_version`, and their
+resources' code doesn't use one. They're unchanged, and an edit form still
+saves over whatever was saved while it was open. A resource that `g resource`
+makes in an older app has the column and the check. To opt an existing
+resource in:
+
+1. `g migration add_lock_version_to_<table>` writes an empty migration. Write
+   in it, for either engine:
+
+   ```sql
+   -- +goose Up
+   ALTER TABLE "posts" ADD COLUMN "lock_version" integer NOT NULL DEFAULT 0;
+
+   -- +goose Down
+   ALTER TABLE "posts" DROP COLUMN "lock_version";
+   ```
+
+2. In `app/models/<table>.sql`, the `Update…` query sets
+   `lock_version = lock_version + 1` beside `updated_at`.
+3. In the resource's `controller.go`, as a resource generated now has them:
+   `editFields`, which is `fields` and
+   `resource.F("lock_version", resource.Type("hidden"))`, as the form's
+   fields when it edits a row; `"lock_version"` in `formValues`; and in
+   `Update`, the comparison with the row's `lock_version` and the 409 before
+   it saves.
+4. `bin/gantry db migrate`, then `bin/gantry exec sqlc generate` and
+   `bin/gantry exec templ generate`.
+
+Generating the resource again instead still means moving its files aside
+first, and `g resource` then writes a `create_<table>` migration too: delete
+it, since the table is there.
+
+An app's `app/shared/resource/pages.templ` is its own, and `g resource` keeps
+it. One from before this release draws the hidden field with its label, "Lock
+version", and nothing beside it. The form still works. For no label, make its
+`input` draw a hidden field alone:
+
+```templ
+templ input(f Form, field Field) {
+	if field.Type == "hidden" {
+		<input type="hidden" name={ f.Param + "[" + field.Name + "]" } value={ f.Values[field.Name] }/>
+	} else {
+		<p>
+			…the label and the field, as before…
+		</p>
+	}
+}
+```
+
+Or move `pages.templ` aside: the next `g resource` writes the new one.
+
 ## Browser warnings
 
 Gantry's router automatically injects a full-width bottom warnings panel when
