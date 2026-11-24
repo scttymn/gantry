@@ -161,6 +161,11 @@ pattern when it applies. Review advisory findings even though they do not fail
 strict mode. Do not hide findings by disabling the panel or moving code beyond
 the scanner's reach.
 
+Write no comments: an app has none, tests included, and `comments` fails
+`check --strict` on any but a tool's directives (`//go:`, sqlc's `-- name:`,
+goose's `-- +goose`). Put the intent in a name, a type or a test. If a
+comment would explain a workaround, fix what made it necessary instead.
+
 With Gantry's router, `GANTRY_ENV=development` automatically enables the browser
 panel and request timing. Do not add a panel component to the app's views or
 install duplicate middleware. The panel is full-width at the bottom, starts
