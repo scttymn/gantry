@@ -3,23 +3,33 @@
 # multi-arch JRE container and a SHA-256-verified tla2tools.jar cached in
 # Gantry's shared cache directory.
 #
-#   bin/tlc          model-check every spec/*.tla
-#   bin/tlc --list   name them, one a line
+#   bin/tlc               model-check every spec/*.tla
+#   bin/tlc SPEC...       model-check only the named spec/*.tla files
+#   bin/tlc --list        name them, one a line
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 list=
-case "${1:-}" in
-	"") ;;
-	--list) list=1 ;;
-	*) echo "usage: bin/tlc [--list]" >&2; exit 2 ;;
-esac
-
 specs=()
-for spec in spec/*.tla; do
-	[ -f "$spec" ] || continue
-	specs+=("$spec")
-done
+if [ "${1:-}" = "--list" ]; then
+	[ $# -eq 1 ] || { echo "usage: bin/tlc [--list | SPEC...]" >&2; exit 2; }
+	list=1
+elif [ $# -gt 0 ]; then
+	for arg in "$@"; do
+		case "$arg" in
+			-*) echo "usage: bin/tlc [--list | SPEC...]" >&2; exit 2 ;;
+		esac
+		[ -f "$arg" ] || { echo "bin/tlc: spec not found: $arg" >&2; exit 1; }
+		specs+=("$arg")
+	done
+fi
+
+if [ "${#specs[@]}" -eq 0 ]; then
+	for spec in spec/*.tla; do
+		[ -f "$spec" ] || continue
+		specs+=("$spec")
+	done
+fi
 [ "${#specs[@]}" -gt 0 ] || { echo "bin/tlc: no spec/*.tla files found" >&2; exit 1; }
 
 if [ -n "$list" ]; then

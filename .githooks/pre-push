@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Before a push, the ci workflow's checks on this machine (bin/ci): a push
-# that would fail CI doesn't leave it. Once per clone:
+# Before a push, runs targeted checks (bin/ci --changed) against the remote
+# branch or origin/main so small edits verify quickly, falling back to full
+# bin/ci when pushing main directly, with no base ref, or with GANTRY_CI_FULL=1.
+# Once per clone:
 #   git config core.hooksPath .githooks
 # bin/ci checks the checkout, so the commit pushed must be HEAD, with nothing
 # in the tree that isn't in it (TestPrePushHook).
@@ -9,13 +11,17 @@ cd "$(git rev-parse --show-toplevel)"
 
 head=$(git rev-parse HEAD)
 pushes=
-while read -r _ local_sha _ _; do
+base=
+while read -r _ local_sha _ remote_sha; do
 	case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a ref
 	pushes=1
 	if [ "$(git rev-parse "$local_sha^{commit}")" != "$head" ]; then
 		echo "pre-push: bin/ci checks the checkout, and $local_sha isn't HEAD: check it out, then push" >&2
 		exit 1
 	fi
+	case $remote_sha in
+		*[!0]*) [ -n "$base" ] || base=$remote_sha ;;
+	esac
 done
 [ -n "$pushes" ] || exit 0
 if [ -n "$(git status --porcelain)" ]; then
@@ -24,4 +30,16 @@ if [ -n "$(git status --porcelain)" ]; then
 	exit 1
 fi
 
+if [ "${GANTRY_CI_FULL:-}" = 1 ]; then
+	exec bin/ci </dev/null
+fi
+if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+	exec bin/ci --changed "$base" </dev/null
+fi
+if git rev-parse --verify -q origin/main >/dev/null 2>&1 && [ "$(git rev-parse origin/main)" != "$head" ]; then
+	exec bin/ci --changed origin/main </dev/null
+fi
+if git rev-parse --verify -q main >/dev/null 2>&1 && [ "$(git rev-parse main)" != "$head" ]; then
+	exec bin/ci --changed main </dev/null
+fi
 exec bin/ci </dev/null

@@ -58,7 +58,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"vulnerabilities' check": `jq -rs ('[^']+')`,
 		"shellcheck's script":    `bin/shellcheck`,
 		"TLA+ script":            `bin/tlc`,
-		"fuzz target":            `-fuzz=(\^Fuzz\w+\$)`,
+		"ciplan command":         `./internal/ciplan/cmd/ciplan`,
 	} {
 		found := regexp.MustCompile(re).FindAllStringSubmatch(workflow, -1)
 		if len(found) == 0 {
@@ -325,7 +325,7 @@ func TestPrePushHook(t *testing.T) {
 		t.Fatal(err)
 	}
 	ran := filepath.Join(t.TempDir(), "ran")
-	if err := os.WriteFile(filepath.Join(repo, "bin/ci"), []byte("#!/bin/sh\ntouch \""+ran+"\"\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(repo, "bin/ci"), []byte("#!/bin/sh\nprintf '%s\\n' \"$*\" >\""+ran+"\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	git("add", ".")
@@ -335,27 +335,29 @@ func TestPrePushHook(t *testing.T) {
 	head := git("rev-parse", "HEAD")
 	zero := strings.Repeat("0", len(head))
 
-	push := func(t *testing.T, lines string) (string, bool, error) {
+	push := func(t *testing.T, lines string) (string, string, bool, error) {
 		t.Helper()
 		os.Remove(ran)
 		cmd := exec.Command(hook, "origin", "url")
 		cmd.Dir = repo
 		cmd.Stdin = strings.NewReader(lines)
 		out, err := cmd.CombinedOutput()
-		_, statErr := os.Stat(ran)
-		return string(out), statErr == nil, err
+		args, readErr := os.ReadFile(ran)
+		return string(out), strings.TrimSpace(string(args)), readErr == nil, err
 	}
 	for _, c := range []struct {
-		name   string
-		dirty  bool
-		lines  string
-		passes bool
-		runs   bool
+		name     string
+		dirty    bool
+		lines    string
+		passes   bool
+		runs     bool
+		wantArgs string
 	}{
-		{"HEAD, clean: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", true, true},
-		{"deletes only: nothing to check", true, "(delete) " + zero + " refs/heads/gone " + head + "\n", true, false},
-		{"another commit: refused", false, "refs/heads/old " + first + " refs/heads/old " + zero + "\n", false, false},
-		{"changes in the tree: refused", true, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", false, false},
+		{"HEAD, clean: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", true, true, ""},
+		{"HEAD, incremental remote base: bin/ci --changed", false, "refs/heads/feat " + head + " refs/heads/feat " + first + "\n", true, true, "--changed " + first},
+		{"deletes only: nothing to check", true, "(delete) " + zero + " refs/heads/gone " + head + "\n", true, false, ""},
+		{"another commit: refused", false, "refs/heads/old " + first + " refs/heads/old " + zero + "\n", false, false, ""},
+		{"changes in the tree: refused", true, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", false, false, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			untracked := filepath.Join(repo, "stray.go")
@@ -365,9 +367,9 @@ func TestPrePushHook(t *testing.T) {
 				}
 				defer os.Remove(untracked)
 			}
-			out, runs, err := push(t, c.lines)
-			if (err == nil) != c.passes || runs != c.runs {
-				t.Errorf("hook: err %v, ran bin/ci %v; want passes %v, runs %v\n%s", err, runs, c.passes, c.runs, out)
+			out, gotArgs, runs, err := push(t, c.lines)
+			if (err == nil) != c.passes || runs != c.runs || (c.runs && gotArgs != c.wantArgs) {
+				t.Errorf("hook: err %v, ran bin/ci %v (args %q); want passes %v, runs %v, args %q\n%s", err, runs, gotArgs, c.passes, c.runs, c.wantArgs, out)
 			}
 		})
 	}

@@ -93,10 +93,17 @@ boundaries (#33) alongside `errcheck`, `bodyclose`, `rowserrcheck`,
 file, the linter and why, in `.golangci.yml` or a `//nolint:<linter> // why`.
 
 `bin/ci` runs those checks here, step by step under the workflow's names, and
-stops at the first that fails; `bin/ci --fast` leaves out the race detector and
-the release's build. Its Postgres is `GANTRY_TEST_POSTGRES_URL`'s, or a
-throwaway `postgres:17` it removes when it's done; with neither, it says loudly
-that the Postgres tests skipped. Go's caches are one for every checkout
+stops at the first that fails. `bin/ci --changed [BASE]` (defaulting to
+`origin/main`) uses `internal/ciplan` to compute the reverse-importer closure of
+changed Go packages and run only the affected tests, cgo pass, race detector,
+linters, TLA+ specs, fuzz targets, shell scripts, bench modules and release
+build; `bin/ci --fast` leaves out the race detector and the release's build (and
+combines with `--changed`). Pull requests in `.github/workflows/ci.yml` use the
+same planner so every required check still reports while skipping unaffected
+work; pushes to `main` always run the full suite. Its Postgres is
+`GANTRY_TEST_POSTGRES_URL`'s, or a throwaway `postgres:17` it removes when it's
+done (skipped when no affected test needs Postgres); with neither, it says
+loudly that the Postgres tests skipped. Go's caches are one for every checkout
 (`~/Library/Caches/gantry` on macOS, `~/.cache/gantry` elsewhere), cleaned once
 the build cache passes 5 GB, though never while another checkout's `bin/ci`
 is running (a clean under a build takes its files), and `bin/ci` won't start
@@ -108,8 +115,9 @@ Have every push run it first, once per clone:
 git config core.hooksPath .githooks
 ```
 
-The hook (`.githooks/pre-push`) runs `bin/ci` and blocks the push when it
-fails. `bin/ci` checks the checkout, so the hook refuses a push of any commit
+The hook (`.githooks/pre-push`) runs `bin/ci --changed` against the remote
+branch's commit or `origin/main` (or full `bin/ci` when pushing `main`, with no
+base ref, or with `GANTRY_CI_FULL=1`) and blocks the push when it fails. `bin/ci` checks the checkout, so the hook refuses a push of any commit
 but `HEAD`, or from a tree with changes or untracked files; a push that only
 deletes refs skips it.
 `TestBinCIRunsTheCIWorkflow` fails when `ci.yml` has a step, tool version or

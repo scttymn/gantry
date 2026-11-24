@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # The ci workflow's checks, on this machine: what a pull request runs, step by
 # step, under its steps' names (TestBinCIRunsTheCIWorkflow holds the two the
-# same). The pre-push hook (.githooks/pre-push) runs it.
+# same). The pre-push hook (.githooks/pre-push) runs it in --changed mode.
 #
-#   bin/ci           every step, as CI runs them
-#   bin/ci --fast    without the race detector and the release's build
+#   bin/ci                    every step, as main's CI runs them
+#   bin/ci --changed [BASE]   only checks affected by changes since BASE (default origin/main)
+#   bin/ci --fast             without the race detector and the release's build
 #
 # Tests on Postgres get GANTRY_TEST_POSTGRES_URL's server, or a throwaway
 # postgres:17 of their own; with neither they skip, and say so. Go's caches are
@@ -14,11 +15,22 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 fast=
-case "${1:-}" in
-	"") ;;
-	--fast) fast=1 ;;
-	*) echo "usage: bin/ci [--fast]" >&2; exit 2 ;;
-esac
+changed=
+base=
+while [ $# -gt 0 ]; do
+	case "$1" in
+		--fast) fast=1; shift ;;
+		--changed)
+			changed=1
+			shift
+			if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
+				base=$1
+				shift
+			fi
+			;;
+		*) echo "usage: bin/ci [--fast] [--changed [BASE]]" >&2; exit 2 ;;
+	esac
+done
 
 step() { printf '\n=== %s\n' "$1"; }
 
@@ -57,6 +69,34 @@ cleanup() {
 	rm -f "${runs:?}/$$"
 }
 trap cleanup EXIT
+
+if [ -n "$changed" ]; then
+	if [ -z "$base" ]; then
+		if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
+			base=origin/main
+		elif git rev-parse --verify -q main >/dev/null 2>&1; then
+			base=main
+		fi
+	fi
+	changed_files=()
+	if [ -n "$base" ] && git rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1; then
+		while IFS= read -r f; do
+			[ -n "$f" ] && changed_files+=("$f")
+		done < <({
+			git diff --name-only "$base...HEAD"
+			git diff --name-only --cached
+			git diff --name-only
+			git ls-files --others --exclude-standard
+		} | sort -u)
+	else
+		echo "bin/ci --changed: base ref '${base:-origin/main}' not found; running full checks" >&2
+		changed=
+	fi
+	if [ -n "$changed" ] && [ "${#changed_files[@]}" -eq 0 ]; then
+		printf 'bin/ci --changed: no changed files since %s\n' "$base"
+		exit 0
+	fi
+fi
 
 # The image this build made, by the ID it prints: a tag is every checkout's,
 # and another's build moves it under this one's tests.
@@ -100,29 +140,83 @@ if [ -d "$cache/build" ] && [ "$(du -sk "$cache/build" | cut -f1)" -gt $((5 * 10
 fi
 rm -rf "$lock"
 
-url=${GANTRY_TEST_POSTGRES_URL:-}
-if [ -z "$url" ] && timeout 30 docker network create "gantry-ci-$$" >/dev/null &&
-	timeout 300 docker run -d --name "$postgres" --network "gantry-ci-$$" -e POSTGRES_PASSWORD=gantry-tests \
-		postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf >/dev/null; then
-	for _ in $(seq 60); do
-		if timeout 10 docker exec "$postgres" pg_isready -q -U postgres -h 127.0.0.1 2>/dev/null; then
-			network=gantry-ci-$$ url="postgres://postgres:gantry-tests@$postgres:5432/postgres?sslmode=disable"
-			break
-		fi
-		sleep 1
-	done
-fi
-if [ -z "$url" ]; then
-	timeout 10 docker logs --tail 20 "$postgres" >&2 2>/dev/null || true
-	if [ "${GITHUB_ACTIONS:-}" = true ]; then
-		echo "bin/ci: no Postgres, and in GitHub Actions the Postgres tests must run" >&2
-		exit 1
+step "Plan"
+PLAN_ANY=1
+PLAN_FULL=1
+PLAN_NEED_TIDY=1
+PLAN_NEED_POSTGRES=1
+PLAN_NEED_CGO=1
+PLAN_NEED_RACE=1
+PLAN_NEED_VET=1
+PLAN_NEED_FMT=1
+PLAN_NEED_LINT=1
+PLAN_NEED_LINT_CGO=1
+PLAN_NEED_VULN=1
+PLAN_NEED_RELEASE=1
+PLAN_DOC_GANTRY_TEST=
+PLAN_STRICT_CHECK=
+PLAN_PACKAGES=("./...")
+PLAN_LINT_PACKAGES=("./...")
+PLAN_BENCH_MODULES=("bench" "bench/feed")
+PLAN_SHELL_SCRIPTS=()
+PLAN_TLA_SPECS=()
+PLAN_FUZZ_TARGETS=(
+	"./sign|^FuzzSignVerify$"
+	"./web|^FuzzSent$"
+	"./web|^FuzzProxies$"
+	"./web|^FuzzPageCache$"
+	"./images|^FuzzDimensionsAndResize$"
+	"./devcheck|^FuzzJSAndHTMLRules$"
+	"./internal/featuremap|^FuzzCovers$"
+)
+if [ -n "$changed" ]; then
+	plan_sh=$(printf '%s\n' "${changed_files[@]}" | toolchain -i -- go run ./internal/ciplan/cmd/ciplan -format sh)
+	eval "$plan_sh"
+	printf 'changed vs %s: packages=[%s] cgo=%s postgres=%s race=%s lint=%s tla=[%s] fuzz=%d scripts=%d bench=[%s] release=%s\n' \
+		"$base" \
+		"${PLAN_PACKAGES[*]-}" \
+		"${PLAN_NEED_CGO:-0}" \
+		"${PLAN_NEED_POSTGRES:-0}" \
+		"${PLAN_NEED_RACE:-0}" \
+		"${PLAN_NEED_LINT:-0}" \
+		"${PLAN_TLA_SPECS[*]-}" \
+		"${#PLAN_FUZZ_TARGETS[@]}" \
+		"${#PLAN_SHELL_SCRIPTS[@]}" \
+		"${PLAN_BENCH_MODULES[*]-}" \
+		"${PLAN_NEED_RELEASE:-0}"
+	if [ -z "$PLAN_ANY" ]; then
+		printf '\nbin/ci --changed: no CI checks affected since %s\n' "$base"
+		exit 0
 	fi
-	# Under CI, internal/testenv fails a test that has no Postgres: here it skips.
-	ci=
-	printf '\n%s\n%s\n%s\n\n' "!!!!!!!!" \
-		"!!! bin/ci: NO POSTGRES. GANTRY_TEST_POSTGRES_URL isn't set and a throwaway postgres:17 didn't start: the Postgres tests SKIP. CI runs them." \
-		"!!!!!!!!" >&2
+else
+	echo "full run (all packages and checks)"
+fi
+
+url=${GANTRY_TEST_POSTGRES_URL:-}
+if [ -n "$PLAN_NEED_POSTGRES" ]; then
+	if [ -z "$url" ] && timeout 30 docker network create "gantry-ci-$$" >/dev/null &&
+		timeout 300 docker run -d --name "$postgres" --network "gantry-ci-$$" -e POSTGRES_PASSWORD=gantry-tests \
+			postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf >/dev/null; then
+		for _ in $(seq 60); do
+			if timeout 10 docker exec "$postgres" pg_isready -q -U postgres -h 127.0.0.1 2>/dev/null; then
+				network=gantry-ci-$$ url="postgres://postgres:gantry-tests@$postgres:5432/postgres?sslmode=disable"
+				break
+			fi
+			sleep 1
+		done
+	fi
+	if [ -z "$url" ]; then
+		timeout 10 docker logs --tail 20 "$postgres" >&2 2>/dev/null || true
+		if [ "${GITHUB_ACTIONS:-}" = true ]; then
+			echo "bin/ci: no Postgres, and in GitHub Actions the Postgres tests must run" >&2
+			exit 1
+		fi
+		# Under CI, internal/testenv fails a test that has no Postgres: here it skips.
+		ci=
+		printf '\n%s\n%s\n%s\n\n' "!!!!!!!!" \
+			"!!! bin/ci: NO POSTGRES. GANTRY_TEST_POSTGRES_URL isn't set and a throwaway postgres:17 didn't start: the Postgres tests SKIP. CI runs them." \
+			"!!!!!!!!" >&2
+	fi
 fi
 db=(--network "$network" -e GANTRY_TEST_POSTGRES_URL="$url")
 
@@ -133,80 +227,147 @@ static=(-ldflags "-linkmode external -extldflags -static")
 golangci=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
-step "Modules tidy"
-for module in . bench bench/feed bench/sqlite3way; do
-	GANTRY_DIR=$module toolchain -- go mod tidy -diff ||
-		{ echo "$module isn't tidy: run go mod tidy there (GANTRY_DIR=$module bin/go go mod tidy) and commit its go.mod and go.sum"; exit 1; }
-done
-
-step "Go tests"
-toolchain "${db[@]}" -- go test ./...
-echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
-toolchain "${db[@]}" "${cgo[@]}" -- go test "$tags" "${static[@]}" ./...
-
-if [ -z "$fast" ]; then
-	step "Race detector, on the app's build"
-	toolchain "${db[@]}" "${cgo[@]}" -- go test -race "$tags" "${static[@]}" ./...
+if [ -n "$PLAN_NEED_TIDY" ]; then
+	step "Modules tidy"
+	for module in . bench bench/feed bench/sqlite3way; do
+		GANTRY_DIR=$module toolchain -- go mod tidy -diff ||
+			{ echo "$module isn't tidy: run go mod tidy there (GANTRY_DIR=$module bin/go go mod tidy) and commit its go.mod and go.sum"; exit 1; }
+	done
 fi
 
-step "go vet"
-toolchain -- go vet ./...
+if [ "${#PLAN_PACKAGES[@]}" -gt 0 ] || [ -n "$PLAN_DOC_GANTRY_TEST" ] || [ -n "$PLAN_STRICT_CHECK" ]; then
+	step "Go tests"
+	if [ "${#PLAN_PACKAGES[@]}" -gt 0 ]; then
+		toolchain "${db[@]}" -- go test "${PLAN_PACKAGES[@]}"
+	fi
+	if [ -n "$PLAN_DOC_GANTRY_TEST" ]; then
+		toolchain -- go test -run '^(TestDocsCommands|TestDocsCodeSpansCloseOnTheirLine)$' ./cmd/gantry
+	fi
+	if [ -n "$PLAN_STRICT_CHECK" ]; then
+		toolchain -- go test -run '^TestGantryPassesStrict$' ./devcheck
+	fi
+	if [ -n "$PLAN_NEED_CGO" ] && [ "${#PLAN_PACKAGES[@]}" -gt 0 ]; then
+		echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
+		toolchain "${db[@]}" "${cgo[@]}" -- go test "$tags" "${static[@]}" "${PLAN_PACKAGES[@]}"
+	fi
+fi
 
-step "gofmt"
-unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
-[ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+if [ -z "$fast" ] && [ -n "$PLAN_NEED_RACE" ] && [ "${#PLAN_PACKAGES[@]}" -gt 0 ]; then
+	step "Race detector, on the app's build"
+	toolchain "${db[@]}" "${cgo[@]}" -- go test -race "$tags" "${static[@]}" "${PLAN_PACKAGES[@]}"
+fi
 
-step "shellcheck"
-bin/shellcheck
+if [ -n "$PLAN_NEED_VET" ] && [ "${#PLAN_LINT_PACKAGES[@]}" -gt 0 ]; then
+	step "go vet"
+	toolchain -- go vet "${PLAN_LINT_PACKAGES[@]}"
+fi
 
-step "TLA+ specs"
-bin/tlc
+if [ -n "$PLAN_NEED_FMT" ]; then
+	step "gofmt"
+	unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
+	[ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
+fi
 
-step "Fuzz smoke"
-toolchain -- sh -c 'go test -fuzz=^FuzzSignVerify$ -fuzztime=1s ./sign && go test -fuzz=^FuzzSent$ -fuzztime=1s ./web && go test -fuzz=^FuzzProxies$ -fuzztime=1s ./web && go test -fuzz=^FuzzPageCache$ -fuzztime=1s ./web && go test -fuzz=^FuzzDimensionsAndResize$ -fuzztime=1s ./images && go test -fuzz=^FuzzJSAndHTMLRules$ -fuzztime=1s ./devcheck && go test -fuzz=^FuzzCovers$ -fuzztime=1s ./internal/featuremap'
+if [ -n "$PLAN_FULL" ] || [ "${#PLAN_SHELL_SCRIPTS[@]}" -gt 0 ]; then
+	step "shellcheck"
+	if [ -n "$PLAN_FULL" ]; then
+		bin/shellcheck
+	else
+		bin/shellcheck "${PLAN_SHELL_SCRIPTS[@]}"
+	fi
+fi
 
-step "golangci-lint"
-toolchain -- go run "$golangci" run ./...
-GANTRY_DIR=bench toolchain -- go run "$golangci" run ./...
-GANTRY_DIR=bench/feed toolchain -- go run "$golangci" run ./...
+if [ -n "$PLAN_FULL" ] || [ "${#PLAN_TLA_SPECS[@]}" -gt 0 ]; then
+	step "TLA+ specs"
+	if [ -n "$PLAN_FULL" ]; then
+		bin/tlc
+	else
+		bin/tlc "${PLAN_TLA_SPECS[@]}"
+	fi
+fi
 
-step "go vet and golangci-lint, on the app's build"
-toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ./... && go run $golangci run ./..."
+if [ "${#PLAN_FUZZ_TARGETS[@]}" -gt 0 ]; then
+	step "Fuzz smoke"
+	fuzz_cmd=
+	for target in "${PLAN_FUZZ_TARGETS[@]}"; do
+		pkg=${target%%|*}
+		name=${target#*|}
+		part="go test -fuzz=$name -fuzztime=1s $pkg"
+		if [ -z "$fuzz_cmd" ]; then
+			fuzz_cmd=$part
+		else
+			fuzz_cmd="$fuzz_cmd && $part"
+		fi
+	done
+	toolchain -- sh -c "$fuzz_cmd"
+fi
 
-step "govulncheck"
-toolchain -- go run "$govulncheck" -format json ./... >"$tmp/vulns.json"
-toolchain "${cgo[@]}" -- go run "$govulncheck" -format json "$tags" ./... >>"$tmp/vulns.json"
-reached=$(jq -rs '[.[].finding | select(.trace[0].function) | .osv] | unique[]' "$tmp/vulns.json")
-echo "reached: ${reached:-none}"
-[ -z "$reached" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $reached"; exit 1; }
+if [ -n "$PLAN_NEED_LINT" ]; then
+	step "golangci-lint"
+	if [ "${#PLAN_LINT_PACKAGES[@]}" -gt 0 ]; then
+		toolchain -- go run "$golangci" run "${PLAN_LINT_PACKAGES[@]}"
+	fi
+	case " ${PLAN_BENCH_MODULES[*]-} " in
+		*" bench "*) GANTRY_DIR=bench toolchain -- go run "$golangci" run ./... ;;
+	esac
+	case " ${PLAN_BENCH_MODULES[*]-} " in
+		*" bench/feed "*) GANTRY_DIR=bench/feed toolchain -- go run "$golangci" run ./... ;;
+	esac
+fi
 
-step "The bench modules' tests"
-GANTRY_DIR=bench toolchain -- go test ./...
-GANTRY_DIR=bench/feed toolchain -- go test ./...
+if [ -n "$PLAN_NEED_LINT_CGO" ] && [ "${#PLAN_LINT_PACKAGES[@]}" -gt 0 ]; then
+	step "go vet and golangci-lint, on the app's build"
+	toolchain "${cgo[@]}" -e GOFLAGS="-buildvcs=false $tags" -- sh -c "go vet ${PLAN_LINT_PACKAGES[*]} && go run $golangci run ${PLAN_LINT_PACKAGES[*]}"
+fi
+
+if [ -n "$PLAN_NEED_VULN" ]; then
+	step "govulncheck"
+	toolchain -- go run "$govulncheck" -format json ./... >"$tmp/vulns.json"
+	toolchain "${cgo[@]}" -- go run "$govulncheck" -format json "$tags" ./... >>"$tmp/vulns.json"
+	reached=$(jq -rs '[.[].finding | select(.trace[0].function) | .osv] | unique[]' "$tmp/vulns.json")
+	echo "reached: ${reached:-none}"
+	[ -z "$reached" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $reached"; exit 1; }
+fi
+
+if [ "${#PLAN_BENCH_MODULES[@]}" -gt 0 ]; then
+	step "The bench modules' tests"
+	case " ${PLAN_BENCH_MODULES[*]-} " in
+		*" bench "*) GANTRY_DIR=bench toolchain -- go test ./... ;;
+	esac
+	case " ${PLAN_BENCH_MODULES[*]-} " in
+		*" bench/feed "*) GANTRY_DIR=bench/feed toolchain -- go test ./... ;;
+	esac
+fi
 
 if [ -n "$fast" ]; then
 	printf '\nbin/ci --fast: passed, without the race detector and the release build\n'
 	exit
 fi
 
-version=v99.99.99
-step "CLI binaries"
-timeout 1200 docker build --build-arg VERSION="$version" --target release --output type=local,dest="$tmp/dist" .
-# This machine's binary: the workflow runs linux-amd64, its runner's.
-os=$(uname -s | tr '[:upper:]' '[:lower:]')
-case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
-gantry="$tmp/dist/gantry-$os-$arch"
+if [ -n "$PLAN_NEED_RELEASE" ]; then
+	version=v99.99.99
+	step "CLI binaries"
+	timeout 1200 docker build --build-arg VERSION="$version" --target release --output type=local,dest="$tmp/dist" .
+	# This machine's binary: the workflow runs linux-amd64, its runner's.
+	os=$(uname -s | tr '[:upper:]' '[:lower:]')
+	case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; *) arch=amd64 ;; esac
+	gantry="$tmp/dist/gantry-$os-$arch"
 
-step "The binary's new app requires its release"
-mkdir "$tmp/probe"
-(cd "$tmp/probe" && "$gantry" new probe --skip-houston)
-grep -qx "	github.com/scttymn/gantry $version" "$tmp/probe/probe/go.mod" ||
-	{ echo "a new app's go.mod doesn't require $version:"; cat "$tmp/probe/probe/go.mod"; exit 1; }
+	step "The binary's new app requires its release"
+	mkdir "$tmp/probe"
+	(cd "$tmp/probe" && "$gantry" new probe --skip-houston)
+	grep -qx "	github.com/scttymn/gantry $version" "$tmp/probe/probe/go.mod" ||
+		{ echo "a new app's go.mod doesn't require $version:"; cat "$tmp/probe/probe/go.mod"; exit 1; }
 
-step "The binary pins its Houston release's digests"
-houston=$("$gantry" houston-release)
-published=$(curl -fsSL --proto =https --retry 3 --max-time 120 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
-pinned=$("$gantry" houston-release --sha256)
-[ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
+	step "The binary pins its Houston release's digests"
+	houston=$("$gantry" houston-release)
+	published=$(curl -fsSL --proto =https --retry 3 --max-time 120 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')
+	pinned=$("$gantry" houston-release --sha256)
+	[ "$pinned" = "$published" ] || { echo "houstonSHA256SUMS (cmd/gantry/new.go) isn't Houston $houston's SHA256SUMS:"; diff <(echo "$pinned") <(echo "$published"); exit 1; }
+fi
 
-printf '\nbin/ci: passed\n'
+if [ -n "$changed" ]; then
+	printf '\nbin/ci --changed: passed\n'
+else
+	printf '\nbin/ci: passed\n'
+fi

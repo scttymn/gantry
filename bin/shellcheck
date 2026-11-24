@@ -6,30 +6,47 @@
 # (TestEveryScriptIsShellchecked).
 #
 #   bin/shellcheck          check them
+#   bin/shellcheck FILE...  check only the named tracked shell scripts
 #   bin/shellcheck --list   name them, one a line
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 list=
-case "${1:-}" in
-	"") ;;
-	--list) list=1 ;;
-	*) echo "usage: bin/shellcheck [--list]" >&2; exit 2 ;;
-esac
+targets=()
+if [ "${1:-}" = "--list" ]; then
+	[ $# -eq 1 ] || { echo "usage: bin/shellcheck [--list | FILE...]" >&2; exit 2; }
+	list=1
+elif [ $# -gt 0 ]; then
+	for arg in "$@"; do
+		case "$arg" in
+			-*) echo "usage: bin/shellcheck [--list | FILE...]" >&2; exit 2 ;;
+		esac
+		targets+=("$arg")
+	done
+fi
 
 shell='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
-scripts=()
-while IFS= read -r -d '' file; do
-	[ -f "$file" ] || continue
+is_shell() {
+	local file=$1 name first=
+	[ -f "$file" ] || return 1
 	name=${file%.golden}
 	name=${name%.tmpl}
-	first=
 	IFS= read -r first <"$file" || true
-	if [[ $name == *.sh || $name == *.bash || $first =~ $shell ]]; then
-		scripts+=("$file")
-	fi
-done < <(git ls-files -z)
-[ "${#scripts[@]}" -gt 0 ] || { echo "bin/shellcheck: git tracks no shell scripts here (git ls-files)" >&2; exit 1; }
+	[[ $name == *.sh || $name == *.bash || $first =~ $shell ]]
+}
+
+scripts=()
+if [ "${#targets[@]}" -gt 0 ]; then
+	for file in "${targets[@]}"; do
+		is_shell "$file" && scripts+=("$file")
+	done
+	[ "${#scripts[@]}" -gt 0 ] || exit 0
+else
+	while IFS= read -r -d '' file; do
+		is_shell "$file" && scripts+=("$file")
+	done < <(git ls-files -z)
+	[ "${#scripts[@]}" -gt 0 ] || { echo "bin/shellcheck: git tracks no shell scripts here (git ls-files)" >&2; exit 1; }
+fi
 
 if [ -n "$list" ]; then
 	printf '%s\n' "${scripts[@]}"
