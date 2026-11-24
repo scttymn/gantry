@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -31,9 +32,12 @@ type Warning struct {
 // Rule owns one convention. Check reads source and reports zero-based byte
 // offsets. It must not mutate files or access the network. An empty report
 // message uses Guidance. Rules run sequentially; their ordering is not a dependency.
+// A rule reads _test.go files only when Tests is set, and .gantry-check.json
+// can't silence a rule with NoExceptions: an exception for it fails the scan.
 type Rule struct {
 	ID, Severity, Purpose, Guidance string
 	Extensions                      []string
+	Tests, NoExceptions             bool
 	Check                           func(*Source, func(offset int, message string)) error
 }
 
@@ -57,9 +61,9 @@ func (s *Source) GoAST() (*token.FileSet, *ast.File, error) {
 	if !s.parsed {
 		s.parsed = true
 		s.set = token.NewFileSet()
-		var mode parser.Mode
+		mode := parser.ParseComments
 		if strings.HasSuffix(s.Path, ".templ") {
-			mode = parser.ImportsOnly
+			mode |= parser.ImportsOnly
 		}
 		s.file, s.parseErr = parser.ParseFile(s.set, s.Path, s.Text, mode)
 	}
@@ -120,7 +124,10 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 			return nil
 		}
 		selected := extensions[filepath.Ext(path)]
-		if len(selected) == 0 || !entry.Type().IsRegular() || strings.HasSuffix(path, "_templ.go") || strings.HasSuffix(path, "_test.go") {
+		if strings.HasSuffix(path, "_test.go") {
+			selected = slices.DeleteFunc(slices.Clone(selected), func(r Rule) bool { return !r.Tests })
+		}
+		if len(selected) == 0 || !entry.Type().IsRegular() || strings.HasSuffix(path, "_templ.go") {
 			return nil
 		}
 		data, err := os.ReadFile(path)

@@ -41,8 +41,12 @@ func applyExceptions(root string, warnings []Warning, rules map[string]Rule) ([]
 		return nil, fmt.Errorf(".gantry-check.json: expected one JSON object")
 	}
 	for _, e := range cfg.Exceptions {
-		if _, ok := rules[e.Rule]; !ok {
+		rule, ok := rules[e.Rule]
+		if !ok {
 			return nil, fmt.Errorf(".gantry-check.json: unknown rule %q", e.Rule)
+		}
+		if rule.NoExceptions {
+			return nil, fmt.Errorf(".gantry-check.json: exception %s %s: %s takes no exceptions; fix what it finds instead", e.Rule, e.File, e.Rule)
 		}
 		if e.File == "" || filepath.IsAbs(e.File) || strings.Contains(e.File, "\\") || strings.ContainsAny(e.File, "*?[") || e.File == ".." || strings.HasPrefix(e.File, "../") || filepath.ToSlash(filepath.Clean(e.File)) != e.File || strings.TrimSpace(e.Reason) == "" {
 			return nil, fmt.Errorf(".gantry-check.json: each exception needs an exact project-relative file and a nonempty reason")
