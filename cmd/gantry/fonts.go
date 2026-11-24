@@ -96,6 +96,37 @@ var (
 	fontFamRe = regexp.MustCompile(`font-family: '([^']+)'`)
 )
 
+var googleFontsRepo = "https://raw.githubusercontent.com/google/fonts/main"
+
+var googleFontLicenses = map[string]struct{ name, file string }{
+	"OFL":     {"SIL Open Font License 1.1", "OFL.txt"},
+	"APACHE2": {"Apache License 2.0", "LICENSE.txt"},
+	"UFL":     {"Ubuntu Font Licence 1.0", "UFL.txt"},
+}
+
+var metadataLicense = regexp.MustCompile(`(?m)^license: "([A-Z0-9]+)"`)
+
+func fontLicense(family string) string {
+	dir := strings.Map(func(r rune) rune {
+		if 'a' <= r && r <= 'z' || '0' <= r && r <= '9' {
+			return r
+		}
+		return -1
+	}, strings.ToLower(family))
+	for _, licenseDir := range []string{"ofl", "apache", "ufl"} {
+		data, err := fetch(googleFontsRepo + "/" + licenseDir + "/" + dir + "/METADATA.pb")
+		if err != nil {
+			continue
+		}
+		if m := metadataLicense.FindSubmatch(data); m != nil {
+			if l, ok := googleFontLicenses[string(m[1])]; ok {
+				return fmt.Sprintf("%s: %s, https://github.com/google/fonts/blob/main/%s/%s/%s", family, l.name, licenseDir, dir, l.file)
+			}
+		}
+	}
+	return fmt.Sprintf("%s: see https://fonts.google.com/specimen/%s/license", family, strings.ReplaceAll(family, " ", "+"))
+}
+
 func fontsFlags() (fs *flag.FlagSet, subsets *string, force *bool) {
 	fs = flagSet("fonts")
 	subsets = fs.String("subsets", "latin,latin-ext", "the character sets to keep, as Google names them: `latin,latin-ext`")
@@ -203,13 +234,20 @@ func generateFonts(root string, args []string, out io.Writer) error {
 	if err := write(cssPath, []byte(css)); err != nil {
 		return err
 	}
+	licenses := "The fonts here are Google Fonts', each under its family's license:\n\n"
+	for _, f := range families {
+		licenses += fontLicense(f.name) + "\n"
+	}
+	if err := write(filepath.Join(fontsDir, "LICENSE.txt"), []byte(licenses)); err != nil {
+		return err
+	}
 	for _, m := range localFont.FindAllStringSubmatch(string(old), -1) {
 		if _, ok := files[m[1]]; !ok {
 			os.Remove(filepath.Join(fontsDir, m[1]))
 		}
 	}
 	fmt.Fprintf(out, "  wrote assets/css/fonts.css and %d fonts in assets/fonts, served from the app rather than Google Fonts\n", len(files))
-	fmt.Fprintf(out, "  Google's fonts are under the SIL Open Font License (or Apache 2.0): see fonts.google.com\n")
+	fmt.Fprintf(out, "  wrote assets/fonts/LICENSE.txt: each family's license, which goes with its fonts\n")
 	fmt.Fprintf(out, "  to fetch them again: gantry g fonts %s --force\n", quoteSpecs(specs, *subsets))
 	fmt.Fprintf(out, `
 Next:
