@@ -16,7 +16,8 @@ bin/gantry check --strict  # nonzero on a violation: run it before you finish
 bin/gantry check --generated  # nonzero when generated Go isn't what its .templ or .sql makes
 bin/gantry test            # the tests, in a throwaway copy
 bin/gantry routes --json   # every route, from the app's router
-bin/gantry verify          # each feature in test/features.yaml, visited as each role
+bin/gantry routes --diagram  # Mermaid flowchart of routes and test/features.yaml
+bin/gantry verify          # each feature in test/features.yaml, visited as each role (--json for tools)
 ```
 
 `.github/workflows/ci.yml` runs `check --strict`, `check --generated`, `golangci-lint`, `test` and `verify` on every pull request.

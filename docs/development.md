@@ -248,6 +248,13 @@ plain `http.Handler` from `Mount` (files, a mounted package); `constrained`,
 a route only a `Constraint`'s requests reach. A Go test has the same list from
 `Router.Routes`.
 
+`bin/gantry routes --diagram` (with `--local` on this machine) prints a
+deterministic Mermaid flowchart joining the router's routes with
+`test/features.yaml`: features grouped under `public`, `signed-in` and `admin`,
+showing each route's filters and `Cached` status, mounted routes, and any
+unmapped routes highlighted for review. `--diagram` and `--json` can't be used
+together.
+
 ### The feature map
 
 `test/features.yaml` says what the app's features are: the routes each is made
@@ -314,6 +321,32 @@ it can sign in as:
   a `gantry-verify=<role>` query added, a cache key of its own. So each role's
   user 0 renders the page rather than getting another role's copy, and a leak
   only admins trigger is caught too.
+
+`bin/gantry verify --json` (in Houston's test stack or with `--local`) runs the
+same `TestFeatures` check and prints a single JSON object (`testkit.VerifyReport`)
+with stable field names, exiting nonzero on a failure after printing:
+
+```json
+{
+  "passed": true,
+  "failures": 0,
+  "routes": 3,
+  "unmapped_routes": [],
+  "features": [
+    {
+      "name": "home",
+      "role": "public",
+      "cacheable": false,
+      "passed": true,
+      "routes": ["GET /{$}"],
+      "visits": [{"path": "/", "role": "public", "status": 200, "allowed": true, "passed": true}],
+      "cache": [],
+      "leaks": [],
+      "errors": []
+    }
+  ]
+}
+```
 
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is

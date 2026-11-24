@@ -1,11 +1,14 @@
 package testkit
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -278,4 +281,80 @@ func TestFeaturesInvalid(t *testing.T) {
 			t.Errorf("%q: no %q in %q", yaml, want, got)
 		}
 	}
+}
+
+func TestVerifyReport(t *testing.T) {
+	runReport := func(t *testing.T, rt *web.Router, yaml string, signIn Roles) (VerifyReport, string) {
+		t.Helper()
+		var buf bytes.Buffer
+		was := verifyJSONOut
+		verifyJSONOut = &buf
+		t.Cleanup(func() { verifyJSONOut = was })
+		t.Setenv("GANTRY_VERIFY_JSON", "1")
+		path := features(t, yaml)
+		var report VerifyReport
+		failures(t, func(tb testing.TB) { report = Verify(tb, rt.Handler(), rt.Routes(), path, signIn) })
+		return report, buf.String()
+	}
+
+	t.Run("passing report and JSON output", func(t *testing.T) {
+		report, raw := runReport(t, club(&web.PageCache{}), clubMap, roles)
+		if !report.Passed || report.Failures != 0 || report.Routes != 6 || len(report.UnmappedRoutes) != 0 || len(report.Features) != 4 {
+			t.Fatalf("unexpected report: %+v", report)
+		}
+		line, ok := strings.CutPrefix(strings.TrimSpace(raw), VerifyJSONPrefix)
+		if !ok {
+			t.Fatalf("no %q prefix in %q", VerifyJSONPrefix, raw)
+		}
+		var decoded VerifyReport
+		if err := json.Unmarshal([]byte(line), &decoded); err != nil {
+			t.Fatalf("unmarshal: %v\n%s", err, line)
+		}
+		if !reflect.DeepEqual(decoded, report) {
+			t.Errorf("decoded %+v != report %+v", decoded, report)
+		}
+		if strings.Contains(line, `"unmapped_routes":null`) {
+			t.Errorf("unmapped_routes is null in %s", line)
+		}
+		news := report.Features[1]
+		if news.Name != "news" || !news.Passed || len(news.Cache) != 1 || !news.Cache[0].Passed || len(news.Leaks) != 2 {
+			t.Errorf("news feature: %+v", news)
+		}
+	})
+
+	t.Run("unmapped route", func(t *testing.T) {
+		report, _ := runReport(t, club(&web.PageCache{}), strings.Replace(clubMap, ", GET /login]", "]", 1), roles)
+		if report.Passed || report.Failures != 1 || !reflect.DeepEqual(report.UnmappedRoutes, []string{"GET /login"}) {
+			t.Errorf("unmapped report: %+v", report)
+		}
+	})
+
+	t.Run("cache leak", func(t *testing.T) {
+		everyone := &web.PageCache{Skip: func(*http.Request) bool { return false }}
+		report, _ := runReport(t, club(everyone), clubMap, roles)
+		if report.Passed || report.Failures == 0 {
+			t.Fatalf("expected failure: %+v", report)
+		}
+		news := report.Features[1]
+		if news.Passed || len(news.Leaks) != 2 || news.Leaks[0].Passed || !strings.Contains(news.Leaks[0].Error, "showed signed-in member0's page") {
+			t.Errorf("news leak report: %+v", news)
+		}
+	})
+
+	t.Run("broken link captured in visit result", func(t *testing.T) {
+		rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+		rt.Handle("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			fmt.Fprint(w, `<!DOCTYPE html><h1>Home</h1><img src="/missing.png">`)
+			return nil
+		})
+		report, _ := runReport(t, rt, "features:\n  - name: home\n    routes: [\"GET /{$}\", GET /up]\n    role: public\n    visit: [{path: /, selector: h1}]\n", Roles{})
+		if report.Passed || len(report.Features) != 1 || len(report.Features[0].Visits) != 1 {
+			t.Fatalf("report: %+v", report)
+		}
+		v := report.Features[0].Visits[0]
+		if v.Passed || !strings.Contains(v.Error, "/missing.png: 404") {
+			t.Errorf("visit result: %+v", v)
+		}
+	})
 }
