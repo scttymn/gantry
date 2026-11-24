@@ -199,7 +199,7 @@ Each batch gets its full map (contract pin, tests, evidence) before its code, as
 - `mail`: `Message`, `Sender`, SMTP through wneessen/go-mail, and a log sender for development.
 - `testkit`: a migrated database per test, and YAML fixtures.
 
-**The toolchain:** a `toolchain` Dockerfile stage with Go 1.27, templ v0.3.1020 and sqlc 1.31.1 (copied from `sqlc/sqlc`). `bin/go` runs it on the repo. Generated code (templ, sqlc) is committed, as Go does: a library's must be, for `go get`. Go's caches are in `.cache/`: templ's watcher skips folders starting with `.` or `_`, so the dev server watches the whole repo (the example and gantry) without walking thousands of cached modules.
+**The toolchain:** a `toolchain` Dockerfile stage with Go 1.27, templ v0.3.1118 and sqlc 1.31.1 (copied from `sqlc/sqlc`). `bin/go` runs it on the repo. Generated code (templ, sqlc) is committed, as Go does: a library's must be, for `go get`. Go's caches are in `.cache/`: templ's watcher skips folders starting with `.` or `_`, so the dev server watches the whole repo (the example and gantry) without walking thousands of cached modules.
 
 **The example:** its own `go.mod`, with `replace github.com/scttymn/gantry => ../..`, laid out as "An app's layout" says. Models are sqlc queries over the POC's schema, made plain by one migration (below). Nothing the POC does changes.
 

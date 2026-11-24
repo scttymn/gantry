@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/PuerkitoBio/goquery v1.13.0
-	github.com/a-h/templ v0.3.1020
+	github.com/a-h/templ v0.3.1118
 	github.com/adhocore/gronx v1.20.5
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gen2brain/avif v0.6.0
@@ -21,8 +21,8 @@ require (
 	golang.org/x/image v0.46.0
 	golang.org/x/net v0.62.0
 	golang.org/x/oauth2 v0.37.0
-	golang.org/x/sync v0.24.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sync v0.25.0
+	golang.org/x/sys v0.50.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.59.0
 )

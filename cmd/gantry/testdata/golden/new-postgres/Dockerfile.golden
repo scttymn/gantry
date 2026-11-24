@@ -21,7 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends postgresql-comm
 # a static binary on an empty image needs.
 ENV CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
     GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4"
-RUN go install github.com/a-h/templ/cmd/templ@v0.3.1020
+RUN go install github.com/a-h/templ/cmd/templ@v0.3.1118
 WORKDIR /app
 
 # templ regenerates on change and restarts the server. Caches live in the
