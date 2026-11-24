@@ -103,22 +103,31 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 	// Everything is fetched before anything is written, so a failure
 	// leaves the folder as it was.
 	files := map[string][]byte{}
-	unlicensed := map[string]string{} // a package with no license file: the license its package.json names
+	notes := map[string]string{} // what pin says of a package it found no license file for
 	for _, name := range names {
 		url := got.Map.Imports[name]
+		path := filepath.Join(root, vendorDir, vendorFile(name))
 		src, err := fetch(url)
 		if err != nil {
 			return err
 		}
-		v, notice, named := "", "", ""
+		v, at, notice, named := "", "", "", ""
 		if m := version.FindStringSubmatchIndex(url); m != nil {
-			v = "@" + url[m[2]:m[3]]
-			notice, named = license(name+" "+url[m[2]:m[3]], url[:m[1]]+"/")
+			v = url[m[2]:m[3]]
+			at = "@" + v
+			notice, named = license(name+" "+v, url[:m[1]]+"/")
 		}
 		if notice == "" {
-			unlicensed[name] = named
+			if notice = keptNotice(path, v); notice != "" {
+				notes[name] = "kept " + name + "'s license notice from the file it replaced (no license file found)"
+			} else {
+				if named != "" {
+					named = " (package.json says " + named + ")"
+				}
+				notes[name] = "no license file found for " + name + named + ": add its notice to " + relTo(root, path) + " by hand"
+			}
 		}
-		files[name] = append([]byte("// "+name+v+" downloaded from "+url+"\n\n"+notice), sourceMap.ReplaceAll(src, nil)...)
+		files[name] = append([]byte("// "+name+at+" downloaded from "+url+"\n\n"+notice), sourceMap.ReplaceAll(src, nil)...)
 	}
 	for _, name := range names {
 		path := filepath.Join(root, vendorDir, vendorFile(name))
@@ -126,14 +135,36 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "  pinned %s (%s)\n", name, relTo(root, path))
-		if named, ok := unlicensed[name]; ok {
-			if named != "" {
-				named = " (package.json says " + named + ")"
-			}
-			fmt.Fprintf(out, "  no license file found for %s%s: add its notice to %s by hand\n", name, named, relTo(root, path))
+		if note, ok := notes[name]; ok {
+			fmt.Fprintln(out, "  "+note)
 		}
 	}
 	return nil
+}
+
+// titleVersion is the version a license comment's title line ends in.
+var titleVersion = regexp.MustCompile(`\d+\.\d+\.\d+\S*$`)
+
+// keptNotice is the license comment under the first line of path, the file
+// pin replaces, as gantry new's Turbo and Stimulus and earlier pins have it,
+// with v for the version its title line ends in; "" with none. Turbo's
+// package has no license file, so its notice lives on only this way.
+func keptNotice(path, v string) string {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	_, rest, _ := strings.Cut(string(src), "\n")
+	rest, opened := strings.CutPrefix(rest, "\n/*!\n")
+	body, _, closed := strings.Cut(rest, "\n*/\n")
+	if !opened || !closed {
+		return ""
+	}
+	title, text, _ := strings.Cut(body, "\n")
+	if v != "" {
+		title = titleVersion.ReplaceAllLiteralString(title, v)
+	}
+	return "/*!\n" + title + "\n" + text + "\n*/\n\n"
 }
 
 // license is the comment pin puts under a pinned file's first line, as

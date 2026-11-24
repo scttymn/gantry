@@ -128,6 +128,43 @@ func TestImportmapPinNoLicense(t *testing.T) {
 	}
 }
 
+// Turbo's package has no license file (8.0.23's tarball doesn't), so
+// re-pinning it over the copy gantry new ships keeps that copy's notice,
+// with the new version in its title line, and pin says so.
+func TestImportmapRepinKeepsNotice(t *testing.T) {
+	fakeJSPM(t, 200, map[string]string{
+		"https://ga.jspm.io/npm:@hotwired/turbo@8.0.23/package.json": `{"name":"@hotwired/turbo","version":"8.0.23","license":"MIT"}`,
+	})
+	shipped, err := os.ReadFile(filepath.Join("templates", "new", "assets", "js", "vendor", "@hotwired--turbo.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, notice, _ := strings.Cut(string(shipped), "\n\n")
+	notice, _, _ = strings.Cut(notice, "*/\n\n")
+	if !strings.HasPrefix(notice, "/*!\nTurbo 8.0.23\n") {
+		t.Fatalf("gantry new's Turbo has no notice: %q", notice)
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "assets", "js", "vendor", "@hotwired--turbo.js")
+	os.MkdirAll(filepath.Dir(path), 0o755)
+	os.WriteFile(path, []byte(strings.ReplaceAll(string(shipped), "8.0.23", "8.0.20")), 0o644)
+	var out, errOut strings.Builder
+	if code := run([]string{"importmap", "pin", "@hotwired/turbo"}, root, &out, &errOut); code != 0 {
+		t.Fatalf("%d %s", code, errOut.String())
+	}
+	got, _ := os.ReadFile(path)
+	if want := "// @hotwired/turbo@8.0.23 downloaded from https://ga.jspm.io/npm:@hotwired/turbo@8.0.23/dist/turbo.es2017-esm.js\n\n" +
+		notice + "*/\n\nexport const Turbo = {}\n"; string(got) != want {
+		t.Errorf("got %q\nwant %q", got, want)
+	}
+	if want := "kept @hotwired/turbo's license notice from the file it replaced (no license file found)"; !strings.Contains(out.String(), want) {
+		t.Errorf("didn't say %q: %s", want, out.String())
+	}
+	if strings.Contains(out.String(), "no license file found for @hotwired/turbo") {
+		t.Errorf("warned of a notice it kept: %s", out.String())
+	}
+}
+
 func TestImportmapFailures(t *testing.T) {
 	fakeJSPM(t, 404, nil)
 	root := t.TempDir()
