@@ -54,14 +54,15 @@ trap cleanup EXIT
 
 mkdir -p .cache bench/out && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
 rm -f bench/out/*.json bench/out/*.prof
-docker build -q --target toolchain -t gantry-toolchain . >/dev/null
+# By the ID the build prints, not a tag another checkout's build can move.
+image=$(docker build -q --target toolchain .)
 toolchain() { # toolchain DIR COMMAND...: in the toolchain's image, on the checkout (and on REF's, at /base)
 	local dir=$1; shift
 	# With cgo, as a gantry app's Dockerfile builds it: db has SQLite compiled
 	# from C then (db/sqlite.go).
 	docker run --rm -v "$PWD:/src" ${base:+-v "$base:/base:ro"} -w "/src/$dir" -e CGO_ENABLED=1 \
 		-e CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
-		-e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache gantry-toolchain "$@"
+		-e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache "$image" "$@"
 }
 echo "building the app and the bench" >&2
 toolchain bench/feed go build -trimpath -tags bench,nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -o /src/bench/out/feed ./cmd/feed
@@ -102,13 +103,13 @@ start() { # start SIDE BINARY: an app, as gantry-bench-SIDE
 		-v "$PWD/bench/out:/bench:ro" -w /tmp \
 		-e GANTRY_ENV=production -e ADDR=:8080 -e DATA_DIR=/data -e BENCH_ADDR=:6060 \
 		-e FEED_SEED_USERS=50000 -e JWT_SECRET=twelve-dollar-challenge -e SECRET_KEY=the-bench-has-no-secrets-to-keep \
-		gantry-toolchain "/bench/$2" >/dev/null
+		"$image" "/bench/$2" >/dev/null
 }
 loads=0
 bench() { # bench SIDE ARGS...: the bench, of that app; on a failure, the app's log
 	local side=$1; shift
 	loads=$((loads + 1))
-	docker run --rm --name "gantry-bench-load-$loads" --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" gantry-toolchain \
+	docker run --rm --name "gantry-bench-load-$loads" --network "$net" ${others[@]+"${others[@]}"} -v "$PWD/bench/out:/bench" "$image" \
 		/bench/bench -url "http://gantry-bench-$side:8080" -bench-url "http://gantry-bench-$side:6060" \
 		-cpus "${BENCH_CPUS:-1}" -machine "$machine" "$@" && return
 	echo "--- the app's log" >&2
@@ -126,7 +127,7 @@ start base feed-base
 start head feed
 # Both up, their databases seeded, before either is measured: one still
 # seeding would be on the core the other is being measured on.
-docker run --rm --name gantry-bench-load-0 --network "$net" gantry-toolchain timeout 900 sh -c '
+docker run --rm --name gantry-bench-load-0 --network "$net" "$image" timeout 900 sh -c '
 	for side in base head; do until curl -sf -o /dev/null "http://gantry-bench-$side:8080/up"; do sleep 1; done; done' ||
 	{ echo "bin/bench: the apps didn't come up" >&2; docker logs --tail 20 gantry-bench-base >&2; docker logs --tail 20 gantry-bench-head >&2; exit 1; }
 measure() { # measure SIDE ARGS...: the bench of that app, with the other stopped where it stands
@@ -152,5 +153,5 @@ for run in 1 2 3; do
 		measure "$side" -rate "$rate" -for 15s -o "/bench/$side.$run.json" "$@" >&2
 	done
 done
-docker run --rm --name gantry-bench-load-compare -v "$PWD/bench/out:/bench:ro" gantry-toolchain /bench/compare -dir /bench \
+docker run --rm --name gantry-bench-load-compare -v "$PWD/bench/out:/bench:ro" "$image" /bench/compare -dir /bench \
 	-base "$against ($(git rev-parse --short "$against"))" -head "this change ($commit)"

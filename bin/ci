@@ -59,14 +59,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
-timeout 1200 docker build -q --target toolchain -t gantry-toolchain . >/dev/null
+# The image this build made, by the ID it prints: a tag is every checkout's,
+# and another's build moves it under this one's tests.
+image=$(timeout 1200 docker build -q --target toolchain .)
 unset GANTRY_DIR
 toolchain() { # [GANTRY_DIR=DIR] toolchain [DOCKER-RUN-OPTION...] -- COMMAND...: in the toolchain's image, on the checkout (DIR of it, as bin/go)
 	local opts=()
 	while [ "$1" != -- ]; do opts+=("$1"); shift; done
 	shift
 	timeout 1800 docker run --rm -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" -v "$cache:/cache" \
-		-e GOMODCACHE=/cache/mod -e GOCACHE=/cache/build -e CI="$ci" ${opts[@]+"${opts[@]}"} gantry-toolchain "$@"
+		-e GOMODCACHE=/cache/mod -e GOCACHE=/cache/build -e CI="$ci" ${opts[@]+"${opts[@]}"} "$image" "$@"
 }
 others() { # another bin/ci is running (a mark whose run has gone is removed)
 	local mark
