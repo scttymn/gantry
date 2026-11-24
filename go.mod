@@ -5,7 +5,7 @@ go 1.27.4
 require (
 	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/a-h/templ v0.3.1118
-	github.com/adhocore/gronx v1.20.5
+	github.com/adhocore/gronx v1.20.8
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/gen2brain/avif v0.6.0
 	github.com/gen2brain/heic v0.7.2
