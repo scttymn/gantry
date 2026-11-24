@@ -213,3 +213,56 @@ func TestRoutesDiagram(t *testing.T) {
 		}
 	})
 }
+
+func TestVerifyBrowserCLI(t *testing.T) {
+	dir := shopApp(t, "sqlite")
+
+	t.Run("local passes browser env vars", func(t *testing.T) {
+		got := steps(t, "")
+		code, _, stderr := gantry(t, dir, "verify", "--browser", "--artifacts", "proof", "--local")
+		if code != 0 || stderr != "" {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		wantDir, _ := filepath.Abs(filepath.Join(dir, "proof"))
+		want := []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS=" + wantDir, "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}
+		if len(*got) != 1 || !reflect.DeepEqual((*got)[0][1:], want) {
+			t.Errorf("ran %q, want %q", *got, want)
+		}
+	})
+
+	t.Run("test stack writes browser env and CDP URL into compose copy", func(t *testing.T) {
+		t.Setenv("GANTRY_CDP_URL", "http://host.docker.internal:9222")
+		steps(t, "")
+		var copied map[string]any
+		payload, _ := json.Marshal(testkit.VerifyReport{Passed: true, UnmappedRoutes: []string{}, Features: []testkit.FeatureResult{}})
+		runQuietlyIn = func(root, name string, args ...string) ([]byte, error) {
+			if len(args) == 3 && args[0] == "-f" {
+				b, err := os.ReadFile(filepath.Join(root, args[1]))
+				if err != nil {
+					return nil, err
+				}
+				yaml.Unmarshal(b, &copied)
+			}
+			return []byte(testkit.VerifyJSONPrefix + string(payload) + "\n"), nil
+		}
+		code, _, stderr := gantry(t, dir, "verify", "--browser", "--json")
+		if code != 0 || stderr != "" {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		x, _ := copied["x-houston"].(map[string]any)
+		commands, _ := x["commands"].(map[string]any)
+		cmd, _ := commands["test"].(string)
+		for _, want := range []string{"GANTRY_VERIFY_JSON=1", "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS='.gantry/verify-artifacts'", "GANTRY_CDP_URL='http://host.docker.internal:9222'", featuresTestCommand} {
+			if !strings.Contains(cmd, want) {
+				t.Errorf("commands.test = %q, missing %q", cmd, want)
+			}
+		}
+	})
+
+	t.Run("artifacts without browser is a usage error", func(t *testing.T) {
+		code, _, stderr := gantry(t, dir, "verify", "--artifacts", "proof")
+		if code != 2 || !strings.Contains(stderr, "usage: gantry verify [--artifacts DIR] [--browser] [--json] [--local]") {
+			t.Errorf("exit %d: %s", code, stderr)
+		}
+	})
+}

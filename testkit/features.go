@@ -120,11 +120,12 @@ func rank(r Role) int { return slices.Index(allRoles, r) }
 // line prefixed with VerifyJSONPrefix when GANTRY_VERIFY_JSON=1 (for
 // `bin/gantry verify --json`).
 type VerifyReport struct {
-	Passed         bool            `json:"passed"`
-	Failures       int             `json:"failures"`
-	Routes         int             `json:"routes"`
-	UnmappedRoutes []string        `json:"unmapped_routes"`
-	Features       []FeatureResult `json:"features"`
+	Passed         bool             `json:"passed"`
+	Failures       int              `json:"failures"`
+	Routes         int              `json:"routes"`
+	UnmappedRoutes []string         `json:"unmapped_routes"`
+	Features       []FeatureResult  `json:"features"`
+	Browser        *BrowserManifest `json:"browser,omitempty"`
 }
 
 // FeatureResult is one feature's verification outcome in VerifyReport.
@@ -294,6 +295,18 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 					report.Features[i].Passed = false
 				}
 			}
+		}
+	}
+	if os.Getenv("GANTRY_VERIFY_BROWSER") == "1" {
+		bm := VerifyBrowser(t, h, path, roles, BrowserOptions{
+			ArtifactsDir: os.Getenv("GANTRY_VERIFY_ARTIFACTS"),
+			CDPURL:       os.Getenv("GANTRY_CDP_URL"),
+			ChromePath:   os.Getenv("GANTRY_CHROME_BIN"),
+		})
+		report.Browser = &bm
+		if !bm.Passed {
+			report.Passed = false
+			report.Failures += bm.Failures
 		}
 	}
 	if os.Getenv("GANTRY_VERIFY_JSON") == "1" {

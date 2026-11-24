@@ -348,6 +348,18 @@ with stable field names, exiting nonzero on a failure after printing:
 }
 ```
 
+`bin/gantry verify --browser` (optionally with `--artifacts DIR`, defaulting to
+`.gantry/verify-artifacts`, and combinable with `--json` and `--local`) also
+renders each permitted feature visit in headless Chrome over CDP at desktop
+(`1280×800`) and mobile (`390×844`) viewports against an in-process test server
+(`GANTRY_ENV=test`). It transfers each role's cookies and headers from
+`testkit.Roles`, fails on uncaught JavaScript exceptions, `console.error` calls,
+failed subresource requests (4xx/5xx or network errors), unexpected document
+statuses or missing selectors, and writes deterministic PNG screenshots plus
+`manifest.json` into the artifacts directory. Set `GANTRY_CDP_URL` to point at
+an existing headless Chrome endpoint (for example, a container in CI) or
+`GANTRY_CHROME_BIN` to pick a specific local Chrome/Chromium binary.
+
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is
 whoever its scope's filter lets in, which the generator can't know.

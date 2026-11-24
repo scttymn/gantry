@@ -55,7 +55,7 @@ var commands = []command{
 	{name: "task", args: "NAME [ARGS...]", about: "the app's tasks, in its container", flags: localFlag, run: appCommand("task")},
 	{name: "tasks", about: "the tasks there are", flags: localFlag, run: appCommand("tasks")},
 	{name: "routes", about: "the app's routes, as its router has them", flags: func() *flag.FlagSet { fs, _, _, _ := routesFlags(); return fs }, run: routes},
-	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: func() *flag.FlagSet { fs, _, _ := verifyFlags(); return fs }, run: verify},
+	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: func() *flag.FlagSet { fs, _, _, _, _ := verifyFlags(); return fs }, run: verify},
 	{name: "dev", houston: true, run: func(root string, args []string, _, errOut io.Writer) error {
 		if err := developmentCheck(root, nil, errOut); err != nil {
 			fmt.Fprintln(errOut, "gantry check:", err)
