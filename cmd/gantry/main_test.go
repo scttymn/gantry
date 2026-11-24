@@ -73,6 +73,45 @@ func TestResourceRules(t *testing.T) {
 			}
 		}
 	})
+	t.Run("an edit form sends its row's lock_version, and Update saves only that version", func(t *testing.T) {
+		const conflict = `"Someone else changed this record while you were editing. Your values are still in the form; submitting again will save them."`
+		for _, engine := range []string{"sqlite", "postgresql"} {
+			root := app(t)
+			os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: "+engine+"\n"), 0o644)
+			generate(t, root, "admin/pillars", "title:string:required")
+			b, _ := os.ReadFile(filepath.Join(root, "app/admin/pillars/controller.go"))
+			code := string(b)
+			body := func(sig string) string {
+				i := strings.Index(code, sig)
+				if i < 0 {
+					t.Fatalf("%s: no %s in\n%s", engine, sig, code)
+				}
+				s := code[i:]
+				return s[:strings.Index(s, "\n}\n")]
+			}
+			if fields, _, _ := strings.Cut(code[strings.Index(code, "var fields = "):], "\n"); strings.Contains(fields, "lock_version") {
+				t.Errorf("%s: lock_version is one of the form's own fields, which New shows too:\n%s", engine, fields)
+			}
+			if !strings.Contains(code, `resource.F("lock_version", resource.Type("hidden"))`) {
+				t.Errorf("%s: the edit form has no hidden lock_version:\n%s", engine, code)
+			}
+			if form := body("func (c Controller) form("); !strings.Contains(form, "editFields") {
+				t.Errorf("%s: the edit form doesn't send lock_version:\n%s", engine, form)
+			}
+			if values := body("func formValues("); !strings.Contains(values, `"lock_version": strconv.FormatInt(`) {
+				t.Errorf("%s: formValues has no lock_version:\n%s", engine, values)
+			}
+			update := body("func (c Controller) Update")
+			check, save := strings.Index(update, `if sent["lock_version"] != version {`), strings.Index(update, "q.UpdatePillar(")
+			if check < 0 || save < check || !strings.Contains(update, "http.StatusConflict") || !strings.Contains(update, conflict) {
+				t.Errorf("%s: Update doesn't answer 409 when the form's lock_version isn't the row's, before it saves:\n%s", engine, update)
+			}
+			sql, _ := os.ReadFile(filepath.Join(root, "app/models/pillars.sql"))
+			if !strings.Contains(string(sql), "lock_version = lock_version + 1") {
+				t.Errorf("%s: UpdatePillar doesn't move lock_version on:\n%s", engine, sql)
+			}
+		}
+	})
 	t.Run("a new row's next position is read and written in one transaction", func(t *testing.T) {
 		root := app(t)
 		generate(t, root, "admin/pillars", "title:string:required", "photo:photo", "position:position")
@@ -99,7 +138,7 @@ func TestResourceRules(t *testing.T) {
 	t.Run("what it can't make is said, and nothing is written", func(t *testing.T) {
 		for _, args := range [][]string{
 			{"admin/pillars"}, {"admin/Pillars", "title:string"}, {"admin/pillars", "title:blob"}, {"admin/pillars", "title"},
-			{"admin/pillars", "title:string:unique"},
+			{"admin/pillars", "title:string:unique"}, {"admin/pillars", "lock_version:int"},
 		} {
 			root := app(t)
 			var out, errOut strings.Builder
@@ -127,7 +166,9 @@ func TestResourceMigration(t *testing.T) {
 		t.Fatalf("output:\n%s", out)
 	}
 	got, _ := os.ReadFile(filepath.Join(root, "db", "migrations", "20260929120000_create_programs.sql"))
-	for _, want := range []string{`"name" text NOT NULL DEFAULT '',`, `"blurb" text NOT NULL DEFAULT '',`, `"position" integer,`, `"starts_on" date,`} {
+	for _, want := range []string{`"name" text NOT NULL DEFAULT '',`, `"blurb" text NOT NULL DEFAULT '',`, `"position" integer,`, `"starts_on" date,`, `"updated_at" datetime NOT NULL,
+  "lock_version" integer NOT NULL DEFAULT 0
+);`} {
 		if !strings.Contains(string(got), want) {
 			t.Errorf("no %s in\n%s", want, got)
 		}

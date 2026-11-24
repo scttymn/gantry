@@ -13,7 +13,7 @@ VALUES (CAST(sqlc.narg(date) AS TEXT), sqlc.arg(name), sqlc.arg(rx), sqlc.arg(no
 RETURNING id;
 
 -- name: UpdateWorkout :exec
-UPDATE workouts SET date = CAST(sqlc.narg(date) AS TEXT), name = sqlc.arg(name), rx = sqlc.arg(rx), updated_at = sqlc.arg(now)
+UPDATE workouts SET date = CAST(sqlc.narg(date) AS TEXT), name = sqlc.arg(name), rx = sqlc.arg(rx), updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteWorkout :exec

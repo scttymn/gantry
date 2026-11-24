@@ -3,6 +3,7 @@ package events
 import (
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -25,8 +26,10 @@ type Controller struct{ resource.Controller }
 
 var fields = []resource.Field{resource.F("name"), resource.F("starts_on", resource.Type("date")), resource.Position}
 
+var editFields = append(fields, resource.F("lock_version", resource.Type("hidden")))
+
 func formValues(event models.Event) map[string]string {
-	return map[string]string{"name": event.Name, "starts_on": resource.DateText(event.StartsOn), "position": resource.IntText(event.Position)}
+	return map[string]string{"name": event.Name, "starts_on": resource.DateText(event.StartsOn), "position": resource.IntText(event.Position), "lock_version": strconv.FormatInt(int64(event.LockVersion), 10)}
 }
 
 func fromForm(v map[string]string) models.Event {
@@ -84,9 +87,10 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	sent := resource.Overlay(r, param, map[string]string{})
 	var (
-		id   int64
-		v    map[string]string
-		errs []string
+		id     int64
+		v      map[string]string
+		status int
+		errs   []string
 	)
 	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
 		q := models.New(tx)
@@ -95,9 +99,16 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		id, v = was.ID, formValues(was)
+		version := v["lock_version"]
 		maps.Copy(v, sent)
+		v["lock_version"] = version
+		if sent["lock_version"] != version {
+			status, errs = http.StatusConflict, []string{"Someone else changed this record while you were editing. Your values are still in the form; submitting again will save them."}
+			return nil
+		}
 		event := fromForm(v)
 		if errs = event.Errors(); len(errs) > 0 {
+			status = http.StatusUnprocessableEntity
 			return nil
 		}
 		return q.UpdateEvent(r.Context(), models.UpdateEventParams{Name: event.Name, StartsOn: resource.DateParam(event.StartsOn), Position: event.Position, Now: c.Now(), ID: id})
@@ -106,7 +117,7 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
+		return c.form(w, r, status, id, v, errs)
 	}
 	return c.Saved(w, r, path, singular)
 }
@@ -127,7 +138,7 @@ func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id 
 	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)
 	if id != 0 {
-		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
+		f.Action, f.Method, f.Fields, heading = path+"/"+web.IDText(id), "patch", editFields, "Edit "+strings.ToLower(singular)
 	}
 	return c.Render(w, r, status, heading, func(p resource.Page) templ.Component { return form(p, f) })
 }

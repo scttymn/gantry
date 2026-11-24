@@ -13,7 +13,7 @@ VALUES (sqlc.arg(title), sqlc.arg(body), sqlc.arg(position), sqlc.arg(now), sqlc
 RETURNING id;
 
 -- name: UpdatePillar :exec
-UPDATE pillars SET title = sqlc.arg(title), body = sqlc.arg(body), position = sqlc.arg(position), updated_at = sqlc.arg(now)
+UPDATE pillars SET title = sqlc.arg(title), body = sqlc.arg(body), position = sqlc.arg(position), updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: DeletePillar :exec
