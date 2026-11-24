@@ -64,6 +64,8 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `read-then-write` | Advice | Save edits without losing one made meanwhile | a Get on the Read pool, then an Update or Delete on the Write pool, in one function; read and write in one c.DB.Tx with models.New(tx) |
 | `get-mutates` | Advice | Keep GETs safe to repeat, as prefetching browsers and crawlers assume | a GET handler (Index, Show, New, Edit, or a GET route's function) writes to the database; route it as POST and send it from a button in a form |
 | `inline-download` | Advice | Send uploads as downloads, so an uploaded HTML or SVG file can't run as the app's own page | http.ServeContent or ServeFile with no Content-Disposition serves a file inline; send uploads with web.Download or storage's routes, and serve inline only types checked to be images |
+| `cached-scope` | Violation | Cache only pages that are the same for every visitor, so no one is shown a page drawn for someone else | a route the page cache serves (Cached, PageCache.Handler, or Resources wrapped in the cache's Handler) has a handler that reads auth.Current, SignedIn, a cookie or the flash; draw that part where it isn't cached, or add the route with Handle |
+| `cache-set-cookie` | Violation | Set cookies and sessions on routes whose handler runs for every visitor | a route the page cache serves has a handler that sets a cookie, the flash or a session, which a cached copy never sends; set it on a route added with Handle |
 | `migration-down` | Violation | Keep rollback and testkit.Migrations checking every migration's undo | migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible |
 
 <!-- /rules -->
@@ -80,8 +82,8 @@ review/performance-measurement questions.
 
 The layout rules hold an app to [its layout](plans/gantry.md#an-apps-layout)
 and read only `app/`: `import-boundary`, `view-db`, `env-outside-config`,
-`background-work`, `sql-outside-models`, `read-then-write`, `get-mutates` and
-`inline-download`. `import-boundary` tells the app's own packages by the app's
+`background-work`, `sql-outside-models`, `read-then-write`, `get-mutates`,
+`inline-download`, `cached-scope` and `cache-set-cookie`. `import-boundary` tells the app's own packages by the app's
 import path, from the nearest `go.mod` at or above it (an `--in-module` app's
 is under its module's path), and sorts them by folder: `app/models`,
 `app/services/*`, `app/shared/*`, `app/mailers` and `app/jobs`, and every other
@@ -105,10 +107,30 @@ calls `Tx`. `read-then-write` is a `Get…` on
 routes to GET) or in a function routed inline to a GET pattern; a handler
 routed by name from another file isn't followed. Logout is POST-only in `auth`
 itself. `inline-download` is `http.ServeContent` or `ServeFile` in a function
-that never names `Content-Disposition`. A page cached through `Cached` isn't
-checked for per-visitor content: the cache never keeps a response that sets a
-cookie or is to a request with a session, and `bin/gantry verify` checks that
-no signed-in user's cached page is shown to anyone else.
+that never names `Content-Disposition`.
+
+`cached-scope` and `cache-set-cookie` start at each route the page cache
+serves. That's `Cached` on a router or a scope, and `PageCache.Handler` around
+a function (given to `http.HandlerFunc` or the router's `Wrap`) or a type's
+`ServeHTTP`. It's also the `Index`, `Show`, `New` and `Edit` of `Resources`
+wrapped in the cache's `Handler`. They follow the handler, and what it calls,
+into the app's other files and packages, as far as the code says what each
+name is: a parameter's type, `x := T{...}`, a struct's field (an embedded
+one's too), or a function's one result. An alias is the type it stands for,
+so `g auth`'s `app/auth.Auth` is gantry's. So a resource's `Index`, through
+the `Render` of the `resource.Controller` it embeds, is found taking the
+flash.
+The finding is at the route, with the way there. A handler they can't read
+isn't reported: gantry's own (`a.Live.Serve`), another module's, or one a
+call returns (`rt.Cached("GET /x", a.page())`). `cached-scope` looks for
+`auth.Current`, `Auth.SignedIn` or `HasSessionCookie`, a request's cookies
+(`r.Cookie`, `web.SignedCookie`) and the flash (`Flash.Take`).
+`cache-set-cookie` looks for `http.SetCookie`, `web.SetCookie` or
+`ClearCookie`, the flash's `Set`, `Redirect` or `Take` (which clears it),
+`Auth.StartSession`, and a `Set-Cookie` header. The page cache still guards
+both at runtime: it keeps no response that sets a cookie, and serves no
+request with a session from the cache. `bin/gantry verify` checks that no
+signed-in user's cached page is shown to anyone else.
 
 Upgrading: these rules are new in this release. An app that fails one fixes
 the code the message names, or adds an exception with its reason. Gantry's

@@ -95,10 +95,20 @@ the current rules, generated from `DefaultRules()`, with their limits and
 exception syntax. Page-cache eligibility, image-pipeline adoption and
 render-blocking data fetches are future coverage areas, not checks that exist
 today. Some will need runtime measurement or richer analysis instead of static
-source matching. A cached page that reads who's signed in is one: telling
-needs the handler a route names, which is often in another package. The page
-cache guards it at runtime instead (it keeps no response that sets a cookie,
-and serves no request with a session), and `bin/gantry verify` tests it.
+source matching.
+
+A rule may follow a name out of its file. `cached-scope` and
+`cache-set-cookie` start at a route the page cache serves and follow its
+handler, often in another package, and what that calls. The scan's packages
+are parsed once, when a rule first needs one, and a name is followed only
+when its declaration says what it is: a parameter's type, `x := T{...}`, a
+field, a function's one result, the type an alias stands for. A handler the rules can't follow that way
+isn't reported, so a clean scan doesn't prove a cached page is the same for
+everyone. The page cache guards that at runtime too (it keeps no response
+that sets a cookie, and serves no request with a session), and
+`bin/gantry verify` tests it. These two rules have no golangci-lint
+counterpart: `forbidigo` and `depguard` match a call or an import wherever it
+is, and can't tell that the handler it's in is cached.
 
 Strict reads gantry too: `TestGantryPassesStrict` scans the framework, where
 the rules that aren't about an app's layout apply, and `bench/feed`, an app

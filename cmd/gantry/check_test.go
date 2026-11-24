@@ -61,6 +61,37 @@ func TestDevelopmentChecks(t *testing.T) {
 
 // check --json is the same findings and counts, for tools, with field names
 // that stay: --strict still fails on a violation, after printing them.
+// Strict follows a cached route's handler through the code gantry writes. A
+// resource's pages, put behind the page cache, take the flash (clearing its
+// cookie) in the Render of the app/shared/resource controller they embed,
+// another package, and both cache rules fail check --strict at the route.
+func TestStrictFollowsCachedResources(t *testing.T) {
+	root := t.TempDir()
+	repo, _ := filepath.Abs("../..")
+	if code, _, stderr := gantry(t, root, "new", "shop", "--db", "sqlite", "--module", "example.com/shop", "--skip-houston", "--gantry", repo); code != 0 {
+		t.Fatalf("gantry new: exit %d: %s", code, stderr)
+	}
+	dir := filepath.Join(root, "shop")
+	code, out, stderr := gantry(t, dir, "g", "resource", "posts", "title:string")
+	if code != 0 {
+		t.Fatalf("gantry g resource: exit %d: %s", code, stderr)
+	}
+	wire(t, dir, out)
+	if code, out, _ := gantry(t, dir, "check", "--strict"); code != 0 {
+		t.Fatalf("the routed resource fails Strict before it's cached: exit %d\n%s", code, out)
+	}
+	edit(t, filepath.Join(dir, "app", "routes.go"), "}}, nil)", "}}, rt.Cache.Handler)")
+	code, out, _ = gantry(t, dir, "check", "--strict")
+	if code != 1 {
+		t.Fatalf("check --strict = %d with the resource behind the page cache, want 1\n%s", code, out)
+	}
+	for _, want := range []string{"cached-scope", "cache-set-cookie", "posts.Controller.Index → resource.Controller.Render → web.Flash.Take at app/shared/resource/resource.go:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("no %q in\n%s", want, out)
+		}
+	}
+}
+
 func TestCheckJSON(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "app"), 0o755)
