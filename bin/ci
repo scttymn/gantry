@@ -24,7 +24,7 @@ step() { printf '\n=== %s\n' "$1"; }
 
 # Everything it needs, before it starts: a hook that fails half an hour in
 # helps no one.
-need=(docker jq timeout)
+need=(docker git jq timeout)
 [ -n "$fast" ] || need+=(curl)
 for tool in "${need[@]}"; do
 	command -v "$tool" >/dev/null || { echo "bin/ci needs $tool, and it isn't on the PATH" >&2; exit 1; }
@@ -150,7 +150,7 @@ unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gof
 [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
 
 step "shellcheck"
-timeout 300 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench bin/ci .githooks/pre-push cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
+bin/shellcheck
 
 step "golangci-lint"
 toolchain -- go run "$golangci" run ./...

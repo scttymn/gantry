@@ -51,7 +51,6 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 	// (the first group, or the whole match) must be in bin/ci as it is there.
 	for what, re := range map[string]string{
 		"tool version":           `go run ([\w.-]+(?:/[\w.-]+)+@v[\d.]+)`,
-		"docker image":           `docker run [^\n]*?(\S+@sha256:[0-9a-f]{64})`,
 		"linker flags":           `-ldflags "[^"]+"`,
 		"race detector":          `go test -race`,
 		"bench module":           `GANTRY_DIR=\S+`,
@@ -60,7 +59,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"new app probe":          `new probe --skip-houston`,
 		"Houston's digests":      `houston-release --sha256`,
 		"vulnerabilities' check": `jq -rs ('[^']+')`,
-		"shellcheck and files":   `(koalaman/shellcheck:\S+(?: [\w./-]+)+)`,
+		"shellcheck's script":    `bin/shellcheck`,
 	} {
 		found := regexp.MustCompile(re).FindAllStringSubmatch(workflow, -1)
 		if len(found) == 0 {
@@ -88,9 +87,10 @@ esac
 `
 
 // binCI runs bin/ci --fast on fakeDocker, a df with FAKE_FREE_KB free (100 GB
-// unless set) and a jq that finds nothing, with env and nothing of the test's
-// own environment. Of the rest of PATH it has the tools bin/ci uses, less
-// without. It returns bin/ci's output, docker's calls, and its error.
+// unless set), a jq that finds nothing and a git that tracks bin/ci alone
+// (for bin/shellcheck), with env and nothing of the test's own environment. Of
+// the rest of PATH it has the tools bin/ci uses, less without. It returns
+// bin/ci's output, docker's calls, and its error.
 func binCI(t *testing.T, env []string, without ...string) (string, []string, error) {
 	t.Helper()
 	bin, home := t.TempDir(), t.TempDir()
@@ -100,8 +100,9 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 		"df":     "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
 		"jq":     "#!/bin/sh\n",
 		"du":     "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
+		"git":    "#!/bin/sh\nprintf 'bin/ci\\0'\n",
 	}
-	for _, tool := range []string{"docker", "df", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
+	for _, tool := range []string{"docker", "df", "git", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
 		if slices.Contains(without, tool) {
 			continue
 		}

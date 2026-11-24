@@ -77,9 +77,10 @@ jobs:
           unformatted=$(bin/go find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
       - name: shellcheck
-        # An app's bin/gantry is the template rendered, which is its golden
-        # (TestGolden holds the two the same).
-        run: docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d bin/go bin/bench bin/ci .githooks/pre-push cmd/gantry/testdata/golden/new-sqlite/bin/gantry.golden
+        # Every shell script git tracks, found by its #! line or its name: an
+        # app's bin/gantry's template and goldens too, and one added anywhere
+        # (TestEveryScriptIsShellchecked).
+        run: bin/shellcheck
       - name: golangci-lint
         # .golangci.yml's linters, staticcheck's checks among them, on gantry
         # and the bench modules. Built by the toolchain's Go, as gantry's
