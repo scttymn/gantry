@@ -86,6 +86,22 @@ func TestStrictFollowsCachedResources(t *testing.T) {
 	}
 }
 
+func TestCheckWithoutFeatureMap(t *testing.T) {
+	dir := shopApp(t, "sqlite")
+	for _, f := range []string{"test/features.yaml", "app/features_test.go"} {
+		if err := os.Remove(filepath.Join(dir, f)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if code, out, stderr := gantry(t, dir, "check", "--strict"); code != 0 || !strings.Contains(out, "0 violation(s), 0 advisory finding(s)") {
+		t.Errorf("an app made before the feature map: check --strict exit %d\n%s%s", code, out, stderr)
+	}
+	steps(t, "")
+	if code, _, stderr := gantry(t, dir, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") {
+		t.Errorf("verify, with no feature map: exit %d: %s", code, stderr)
+	}
+}
+
 func TestCheckJSON(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "app"), 0o755)

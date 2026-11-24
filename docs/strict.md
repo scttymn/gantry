@@ -122,7 +122,12 @@ running router has, including those a package's `Routes` adds, and Strict reads
 source without running the app. `testkit.Verify` checks the map against
 `Router.Routes` in the app's `TestFeatures`. `bin/gantry verify` runs that test
 to check each feature's pages, its caching headers, and that cached pages
-aren't shown across users.
+aren't shown across users. So coverage and leaks are enforced by
+`TestFeatures`, which `bin/gantry test` runs, and by the `bin/gantry verify`
+step in a new app's CI. `check --strict` and the warnings panel never read
+`test/features.yaml`. An app without the file passes them as before
+(`TestCheckWithoutFeatureMap`). Only `bin/gantry verify` asks for the map, and
+it says how to add one ([an app made before the feature map](development.md#an-app-made-before-the-feature-map)).
 
 ## Comments
 

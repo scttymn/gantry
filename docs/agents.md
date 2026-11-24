@@ -203,14 +203,17 @@ bin/gantry test
 bin/gantry verify
 ```
 
-`check --strict`, `check --generated` and the test suite are separate checks;
-an app's `.github/workflows/ci.yml`, which `gantry new` writes, runs all three
-on every pull request. `check --json` gives the findings to a tool with stable
-field names. A route you add needs a feature in `test/features.yaml`, or the
-tests fail. `verify` visits every feature's pages as each role the app can sign
-in as. It checks statuses and selectors, the page cache's headers, and that no
-signed-in user's cached page is shown to anyone else. It is the app's
-`TestFeatures`, which `bin/gantry test`, and so CI, runs with the rest.
+`check --strict`, `check --generated`, the test suite and `verify` are
+separate checks; an app's `.github/workflows/ci.yml`, which `gantry new`
+writes, runs all four on every pull request. `check --json` gives the findings
+to a tool with stable field names. A route you add needs a feature in
+`test/features.yaml`, or the tests fail: `bin/gantry g features` adds one for
+each route in none, for you to finish. `verify` visits every feature's pages
+as each role the app can sign in as. It checks statuses and selectors, the
+page cache's headers, and that no signed-in user's cached page is shown to
+anyone else. It is the app's `TestFeatures`, which `bin/gantry test` runs with
+the rest. It runs on the test stack, never against a deployed app: see
+[after a deploy](development.md#after-a-deploy).
 Report remaining advice and justified exceptions rather than equating a zero
 exit status with no findings. Use the app's existing tests and Gantry's `testkit`
 helpers where relevant: `Links`/`Crawl` for page assets and navigation,

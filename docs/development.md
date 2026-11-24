@@ -272,7 +272,8 @@ features:
 - a feature's role has no way to sign in (below).
 
 `bin/gantry verify` runs that test alone, verbosely: in the app's container, or
-on this machine with `--local`. The app runs in the test's process, on a test
+on this machine with `--local`. A new app's `.github/workflows/ci.yml` runs it
+after `bin/gantry test`. The app runs in the test's process, on a test
 database, through testkit's browser. For each feature's visits, as each role
 it can sign in as:
 
@@ -292,6 +293,29 @@ it can sign in as:
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is
 whoever its scope's filter lets in, which the generator can't know.
+
+#### Adding the routes in no feature
+
+`bin/gantry g features` adds a feature to `test/features.yaml` for each route
+that is in none. It gets the routes as `bin/gantry routes --json` lists them,
+from the app's own router, in its container, or on this machine with
+`--local`. Mounted routes are left out, as `testkit.Verify` leaves them out.
+
+- Each feature it adds has one route and is named after it. It is public,
+  cacheable only when its route is `Cached`, and has a visit at the route's
+  path when the route is a `GET` with no wildcard in its path.
+- An unmapped home page, `/up` or `/live` gets the feature a new app's map has
+  for it instead.
+- It writes after the features already in the file and changes none of them.
+  With no `test/features.yaml`, it writes one.
+- It prints each route it adds, with the route's filters, so you can see which
+  ones aren't public.
+
+Then set each feature's role, give its visits a selector, and merge features
+as you like. `bin/gantry test` fails until each visit answers as its role says.
+To run it with `--local`, the app needs a database it can open on this
+machine: a SQLite app's is under `DATA_DIR`, which is `/data` unless you set
+it.
 
 #### Signing in as a role
 
@@ -318,13 +342,48 @@ user an admin.
 
 #### An app made before the feature map
 
-Copy a new app's `test/features.yaml` and `app/features_test.go`, then:
+An app without `test/features.yaml` works as it did. The map isn't read by
+`bin/gantry check --strict`, by `bin/gantry test` or by the app's CI. Only
+`bin/gantry verify` asks for it. To opt in:
 
-- split `App.Handler` in `app/routes.go` into `Router`, which returns the
-  `*web.Router`, and `Handler`, which returns `a.Router().Handler()`;
-- add the `routes` case and function from a new app's `cmd/<app>/main.go`.
+1. In `app/routes.go`, split `App.Handler` into `Router`, which returns the
+   `*web.Router`, and `Handler`, which returns `a.Router().Handler()`.
+2. Add the `routes` case and function from a new app's `cmd/<app>/main.go`.
+   `bin/gantry routes` then lists the app's routes.
+3. Run `bin/gantry g features`. It writes `test/features.yaml`, with a feature
+   for each route that isn't Mounted.
+4. Copy a new app's `app/features_test.go`. If the app has signed-in or admin
+   pages, give its `testkit.Roles` a `SignIn` for each role (above).
+5. Set each feature's role, cacheable and selectors, and merge features until
+   `bin/gantry test` passes. `bin/gantry verify` runs the same check verbosely.
+6. To have CI check it as a new app's does, add `- run: bin/gantry verify`
+   after `- run: bin/gantry test` in `.github/workflows/ci.yml`.
 
-`bin/gantry test` then lists the routes the map is missing.
+Run `bin/gantry g features` again after adding routes, or paste the feature a
+generator prints.
+
+#### After a deploy
+
+`bin/gantry verify` checks a commit, not a server. It runs the commit's
+`TestFeatures` on Houston's test stack, or with `--local` in the test's own
+process, on a test database with test users. It sends no request to a deployed
+app, and it takes no URL.
+
+So in a pipeline it's the check on the commit the deploy ships. A new app's CI
+runs it on each pull request and each push to `main`. Houston's push to deploy
+runs `commands.test`, which includes `TestFeatures`, before it deploys. Houston
+moves traffic to the new version only once `/up` (the `health` path in
+`compose.yml`) answers 200.
+
+A pipeline that deploys to a staging server first, a non-production stack with
+its own data, can run `bin/gantry verify` between the staging deploy and the
+production one. Run it on the commit staging runs, and promote that commit
+only when it passes. Verify still runs on the test stack there, not against
+staging's URL.
+
+Don't point a crawl of your own at a production app. Verify signs in as two
+test users of each role and requests every feature's pages. Against
+production, those users and requests would be in real data.
 
 ## Browser warnings
 
