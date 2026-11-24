@@ -39,10 +39,14 @@ import (
 
 // Options are a hub's settings; each zero value takes its default.
 type Options struct {
-	Path      string        // where Serve is routed, for Source's URL: "/live"
-	KeepAlive time.Duration // how often an idle stream gets a comment, so proxies keep it open: 30 s
-	Debounce  time.Duration // refreshes to a stream this close together are one: 0.5 s (turbo-rails')
-	Buffer    int           // messages a subscriber may fall behind before it's dropped: 64
+	// where Serve is routed, for Source's URL: "/live"
+	Path string
+	// how often an idle stream gets a comment, so proxies keep it open: 30 s
+	KeepAlive time.Duration
+	// refreshes to a stream this close together are one: 0.5 s (turbo-rails')
+	Debounce time.Duration
+	// messages a subscriber may fall behind before it's dropped: 64
+	Buffer int
 	// WriteTimeout is how long one write to a stream may wait on its client
 	// before the client is taken for gone and the stream ends: 10 s. It
 	// stands in for the server's own, which would end every stream.
@@ -64,7 +68,7 @@ type Hub struct {
 type subscriber struct {
 	streams []string
 	ch      chan string
-	gone    chan struct{} // closed when the hub drops it
+	gone    chan struct{}
 	once    sync.Once
 }
 
@@ -132,11 +136,9 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	defer h.unsubscribe(sub)
 
-	// A stream outlives the server's write timeout, so each write has a
-	// deadline of its own instead, and waiting between them has none.
 	rc := http.NewResponseController(w)
 	write := func(out string) error {
-		_ = rc.SetWriteDeadline(time.Now().Add(h.o.WriteTimeout)) // only ErrNotSupported, which Flush returns too
+		_ = rc.SetWriteDeadline(time.Now().Add(h.o.WriteTimeout))
 		if _, err := io.WriteString(w, out); err != nil {
 			return err
 		}
@@ -148,7 +150,7 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no") // nginx: pass it on as it comes
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	if err := write(""); err != nil {
 		return err
@@ -163,17 +165,16 @@ func (h *Hub) Serve(w http.ResponseWriter, r *http.Request) error {
 		case <-keepAlive.C:
 			out = ": keep-alive\n\n"
 		case <-sub.gone:
-			return nil // behind, or the hub closed: the browser reconnects
+			return nil
 		case <-r.Context().Done():
 			return nil
 		}
 		if err := write(out); err != nil {
-			return nil // gone, or stopped reading
+			return nil
 		}
 	}
 }
 
-// event is msg as a server-sent event: each line a data line.
 func event(msg string) string {
 	var b strings.Builder
 	for line := range strings.Lines(msg) {
@@ -208,7 +209,6 @@ func (h *Hub) unsubscribe(s *subscriber) {
 	h.remove(s)
 }
 
-// remove takes s off its streams; the caller holds mu.
 func (h *Hub) remove(s *subscriber) {
 	for _, name := range s.streams {
 		delete(h.streams[name], s)
@@ -238,7 +238,7 @@ func (h *Hub) Listen(streams ...string) (messages <-chan string, stop func()) {
 			case msg := <-s.ch:
 				out <- msg
 			case <-s.gone:
-				for { // what arrived before it was dropped
+				for {
 					select {
 					case msg := <-s.ch:
 						out <- msg

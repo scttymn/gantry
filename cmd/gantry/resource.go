@@ -19,41 +19,57 @@ import (
 //go:embed templates
 var embedded embed.FS
 
-// templates is what the generators render. Each reads only the templates it
-// renders, so TestGolden, which records what's read, knows a template no
-// golden case renders.
 var templates fs.FS = embedded
 
 // Field is one of a resource's columns, as its form edits it.
 type Field struct {
-	Column   string // "hero_title"
-	Type     string // string, text, int, position, date
+	// "hero_title"
+	Column string
+	// string, text, int, position, date
+	Type     string
 	Required bool
-	Go       string // sqlc's name for it: "HeroTitle"
-	Label    string // "Hero title"
+	// sqlc's name for it: "HeroTitle"
+	Go string
+	// "Hero title"
+	Label string
 }
 
 // Resource is what the templates are filled with.
 type Resource struct {
-	Module    string  // the app's module path
-	Namespace string  // "admin", or "" for a top-level resource
-	Table     string  // "membership_options"
-	Package   string  // "membershipoptions": the folder's package name
-	Param     string  // "membership_option": the form's key
-	Model     string  // "MembershipOption": sqlc's type
-	Plural    string  // "MembershipOptions": in the query names
-	Title     string  // "Membership options"
-	Singular  string  // "Membership option"
-	Fields    []Field // the form's, in order: columns and photos
-	Columns   []Field // the table's: every field but photos
-	Photos    []Field // photo slots (Active Storage attachments), not columns
-	List      []Field // the list's columns: the first two that read as text
-	Position  bool
+	// the app's module path
+	Module string
+	// "admin", or "" for a top-level resource
+	Namespace string
+	// "membership_options"
+	Table string
+	// "membershipoptions": the folder's package name
+	Package string
+	// "membership_option": the form's key
+	Param string
+	// "MembershipOption": sqlc's type
+	Model string
+	// "MembershipOptions": in the query names
+	Plural string
+	// "Membership options"
+	Title string
+	// "Membership option"
+	Singular string
+	// the form's, in order: columns and photos
+	Fields []Field
+	// the table's: every field but photos
+	Columns []Field
+	// photo slots (Active Storage attachments), not columns
+	Photos []Field
+	// the list's columns: the first two that read as text
+	List     []Field
+	Position bool
 	// Postgres: sqlc.yaml's engine. Its queries bind dates differently, and
 	// Get…ForUpdate locks the row there.
 	Postgres bool
-	Base     string // "/admin/membership_options", or "/membership_options"
-	Folder   string // "app/admin/membershipoptions", or "app/membershipoptions"
+	// "/admin/membership_options", or "/membership_options"
+	Base string
+	// "app/admin/membershipoptions", or "app/membershipoptions"
+	Folder string
 	// NamespaceCode: app/<namespace> has code of its own (an admin package
 	// with its layout, say), not only resources' folders, which g resource
 	// writes. The resource doesn't use it.
@@ -62,10 +78,8 @@ type Resource struct {
 
 var columnName = regexp.MustCompile(`\A[a-z][a-z0-9_]*\z`)
 
-// appFolders are the app's own folders in app/, which no resource's may be.
 var appFolders = map[string]bool{"models": true, "shared": true}
 
-// parseResource reads `[namespace/]table field:type[:required]...`.
 func parseResource(root string, args []string) (Resource, error) {
 	if len(args) < 2 {
 		return Resource{}, errors.New("a table and at least one field")
@@ -119,7 +133,7 @@ func parseResource(root string, args []string) (Resource, error) {
 		}
 	}
 	r.Base, r.Folder = "/"+r.Table, "app/"+r.Package
-	top := r.Package // its folder in app/
+	top := r.Package
 	if r.Namespace != "" {
 		r.Base = "/" + r.Namespace + r.Base
 		r.Folder = "app/" + r.Namespace + "/" + r.Package
@@ -142,9 +156,6 @@ func parseResource(root string, args []string) (Resource, error) {
 	return r, nil
 }
 
-// sharedFiles are the helpers every resource's controller uses, in the
-// app's app/shared/resource: written by the first resource and the app's
-// from then on, so they're never written over.
 var sharedFiles = map[string]string{
 	"app/shared/resource/resource.go": "shared/resource.go.tmpl",
 	"app/shared/resource/pages.templ": "shared/pages.templ.tmpl",
@@ -189,9 +200,6 @@ func generateResource(root string, args []string, out io.Writer) error {
 		}
 		fmt.Fprintln(out, "  wrote", path)
 	}
-	// Its table, as a migration: every field but photos, which aren't
-	// columns. Required is the form's rule (the model's Errors), not NOT
-	// NULL: an unset number or date stays NULL, as the forms read them.
 	cols := []string{"create_" + r.Table}
 	for _, f := range r.Columns {
 		cols = append(cols, f.Column+":"+f.Type)
@@ -203,10 +211,6 @@ func generateResource(root string, args []string, out io.Writer) error {
 	return nil
 }
 
-// nextSteps are what wires a resource into the app, as code to paste: a
-// top-level one in Router (Rails' resources :posts), a namespaced one in
-// its namespace's scope (namespace :admin), behind the filter that guards
-// it, which the generator can't know.
 func nextSteps(r Resource) string {
 	shared := "DB: a.DB, Flash: web.Flash{Signer: a.Signer}"
 	if len(r.Photos) > 0 {
@@ -253,7 +257,6 @@ Next:
 %s`, r.Module, r.Folder, r.Module, route, feature, r.Table, own)
 }
 
-// modulePath is the app's module, from its go.mod.
 func modulePath(root string) (string, error) {
 	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
 	if err != nil {
@@ -267,8 +270,6 @@ func modulePath(root string) (string, error) {
 	return "", errors.New("go.mod names no module")
 }
 
-// sqlcRenames are sqlc.yaml's rename entries ("cta: CTA"), which change the
-// names sqlc gives fields, so the generated code uses them too.
 func sqlcRenames(root string) map[string]string {
 	out := map[string]string{}
 	data, err := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
@@ -300,8 +301,6 @@ func sqlcRenames(root string) map[string]string {
 	return out
 }
 
-// goName is sqlc's name for a column or table: CamelCase, "id" as ID, unless
-// sqlc.yaml renames it.
 func goName(s string, renames map[string]string) string {
 	if r, ok := renames[s]; ok {
 		return r
@@ -332,18 +331,13 @@ func Humanize(s string) string {
 	return string(r)
 }
 
-// controllerNames are the names a resource's controller declares or
-// imports, which its record's variable would shadow (a resources table's
-// "resource" is the shared package's name).
 var controllerNames = map[string]bool{
 	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strings": true, "db": true, "maps": true,
 	"path": true, "param": true, "title": true, "singular": true, "recordType": true, "fields": true,
 }
 
-// funcs are the templates' helpers: how each type of field is read, shown,
-// listed and saved.
 func funcs(r Resource) template.FuncMap {
-	v := lowerFirst(goName(r.Param, nil)) // "membershipOption": the record's variable
+	v := lowerFirst(goName(r.Param, nil))
 	if r.Model != goName(r.Param, nil) {
 		v = lowerFirst(r.Model)
 	}
@@ -399,9 +393,6 @@ func funcs(r Resource) template.FuncMap {
 			}
 			return v + "." + f.Go
 		},
-		// Dates are bound as text ("2006-01-02"), as SQLite keeps them (its
-		// CAST AS DATE would make "2026-11-22" the number 2026). Postgres
-		// won't put text in a date column, so there the text is cast to one.
 		"arg": func(f Field) string {
 			if f.Type != "date" {
 				return "sqlc.arg(" + f.Column + ")"

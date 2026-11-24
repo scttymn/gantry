@@ -29,8 +29,6 @@ func importAliases(file *ast.File) map[string]string {
 	return aliases
 }
 
-// visitNodes walks a Go file's syntax tree in source order, with each node's
-// ancestors (the node last) and the file's import aliases.
 func visitNodes(s *Source, visit func(n ast.Node, stack []ast.Node, aliases map[string]string, offset func(token.Pos) int)) error {
 	set, file, err := s.GoAST()
 	if err != nil {
@@ -66,8 +64,6 @@ func packageCall(call *ast.CallExpr, aliases map[string]string) (string, string)
 	return "", ""
 }
 
-// packageSelector is pkg.Name's import path and name: ("net/http", "Get")
-// for http.Get, whatever the import's alias.
 func packageSelector(sel *ast.SelectorExpr, aliases map[string]string) (string, string) {
 	if pkg, ok := sel.X.(*ast.Ident); ok {
 		return aliases[pkg.Name], sel.Sel.Name
@@ -84,7 +80,7 @@ func checkRawHTML(s *Source, report func(int, string)) error {
 		if file == nil {
 			return err
 		}
-		names := []string{"templ"} // templ generate imports it unaliased in every file
+		names := []string{"templ"}
 		for alias, imp := range importAliases(file) {
 			if imp == templPkg && alias != "_" && alias != "." {
 				names = append(names, regexp.QuoteMeta(alias))
@@ -107,9 +103,6 @@ func checkRawHTML(s *Source, report func(int, string)) error {
 	})
 }
 
-// goHeader is GoAST's, but no file and no error for a .templ file whose Go
-// header doesn't parse: templ generate refuses it, and the HTML rules still
-// read it.
 func goHeader(s *Source) (*token.FileSet, *ast.File, error) {
 	set, file, err := s.GoAST()
 	if err != nil && strings.HasSuffix(s.Path, ".templ") {
@@ -118,8 +111,6 @@ func goHeader(s *Source) (*token.FileSet, *ast.File, error) {
 	return set, file, err
 }
 
-// templBody is a .templ file after its Go header, with its // comment lines
-// blanked, and where that starts: the components, which aren't Go.
 func templBody(s *Source) (int, string, error) {
 	set, file, err := goHeader(s)
 	if file == nil {
@@ -167,8 +158,6 @@ func checkCrossOriginBypass(s *Source, report func(int, string)) error {
 	})
 }
 
-// checkTxDefer finds a transaction begun and committed in one function with
-// no deferred Rollback: an early return or a panic between them leaves it open.
 func checkTxDefer(s *Source, report func(int, string)) error {
 	return visitNodes(s, func(n ast.Node, _ []ast.Node, _ map[string]string, offset func(token.Pos) int) {
 		var body *ast.BlockStmt
@@ -218,7 +207,6 @@ func checkTxDefer(s *Source, report func(int, string)) error {
 	})
 }
 
-// methodCall is x.Method()'s x and Method, for a call on a plain name.
 func methodCall(n ast.Node) (string, string) {
 	if call, ok := n.(*ast.CallExpr); ok {
 		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {

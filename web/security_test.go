@@ -43,8 +43,6 @@ func get(h http.Handler, path, peer string, https bool, header ...string) http.H
 	return w.Header()
 }
 
-// HSTS is sent on https only, as the visitor used it: a forged
-// X-Forwarded-Proto from a peer that isn't a proxy doesn't count.
 func TestHSTS(t *testing.T) {
 	h := secured(Security{HSTS: 365 * 24 * time.Hour})
 	for _, tc := range []struct {
@@ -66,15 +64,11 @@ func TestHSTS(t *testing.T) {
 	if got := get(secured(Security{}), "/", "198.51.100.7", true).Get("Strict-Transport-Security"); got != "" {
 		t.Errorf("sent with no HSTS: %q", got)
 	}
-	// Under a second is max-age=0, which tells a browser to forget it.
 	if got := get(secured(Security{HSTS: 500 * time.Millisecond}), "/", "198.51.100.7", true).Get("Strict-Transport-Security"); got != "" {
 		t.Errorf("sent for half a second: %q", got)
 	}
 }
 
-// The policy is sent as the app says (enforced, or reported only). The app's
-// static error pages, plain files whose style is inline, get a policy of
-// their own that lets it in, from a cached route too.
 func TestCSP(t *testing.T) {
 	const policy = "default-src 'self'"
 	for _, tc := range []struct {
@@ -108,7 +102,6 @@ func TestCSP(t *testing.T) {
 	}
 }
 
-// Headers alone is Rails' defaults, as before Security.
 func TestHeadersAlone(t *testing.T) {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/", nil)
@@ -132,10 +125,6 @@ func TestContentSecurityPolicy(t *testing.T) {
 	}
 }
 
-// turboProgressBar is the hash of the <style> Turbo adds for its progress
-// bar, in the Turbo that gantry's apps are made with: its defaultCSS, a
-// template literal tidied by Turbo's helper (the first newline dropped, and
-// the first line's indent cut from every line).
 func TestTurboProgressBarHash(t *testing.T) {
 	for _, file := range []string{
 		"../cmd/gantry/templates/new/assets/js/vendor/@hotwired--turbo.js",

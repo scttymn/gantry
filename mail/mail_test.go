@@ -59,10 +59,6 @@ func TestLog(t *testing.T) {
 	}
 }
 
-// smtpServer serves one connection as an SMTP server, advertising STARTTLS
-// when offerSTARTTLS is set, and reports what the client did: "tls" when it
-// opened with a TLS handshake, "starttls" when it asked to upgrade,
-// "plaintext" when it handed over a message unencrypted, or "nothing".
 func smtpServer(t *testing.T, offerSTARTTLS bool) (port int, saw <-chan string) {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -70,7 +66,6 @@ func smtpServer(t *testing.T, offerSTARTTLS bool) (port int, saw <-chan string) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { l.Close() })
-	// A client that never dials must not leave the test waiting on Accept.
 	l.(*net.TCPListener).SetDeadline(time.Now().Add(2 * time.Second))
 	got := make(chan string, 1)
 	go func() {
@@ -125,21 +120,16 @@ func smtpServer(t *testing.T, offerSTARTTLS bool) (port int, saw <-chan string) 
 
 var codeMail = Message{From: "app@example.com", To: "rider@example.com", Subject: "Your code", Text: "123456"}
 
-// A server that doesn't offer STARTTLS, or an attacker who strips it, must not
-// receive the message (and the login code or reset link in it) in plaintext,
-// including from a custom sender that leaves TLS unset.
-func TestSMTPRequiresTLS(t *testing.T) {
+func TestSMTPSendsNoPlaintextWhenSTARTTLSIsMissingOrStripped(t *testing.T) {
 	port, saw := smtpServer(t, false)
 	if err := (SMTP{Host: "127.0.0.1", Port: port}).Send(t.Context(), codeMail); err == nil {
-		t.Error("sent without TLS")
+		t.Error("sent without TLS: a server without STARTTLS, or an attacker who strips it, reads the login code in plaintext")
 	}
 	if got := <-saw; got != "nothing" {
 		t.Errorf("the server saw %s", got)
 	}
 }
 
-// SMTP_TLS opts out of mandatory TLS explicitly; blank keeps it. Port 465
-// (implicitTLSPort) opens with TLS unless TLS is off.
 func TestSMTPTLSConfig(t *testing.T) {
 	for _, c := range []struct {
 		setting         string

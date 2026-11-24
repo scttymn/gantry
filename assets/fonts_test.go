@@ -7,7 +7,6 @@ import (
 	"testing/fstest"
 )
 
-// As Google Fonts writes them: a latin-ext and a latin face per weight.
 const googleFonts = `
 @font-face {
   font-family: 'IBM Plex Mono';
@@ -70,7 +69,7 @@ func TestPreload(t *testing.T) {
 			{Family: "ibm plex mono", Weight: 400}:  a.Path("plex-400.woff2"),
 			{Family: "IBM Plex Mono", Weight: 500}:  a.Path("plex-500.woff2"),
 			{Family: "IBM Plex Mono", Italic: true}: a.Path("plex-400-italic.woff2"),
-			{Family: "Barlow", Weight: 600}:         a.Path("barlow-variable.woff2"), // in a variable font's range
+			{Family: "Barlow", Weight: 600}:         a.Path("barlow-variable.woff2"),
 		} {
 			got := a.Styles("fonts.css").Preload(face).Preloads()
 			if len(got) != 1 || got[0] != want {

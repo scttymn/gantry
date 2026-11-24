@@ -49,7 +49,8 @@ func SignedCookie(r *http.Request, s sign.Signer, name string) (string, bool) {
 // minute, so there's nothing to keep on the server.
 type Flash struct {
 	Signer sign.Signer
-	Log    *slog.Logger // for a message cut to fit; slog.Default() when nil
+	// for a message cut to fit; slog.Default() when nil
+	Log *slog.Logger
 }
 
 const flashCookie = "flash"
@@ -64,7 +65,7 @@ func (f Flash) Set(w http.ResponseWriter, r *http.Request, kind, message string)
 	value := signed(message)
 	if !fits(value) {
 		runes := []rune(message)
-		keep, over := 0, len(runes) // runes[:keep] fits; runes[:over] doesn't
+		keep, over := 0, len(runes)
 		for over-keep > 1 {
 			if mid := (keep + over) / 2; fits(signed(string(runes[:mid]) + "…")) {
 				keep = mid

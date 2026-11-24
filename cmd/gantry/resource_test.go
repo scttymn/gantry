@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// A resource is top-level or under one namespace, any namespace: its
-// folder, its address and the route its next steps give follow from that.
 func TestResourcePaths(t *testing.T) {
 	for _, tc := range []struct {
 		name, controller, base, route string
@@ -50,10 +48,6 @@ func TestResourcePaths(t *testing.T) {
 	})
 }
 
-// A namespace with code of its own (an app/admin package, with the
-// admin's layout) isn't what a resource there uses: the next steps say so,
-// and how to give its pages that look. Resources the generator wrote there
-// before aren't such code.
 func TestResourceInNamespaceWithItsOwnCode(t *testing.T) {
 	const note = "app/admin has code of its own"
 	root := app(t)
@@ -77,8 +71,6 @@ func TestResourceInNamespaceWithItsOwnCode(t *testing.T) {
 	}
 }
 
-// The helpers every resource uses are the app's once written: the next
-// resource keeps them as they are, changed or not.
 func TestResourceHelpersKept(t *testing.T) {
 	root := app(t)
 	out := generate(t, root, "posts", "title:string")

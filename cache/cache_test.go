@@ -27,7 +27,7 @@ func TestFetch(t *testing.T) {
 	if err != nil || a.Visits != 1 {
 		t.Fatal(a, err)
 	}
-	a.Pages[0] = "changed" // a copy: what's kept isn't touched
+	a.Pages[0] = "changed"
 	b, _ := Fetch(ctx, c, "stats", time.Hour, compute)
 	if calls != 1 || b.Visits != 1 || b.Pages[0] != "/" {
 		t.Errorf("the second fetch: %+v after %d calls", b, calls)
@@ -48,7 +48,6 @@ func TestFetch(t *testing.T) {
 		t.Error("a ttl of 0 expired")
 	}
 
-	// An error isn't kept.
 	boom := errors.New("boom")
 	if _, err := Fetch(ctx, c, "bad", time.Hour, func() (int, error) { return 0, boom }); err != boom {
 		t.Errorf("error: %v", err)
@@ -85,14 +84,13 @@ func TestWriteReadDelete(t *testing.T) {
 	}
 }
 
-// Full, the least recently used goes first.
 func TestSize(t *testing.T) {
 	c := New(Options{Size: 100})
-	value := strings.Repeat("x", 18) // "xxx…" in JSON: 20 bytes, and a 1-byte key
+	value := strings.Repeat("x", 18)
 	for _, k := range []string{"a", "b", "c", "d"} {
 		c.Write(k, value, 0)
 	}
-	Read[string](c, "a") // a is used, so b is the oldest
+	Read[string](c, "a")
 	c.Write("e", value, 0)
 	c.Write("f", value, 0)
 	for k, want := range map[string]bool{"a": true, "b": false, "c": false, "d": true, "e": true, "f": true} {
@@ -114,7 +112,6 @@ func TestSize(t *testing.T) {
 	}
 }
 
-// Many asking for one key at once compute it once.
 func TestFetchOnce(t *testing.T) {
 	c := New(Options{})
 	var calls atomic.Int32
@@ -139,7 +136,6 @@ func TestFetchOnce(t *testing.T) {
 		t.Errorf("computed %d times", calls.Load())
 	}
 
-	// A caller whose context ends stops waiting.
 	ctx, cancel := context.WithCancel(context.Background())
 	stuck := make(chan struct{})
 	go Fetch(context.Background(), c, "slow", 0, func() (int, error) { <-stuck; return 1, nil })

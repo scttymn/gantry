@@ -38,7 +38,6 @@ func checkJSON(t *testing.T, d *DB) {
 	if err := d.Read.QueryRow(`SELECT data FROM j_prefs WHERE id = 2`).Scan(&none); err != nil || none.V.Theme != "" {
 		t.Errorf("NULL: %+v %v; want the zero value", none.V, err)
 	}
-	// The same SQL reads inside it, per engine.
 	q := `SELECT json_extract(data, '$.theme') FROM j_prefs WHERE id = 1`
 	if d.Engine == Postgres {
 		q = `SELECT data->>'theme' FROM j_prefs WHERE id = 1`

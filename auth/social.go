@@ -21,6 +21,10 @@ const socialValidity = 10 * time.Minute
 // Social adds provider identities to the same users and database sessions as
 // password and email-code auth. Apply the social recipe's migration first.
 // Signup is explicit; safe auto-linking to a verified email is always enabled.
+// It links only to an email the user proved separately (an email code, or an
+// authoritative provider's signup), never to a password account's: a password
+// hash proves no control over its email address. Changing a user's email
+// ends the old email's identity.
 type Social struct {
 	Providers []*SocialProvider
 	Signup    bool
@@ -72,7 +76,6 @@ func (a *Auth) socialRoutes(rt web.Routes) {
 			rt.Handle("GET "+base+"/callback", callback)
 		}
 	}
-	// Fail early on missing app-owned schema, without provider network calls.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	for _, query := range []string{`SELECT provider,subject,user_id,email_address,verified_at FROM auth_identities LIMIT 0`, `SELECT state_digest,provider,browser_digest,nonce,verifier,link_session_id,expires_at FROM auth_oauth_states LIMIT 0`} {
@@ -205,7 +208,6 @@ func (a *Auth) finishSocial(w http.ResponseWriter, r *http.Request, p *SocialPro
 	case err != nil:
 		return err
 	}
-	// Every mechanism creates the ordinary revocable database session.
 	if _, err := a.StartSession(w, r, user); err != nil {
 		return err
 	}
@@ -273,8 +275,6 @@ func (a *Auth) socialUser(r *http.Request, i SocialIdentity, linkSession int64) 
 			}
 			user, err = a.findBy(ctx, tx, "email_address", i.Email)
 			if err == nil {
-				// Auto-link only to a separately verified email identity for this user.
-				// A password hash alone proves no control over its email address.
 				var proof bool
 				err = tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM auth_identities WHERE provider='email' AND subject=$1 AND user_id=$2)`, i.Email, user.ID).Scan(&proof)
 				if err != nil {
@@ -343,14 +343,10 @@ func (a *Auth) socialUser(r *http.Request, i SocialIdentity, linkSession int64) 
 	return user, err
 }
 
-// recordVerifiedEmail is called only after proof (OTP or authoritative social
-// signup), inside the account transaction. Password-only accounts are not
-// marked verified. Existing apps can migrate their independently verified emails.
 func (a *Auth) recordVerifiedEmail(ctx context.Context, tx *db.Tx, u User) error {
 	if a.Social == nil {
 		return nil
 	}
-	// Changing the user's email invalidates the previous email identity.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_identities WHERE provider='email' AND user_id=$1 AND subject<>$2`, u.ID, u.EmailAddress); err != nil {
 		return err
 	}

@@ -15,8 +15,6 @@ func Sent(r *http.Request, param string) map[string]string {
 	prefix := param + "["
 	collect := func(values map[string][]string) {
 		for key, v := range values {
-			// The last value, as Rails: a checkbox sends a hidden "0" and
-			// then, when ticked, its "1".
 			if strings.HasPrefix(key, prefix) && strings.HasSuffix(key, "]") && len(v) > 0 {
 				out[key[len(prefix):len(key)-1]] = v[len(v)-1]
 			}

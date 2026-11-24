@@ -6,21 +6,20 @@ import (
 	"sync"
 )
 
-// Current is the request's own state (Rails' Current): what filters learned
-// about it (who's signed in, which account it's for), set by one and read by
-// the filters and the handler after it. It lives as long as the request.
+// Key is a typed name for a value in Current, the request's own state
+// (Rails' Current): what filters learned about it (who's signed in, which
+// account it's for), set by one and read by the filters and the handler
+// after it. It lives as long as the request, in its context, and changes
+// in place, so a filter passes values on without making a new request; the
+// router gives every request an empty one as it arrives.
 //
 //	var UserKey = web.NewKey[User]("user")
 //
-//	web.Set(r, UserKey, u)       // in a filter
-//	u, ok := web.Get(r, UserKey) // later, a User
+//	web.Set(r, UserKey, u)
+//	u, ok := web.Get(r, UserKey)
 //
-// It sits in the request's context and changes in place, so a filter passes
-// values on without making a new request. The router gives every request an
-// empty one as it arrives.
-
-// Key is a typed name for a value in Current. Keys are pointers, so two
-// packages' keys never collide, whatever their names.
+// Keys are pointers, so two packages' keys never collide, whatever their
+// names.
 type Key[T any] struct{ name string }
 
 // NewKey is a key for values of type T; name is for people (and errors).
@@ -49,7 +48,6 @@ func currentOf(r *http.Request) *current {
 	return c
 }
 
-// withCurrent gives each request its Current.
 func withCurrent(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		next.ServeHTTP(w, WithCurrent(r))

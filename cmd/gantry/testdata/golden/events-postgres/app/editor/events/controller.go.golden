@@ -1,4 +1,3 @@
-// Package events is the editor's events, at /editor/events.
 package events
 
 import (
@@ -17,22 +16,19 @@ import (
 
 const (
 	path     = "/editor/events"
-	param    = "event" // the form's fields are event[name], …
+	param    = "event"
 	title    = "Events"
 	singular = "Event"
 )
 
-// Controller is the events' pages: the list, the forms, and deleting.
 type Controller struct{ resource.Controller }
 
 var fields = []resource.Field{resource.F("name"), resource.F("starts_on", resource.Type("date")), resource.Position}
 
-// formValues are a event as its form holds them: text, as typed.
 func formValues(event models.Event) map[string]string {
 	return map[string]string{"name": event.Name, "starts_on": resource.DateText(event.StartsOn), "position": resource.IntText(event.Position)}
 }
 
-// fromForm reads a form's values back into a event.
 func fromForm(v map[string]string) models.Event {
 	return models.Event{Name: v["name"], StartsOn: resource.OptionalDate(v["starts_on"]), Position: resource.OptionalInt(v["position"])}
 }
@@ -61,8 +57,6 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	}
 	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
 		q := models.New(tx)
-		// On Postgres two at once can still take the same position; the
-		// list orders by position, then id.
 		if !event.Position.Valid {
 			next, err := q.NextEventPosition(r.Context())
 			if err != nil {
@@ -87,9 +81,6 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, event.ID, formValues(event), nil)
 }
 
-// Update reads, checks and writes the row in one transaction, so an edit
-// saved meanwhile isn't overwritten with what this one read. The form is
-// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	sent := resource.Overlay(r, param, map[string]string{})
 	var (
@@ -132,7 +123,6 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 	return c.Deleted(w, r, path, singular)
 }
 
-// form is the new or edit form, with what's wrong when it's sent back.
 func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
 	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)

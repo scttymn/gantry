@@ -10,7 +10,8 @@ import (
 // Download streams r to the client as a file to save, named filename
 // (Rails' send_data): nothing is held in memory, and the name is made safe,
 // its folders dropped and anything but plain ASCII kept for browsers that
-// read the RFC 6266 form. A failure partway cuts the connection (the
+// read the RFC 6266 form (filename*, percent-encoded as RFC 5987 asks:
+// all but letters, digits and !#$&+-.^_`|~). A failure partway cuts the connection (the
 // router's rule), so a download is never mistaken for a whole one. Files on
 // disk go through http.ServeContent instead, which also resumes them. It's
 // sent through Moving, so a slow client isn't cut off by the server's
@@ -22,9 +23,6 @@ func Download(w http.ResponseWriter, req *http.Request, filename, contentType st
 	return err
 }
 
-// disposition is the Content-Disposition for filename: its last path
-// element, with an ASCII name for every browser and the UTF-8 one when
-// they differ.
 func disposition(filename string) string {
 	if i := strings.LastIndexAny(filename, `/\`); i >= 0 {
 		filename = filename[i+1:]
@@ -48,8 +46,6 @@ func disposition(filename string) string {
 	return d
 }
 
-// attrValue is s percent-encoded as RFC 5987 asks: all but letters, digits
-// and !#$&+-.^_`|~.
 func attrValue(s string) string {
 	var b strings.Builder
 	for _, c := range []byte(s) {

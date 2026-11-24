@@ -15,22 +15,13 @@ import (
 	"time"
 )
 
-// jspmAPI is jspm.org's generator, which resolves packages to their files,
-// importmap-rails' source; tests point it, and httpClient, elsewhere.
-// httpClient gives up on a request after a minute, so a stalled server
-// fails gantry importmap and gantry fonts instead of hanging them.
 var (
 	jspmAPI    = "https://api.jspm.io/generate"
 	httpClient = &http.Client{Timeout: time.Minute}
 )
 
-// vendorDir is where pinned packages go, under the app's root: the skeleton
-// pins every file there (assets.PinVendor).
 var vendorDir = filepath.Join("assets", "js", "vendor")
 
-// importmapCommand is `gantry importmap pin|unpin PACKAGE...`, Rails'
-// bin/importmap: pin downloads packages and what they import into
-// assets/js/vendor/, served from the app, never a CDN; unpin removes them.
 func importmapCommand(root string, args []string, out io.Writer) error {
 	if len(args) < 2 {
 		return usageError{}
@@ -54,8 +45,6 @@ func importmapCommand(root string, args []string, out io.Writer) error {
 	return usageError{}
 }
 
-// packageName is a package without its version: "@hotwired/turbo@8" is
-// "@hotwired/turbo".
 func packageName(spec string) string {
 	if i := strings.LastIndex(spec, "@"); i > 0 {
 		return spec[:i]
@@ -63,7 +52,6 @@ func packageName(spec string) string {
 	return spec
 }
 
-// vendorFile is a package's file: "/" is "--", as importmap-rails names it.
 func vendorFile(name string) string { return strings.ReplaceAll(name, "/", "--") + ".js" }
 
 var (
@@ -71,8 +59,6 @@ var (
 	version   = regexp.MustCompile(`@(\d+\.\d+\.\d+[^/\s"]*)`)
 )
 
-// licenseFiles are the names npm packs a package's license under, in the
-// order pin asks the CDN for them, beside the package's package.json.
 var licenseFiles = []string{"LICENSE", "LICENSE.md", "LICENSE.txt", "license", "license.md", "LICENCE"}
 
 func pinPackages(root string, specs []string, out io.Writer) error {
@@ -100,10 +86,8 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	// Everything is fetched before anything is written, so a failure
-	// leaves the folder as it was.
 	files := map[string][]byte{}
-	notes := map[string]string{} // what pin says of a package it found no license file for
+	notes := map[string]string{}
 	for _, name := range names {
 		url := got.Map.Imports[name]
 		path := filepath.Join(root, vendorDir, vendorFile(name))
@@ -142,13 +126,8 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 	return nil
 }
 
-// titleVersion is the version a license comment's title line ends in.
 var titleVersion = regexp.MustCompile(`\d+\.\d+\.\d+\S*$`)
 
-// keptNotice is the license comment under the first line of path, the file
-// pin replaces, as gantry new's Turbo and Stimulus and earlier pins have it,
-// with v for the version its title line ends in; "" with none. Turbo's
-// package has no license file, so its notice lives on only this way.
 func keptNotice(path, v string) string {
 	src, err := os.ReadFile(path)
 	if err != nil {
@@ -167,17 +146,9 @@ func keptNotice(path, v string) string {
 	return "/*!\n" + title + "\n" + text + "\n*/\n\n"
 }
 
-// license is the comment pin puts under a pinned file's first line, as
-// gantry new's Turbo and Stimulus have it: a /*! */ comment, which
-// minifiers keep, with the package and its version (title), its homepage,
-// and its license file, from the CDN folder pkg, where its package.json is.
-// With no license file there it's "", and named, the license the
-// package.json names, if it names one, is what pin can say instead.
 func license(title, pkg string) (comment, named string) {
 	var meta struct{ Homepage, License string }
 	if src, err := fetch(pkg + "package.json"); err == nil {
-		// What won't parse (an old package's {"type": "MIT"} license, say)
-		// is left out of the comment and the warning, which do without it.
 		_ = json.Unmarshal(src, &meta)
 	}
 	for _, file := range licenseFiles {

@@ -131,7 +131,6 @@ func (i *Inbox) Routes(mount func(string, http.Handler), prefix string) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		// The inbox sets its own policy, for its pages and the mail it shows.
 		w.Header().Del("Content-Security-Policy-Report-Only")
 		if !env.Development() || !localInboxHost(r.Host) {
 			http.NotFound(w, r)
@@ -200,7 +199,6 @@ func (i *Inbox) serve(w http.ResponseWriter, r *http.Request, base string) error
 	if suffix == "updates" {
 		return i.updates(w, r, base)
 	}
-	// Read the revision before the snapshot: a racing write is seen on the next poll.
 	revision, err := i.revision(r.Context())
 	if err != nil {
 		return err
@@ -250,15 +248,11 @@ func (i *Inbox) serve(w http.ResponseWriter, r *http.Request, base string) error
 			return nil
 		}
 	}
-	// style-src 'self': the development panel's stylesheet.
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return inboxView.Execute(w, p)
 }
 
-// revision uses Gantry's SQLite change tracking, including other processes' writes.
-// Its epoch changes on restart or a failed read because a reopened version
-// connection can start counting from the same number again.
 func (i *Inbox) revision(ctx context.Context) (string, error) {
 	i.revisionMu.Lock()
 	defer i.revisionMu.Unlock()
@@ -333,7 +327,6 @@ func (i *Inbox) updates(w http.ResponseWriter, r *http.Request, base string) err
 		return err
 	}
 	update.List = list.String()
-	// Leave the reader (including its HTML iframe) intact unless selection disappeared.
 	if update.SelectedID != strconv.FormatInt(selectedID, 10) {
 		var reader bytes.Buffer
 		if err := inboxView.ExecuteTemplate(&reader, "reader", p); err != nil {
@@ -350,8 +343,6 @@ func (i *Inbox) updates(w http.ResponseWriter, r *http.Request, base string) err
 var inboxFiles embed.FS
 var inboxAssets = assets.MustNew(inboxFiles)
 
-// Remote resources, navigation, scripts and form controls have no place in a
-// captured-email preview. The iframe and its CSP provide separate containment.
 func inboxHTML(source string) ([]byte, error) {
 	doc, err := html.Parse(strings.NewReader(source))
 	if err != nil {

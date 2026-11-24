@@ -1,6 +1,3 @@
--- The challenge's schema (its schema.sql), as it is: fixed, so there is no
--- migration after this one. IF NOT EXISTS, as a copy of its seed database
--- already has them.
 -- +goose Up
 CREATE TABLE IF NOT EXISTS users (
   id          INTEGER PRIMARY KEY,

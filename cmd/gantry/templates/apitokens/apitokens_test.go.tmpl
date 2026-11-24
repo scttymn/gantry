@@ -18,7 +18,6 @@ import (
 	"{{.Module}}/test"
 )
 
-// api is an API behind Require, answering who the token is.
 func api(t *testing.T) (*testkit.Visitor, *db.DB, *testkit.FakeClock) {
 	d := test.DB(t)
 	clock := testkit.Clock(time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC))
@@ -57,7 +56,6 @@ func TestRefused(t *testing.T) {
 	ctx := context.Background()
 	b, d, clock := api(t)
 	tok, row := issue(t, d, "deploy bot", clock.Now())
-	// A token stored under another prefix: refused before any lookup.
 	other := "x_" + strings.TrimPrefix(tok, apitokens.Prefix)
 	models.New(d.Write).CreateAPIToken(ctx, models.CreateAPITokenParams{Name: "other", TokenDigest: token.Digest(other), Now: clock.Now()})
 	for name, header := range map[string]string{
@@ -71,7 +69,6 @@ func TestRefused(t *testing.T) {
 			t.Errorf("%s: %d %s", name, page.Code, page.Body)
 		}
 	}
-	// Revoked: its row deleted.
 	models.New(d.Write).DeleteAPIToken(ctx, row.ID)
 	b.Header.Set("Authorization", "Bearer "+tok)
 	if page := b.Get("/api/me"); page.Code != 401 {
@@ -87,7 +84,6 @@ func TestNameTaken(t *testing.T) {
 	}
 }
 
-// last_used_at is written at most once a minute, however busy the token.
 func TestLastUsed(t *testing.T) {
 	b, d, clock := api(t)
 	tok, row := issue(t, d, "deploy bot", clock.Now())

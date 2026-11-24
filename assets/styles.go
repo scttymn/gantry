@@ -23,11 +23,10 @@ const InlineLimit = 10 << 10
 // Styles are stylesheets bundled into one, in the order given: written as
 // separate files, joined once at start. A page draws them with Tag.
 type Styles struct {
-	body   []byte
-	inline bool
-	path   string // the bundle's URL when it's linked
-	hash   string // "sha256-…", for a Content-Security-Policy
-	// preloads are the faces Tag fetches first (Preload).
+	body     []byte
+	inline   bool
+	path     string
+	hash     string
 	preloads []string
 }
 
@@ -66,8 +65,6 @@ func (a *Assets) bundle(names []string) *Styles {
 	s := &Styles{body: []byte(b.String())}
 	sum := sha256.Sum256(s.body)
 	s.hash = "sha256-" + base64.StdEncoding.EncodeToString(sum[:])
-	// Served too, whichever way it's drawn: a linked bundle needs it, and an
-	// inlined one costs only its bytes in memory.
 	f := a.digest("styles.css", s.body)
 	f.digested = "styles-" + hex.EncodeToString(sum[:])[:8] + ".css"
 	a.byDigest[f.digested] = f
@@ -77,13 +74,12 @@ func (a *Assets) bundle(names []string) *Styles {
 
 // Tag is the bundle for a page's head: a preload for each face it fetches
 // first (Preload), then a <style> with it when it's inline, else a <link>
-// to it.
+// to it. A preload is crossorigin: fonts are always fetched in CORS mode,
+// and a preload without it would be fetched a second time.
 func (s *Styles) Tag() templ.Component {
 	return templ.ComponentFunc(func(_ context.Context, w io.Writer) error {
 		var b strings.Builder
 		for _, font := range s.preloads {
-			// crossorigin: fonts are always fetched in CORS mode, and a
-			// preload without it is fetched a second time.
 			b.WriteString(`<link rel="preload" href="` + templ.EscapeString(font) + `" as="font" type="font/woff2" crossorigin="anonymous">`)
 		}
 		if s.inline {

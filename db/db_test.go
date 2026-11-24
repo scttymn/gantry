@@ -264,8 +264,6 @@ func TestPostgresVersion(t *testing.T) {
 	}
 	defer d.Write.Exec(`DROP TABLE version_posts`)
 	t.Run("reading changes nothing", func(t *testing.T) {
-		// The server is shared with other packages' tests, whose writes
-		// count too: one quiet read is enough.
 		for range 50 {
 			before, err := d.Version(ctx)
 			if err != nil {
@@ -312,8 +310,6 @@ func equal(a, b []int) bool {
 	return true
 }
 
-// gantry's own SQL is written once, with $1-style placeholders: Postgres'
-// own, and on SQLite they bind by position too, in any order.
 func TestDollarPlaceholders(t *testing.T) {
 	d := openTemp(t)
 	d.Write.Exec(`CREATE TABLE s (name text PRIMARY KEY, value text)`)
@@ -398,7 +394,6 @@ func TestVersion(t *testing.T) {
 	})
 }
 
-// dbPath is the file behind d.
 func dbPath(t *testing.T, d *DB) string {
 	t.Helper()
 	var seq int

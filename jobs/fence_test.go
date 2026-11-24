@@ -11,19 +11,12 @@ import (
 	"testing"
 )
 
-// unfenced are the functions whose UPDATE of gantry_jobs needn't say which
-// claim or state it changes, and why.
 var unfenced = map[string]string{
 	"claim": "it runs in the claim's own transaction, on rows that transaction just read (FOR UPDATE SKIP LOCKED on Postgres; SQLite's BEGIN IMMEDIATE holds the one writer)",
 }
 
 var fence = regexp.MustCompile(`(?is)\bWHERE\b.*\b(claimed_by|state\s*=)`)
 
-// Every UPDATE of gantry_jobs says in its WHERE which claim (claimed_by) or
-// state it changes a job from, so a worker that stalled past Dead, its job
-// since gone back and claimed again, can't settle what's no longer its own
-// (#32). settle fences on the claim; a function listed in unfenced says why
-// it needn't.
 func TestJobUpdatesAreFenced(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -54,7 +47,7 @@ func TestJobUpdatesAreFenced(t *testing.T) {
 				}
 				updates++
 				if _, ok := unfenced[fn.Name.Name]; !ok && !fence.MatchString(query) {
-					t.Errorf("%s: %s updates gantry_jobs with no claim or state in its WHERE; settle a job through settle, which fences on its claim, or say in unfenced why this one needn't:\n%s", set.Position(lit.Pos()), fn.Name.Name, query)
+					t.Errorf("%s: %s updates gantry_jobs with no claim or state in its WHERE; settle a job through settle, which fences on its claim, or say in unfenced why this one needn't (#32):\n%s", set.Position(lit.Pos()), fn.Name.Name, query)
 				}
 				return true
 			})

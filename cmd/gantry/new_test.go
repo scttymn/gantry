@@ -18,8 +18,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// steps records the commands gantry runs instead of running them; fail
-// makes the one named fail.
 func steps(t *testing.T, fail string) *[][]string {
 	t.Helper()
 	var got [][]string
@@ -52,7 +50,6 @@ func gantry(t *testing.T, root string, args ...string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
-// big is a module to make an app in, with --in-module.
 func big(t *testing.T, repo string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -65,8 +62,6 @@ func big(t *testing.T, repo string) string {
 	return root
 }
 
-// An app in a folder of the module it's made in: no go.mod of its own, its
-// imports under the module's path, built from the module's root.
 func TestNewInModule(t *testing.T) {
 	root := big(t, "")
 	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
@@ -81,7 +76,7 @@ func TestNewInModule(t *testing.T) {
 	read := func(name string) string { b, _ := os.ReadFile(filepath.Join(dir, name)); return string(b) }
 	for file, wants := range map[string][]string{
 		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
-		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
+		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app\n"},
 		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "templ generate -path /app/apps/control && go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/"},
 		"Dockerfile.dockerignore": {"**/.git", "**/.cache", "**/.gantry"},
 	} {
@@ -91,7 +86,6 @@ func TestNewInModule(t *testing.T) {
 			}
 		}
 	}
-	// Its steps: no git init, the module's repo is there.
 	got := steps(t, "")
 	gantry(t, filepath.Join(root, "apps"), "new", "desk", "--in-module")
 	for _, step := range *got {
@@ -113,9 +107,6 @@ func TestNewInModuleRules(t *testing.T) {
 	}
 }
 
-// The JavaScript a new app vendors is MIT, which asks that every copy carry
-// its copyright and permission notice: the app's copy does, in a /*! */
-// comment the build's minifying keeps.
 func TestNewVendorLicenses(t *testing.T) {
 	root := t.TempDir()
 	if code, _, stderr := gantry(t, root, "new", "shop", "--skip-houston"); code != 0 {
@@ -143,9 +134,6 @@ func TestNewVendorLicenses(t *testing.T) {
 	}
 }
 
-// A new app's CI runs Strict, the generated-code check and the tests, each a
-// command gantry has, with its actions pinned by commit and no secrets. An
-// app in a module has its repository's CI instead.
 func TestNewCI(t *testing.T) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		root := t.TempDir()
@@ -165,7 +153,7 @@ func TestNewCI(t *testing.T) {
 					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
 				}
 			}
-			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40} # v`).MatchString(action) {
+			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(action) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, action)
 			}
 		}
@@ -185,7 +173,6 @@ func TestNewCI(t *testing.T) {
 	}
 }
 
-// gantry secret is a key sign.Key takes: 32 random bytes, in hex.
 func TestSecret(t *testing.T) {
 	keys := map[string]bool{}
 	for range 2 {
@@ -201,8 +188,6 @@ func TestSecret(t *testing.T) {
 	}
 }
 
-// A new app's .env, which git ignores, has development's own SECRET_KEY,
-// and on Postgres the dev database's password: each app its own.
 func TestNewEnv(t *testing.T) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
@@ -244,8 +229,6 @@ func TestNewEnv(t *testing.T) {
 	}
 }
 
-// gantry new's steps: Houston's files, the module's requirements, templ's
-// code, and git.
 func TestNewSteps(t *testing.T) {
 	root := t.TempDir()
 	got := steps(t, "")
@@ -263,14 +246,12 @@ func TestNewSteps(t *testing.T) {
 		t.Errorf("output: %s%s", out, stderr)
 	}
 
-	// houston init's output is shown when it fails.
 	root = t.TempDir()
 	steps(t, "houston init --name shop")
 	if code, _, stderr := gantry(t, root, "new", "shop"); code != 1 || !strings.Contains(stderr, "houston said this") {
 		t.Errorf("exit %d: %s", code, stderr)
 	}
 
-	// A step that fails stops it, and says what's left.
 	root = t.TempDir()
 	got = steps(t, "houston exec templ generate")
 	code, _, stderr = gantry(t, root, "new", "shop")
@@ -279,9 +260,6 @@ func TestNewSteps(t *testing.T) {
 	}
 }
 
-// The houston on PATH runs gantry new's steps when it's new enough for
-// them; an older one, or none, and the app's pinned release does, which its
-// bin/gantry downloads.
 func TestNewHouston(t *testing.T) {
 	pinned := [][]string{
 		{"shop", "shop/.gantry/bin/houston", "init", "--name", "shop"},
@@ -302,7 +280,7 @@ func TestNewHouston(t *testing.T) {
 	}{
 		{houstonRelease, onPath, ""},
 		{"v9.0.0", onPath, ""},
-		{"dev", onPath, ""}, // built from a checkout: trusted
+		{"dev", onPath, ""},
 		{"v0.4.9", pinned, "the houston on PATH is v0.4.9"},
 		{"", pinned, "there's no houston on PATH"},
 	} {
@@ -319,13 +297,11 @@ func TestNewHouston(t *testing.T) {
 		if strings.Contains(stderr, "needs Houston") != (c.note != "") || !strings.Contains(stderr, c.note) {
 			t.Errorf("houston %q: %s", c.found, stderr)
 		}
-		// Whichever it is, it's "houston" to people.
 		if !strings.Contains(out, "  run houston init --name shop\n") {
 			t.Errorf("houston %q: %s", c.found, out)
 		}
 	}
 
-	// The pinned release can't be downloaded: what's left to do, by hand.
 	root := t.TempDir()
 	got := steps(t, "")
 	houstonVersion = func() string { return "v0.4.9" }
@@ -336,9 +312,6 @@ func TestNewHouston(t *testing.T) {
 	}
 }
 
-// A release's binary says which release it is (the Dockerfile stamps
-// releaseVersion), and the app it makes requires that one. A build from a
-// checkout requires the newest release, and says so.
 func TestNewRequiresThisRelease(t *testing.T) {
 	requires := func(t *testing.T) (string, string) {
 		t.Helper()
@@ -371,8 +344,6 @@ func TestNewRequiresThisRelease(t *testing.T) {
 	}
 }
 
-// AGENTS.md sends agents to the docs of the gantry go.mod requires, and its
-// layout map is the README's.
 func TestNewAgents(t *testing.T) {
 	was := releaseVersion
 	t.Cleanup(func() { releaseVersion = was })
@@ -404,9 +375,6 @@ func TestNewAgents(t *testing.T) {
 	}
 }
 
-// A release is tagged with latestRelease raised to its tag: the release
-// workflow gives the tag, so nothing is published with it behind, and an
-// app made from a checkout never requires a release older than the newest.
 func TestLatestReleaseIsTheTag(t *testing.T) {
 	tag := os.Getenv("GANTRY_RELEASE_TAG")
 	if tag == "" {
@@ -435,14 +403,10 @@ func TestNewRules(t *testing.T) {
 	}
 }
 
-// --gantry: go.work uses the checkout, and the dev container mounts the app
-// and the checkout under /app, the same path apart as on the host, so
-// go.work's use finds the checkout there too. Nothing is mounted over the
-// container's own folders, however far up or away the checkout is.
 func TestNewGantryCheckout(t *testing.T) {
 	for _, tc := range []struct {
-		in, checkout string // where the app is made and where the checkout is, under a temporary root
-		use          string // go.work's use: the checkout, from the app
+		in, checkout string
+		use          string
 	}{
 		{in: ".", checkout: "gantry", use: "../gantry"},
 		{in: "gantry", checkout: "gantry", use: ".."},
@@ -472,11 +436,11 @@ func TestNewGantryCheckout(t *testing.T) {
 			if err := yaml.Unmarshal(raw, &compose); err != nil {
 				t.Fatal(err)
 			}
-			mounts := map[string]string{} // a folder on the host: where the container has it
+			mounts := map[string]string{}
 			for _, v := range compose.Services["app"].Volumes {
 				source, target, _ := strings.Cut(v, ":")
 				if !strings.HasPrefix(source, ".") && !strings.HasPrefix(source, "/") {
-					continue // a named volume
+					continue
 				}
 				if target != "/app" && !strings.HasPrefix(target, "/app/") {
 					t.Errorf("%s is mounted at %s, outside /app", source, target)
@@ -499,8 +463,6 @@ func TestNewGantryCheckout(t *testing.T) {
 			if !strings.Contains(dev, "WORKDIR "+app+"\n") || !strings.Contains(dev, `"-path", "`+app+`"`) {
 				t.Errorf("the dev stage doesn't work in the app's mount, %s:\n%s", app, dev)
 			}
-			// The test and production builds copy the app to /app, and build
-			// against go.mod's gantry, not the checkout.
 			if others := strings.Replace(string(docker), dev, "", 1); strings.Contains(others, app+" ") || strings.Contains(others, app+"\n") {
 				t.Errorf("a stage besides dev uses the dev container's %s", app)
 			}
@@ -512,8 +474,6 @@ func TestNewGantryCheckout(t *testing.T) {
 	}
 }
 
-// gantry db, task and tasks are the app's own commands, in its container;
-// anything else is Houston's.
 func TestAppCommands(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "cmd", "shop"), 0o755)
@@ -545,7 +505,6 @@ func TestAppCommands(t *testing.T) {
 			t.Errorf("%q: exit %d, ran %q (%s)", tc.args, code, *got, stderr)
 		}
 	}
-	// The command's exit code is gantry's.
 	steps(t, "houston test")
 	if code, _, _ := gantry(t, root, "test"); code != 3 {
 		t.Errorf("exit %d, want houston's 3", code)
@@ -579,8 +538,6 @@ func TestAppCommandsOutsideAnApp(t *testing.T) {
 	}
 }
 
-// An app made in a module builds and passes its tests there, against this
-// checkout (the module's replace).
 func TestNewInModuleBuilds(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short")
@@ -603,7 +560,6 @@ func TestNewInModuleBuilds(t *testing.T) {
 	}
 }
 
-// A command's own exit code is gantry's: houston test's 3 is gantry test's.
 func TestExitCodes(t *testing.T) {
 	err := exitError(exec.Command("sh", "-c", "exit 5").Run())
 	var code errExit
@@ -615,7 +571,6 @@ func TestExitCodes(t *testing.T) {
 	}
 }
 
-// gofmted fails the test when a generated Go file isn't as gofmt writes it.
 func gofmted(t *testing.T, rel string, src []byte) {
 	t.Helper()
 	if !strings.HasSuffix(rel, ".go") {
@@ -626,9 +581,6 @@ func gofmted(t *testing.T, rel string, src []byte) {
 	}
 }
 
-// A new app's test stage compiles it as its production build does, with
-// nodevcheck, so a call that only development builds have fails at gantry
-// test, not at deploy.
 func TestNewAppProductionBuild(t *testing.T) {
 	if testing.Short() {
 		t.Skip("-short")
@@ -675,9 +627,6 @@ func Wrap(h http.Handler) http.Handler { return web.DevelopmentWithRules(h, ".",
 	}
 }
 
-// A new app's feature map reads, as do the features g resource and g auth
-// print for it once pasted. TestGeneratorMatrix runs TestFeatures in each
-// app it builds, on its routes.
 func TestFeatureMap(t *testing.T) {
 	dir := shopApp(t, "sqlite")
 	path := filepath.Join(dir, "test", "features.yaml")

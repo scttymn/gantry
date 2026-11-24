@@ -10,10 +10,9 @@ import (
 	"strings"
 	"testing"
 	"time"
-	_ "time/tzdata" // the zones, wherever the tests run
+	_ "time/tzdata"
 )
 
-// seen is what a handler behind the router learns of the request.
 func seen(w http.ResponseWriter, r *http.Request) error {
 	fmt.Fprintf(w, "ip=%s scheme=%s host=%s xff=%q proto=%q xfh=%q", ClientIP(r), Scheme(r), RequestHost(r),
 		r.Header.Get("X-Forwarded-For"), r.Header.Get("X-Forwarded-Proto"), r.Header.Get("X-Forwarded-Host"))
@@ -57,8 +56,6 @@ func TestProxies(t *testing.T) {
 			`ip=203.0.113.9 scheme=https host=shop.example.com xff="1.2.3.4, 203.0.113.9, 10.0.0.9" proto="https" xfh="Shop.Example.com:443"`},
 		{"a private proxy, no header", "172.18.0.2", nil,
 			`ip=172.18.0.2 scheme=http host=app.example.com xff="" proto="" xfh=""`},
-		// A proxy that appends: the visitor's own values come first, so only
-		// the last (the proxy's) is believed.
 		{"a visitor's scheme and host, appended to", "10.0.0.2", http.Header{"X-Forwarded-Proto": {"https, http"}, "X-Forwarded-Host": {"admin.example.com, shop.example.com"}},
 			`ip=10.0.0.2 scheme=http host=shop.example.com xff="" proto="https, http" xfh="admin.example.com, shop.example.com"`},
 		{"a visitor's scheme and host, a line of their own", "10.0.0.2", http.Header{"X-Forwarded-Proto": {"https", "http"}, "X-Forwarded-Host": {"admin.example.com", "shop.example.com"}},
@@ -69,7 +66,6 @@ func TestProxies(t *testing.T) {
 		}
 	}
 
-	// A forwarded host is the host constraints see, only from a proxy.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/admin", nil)
 	r.RemoteAddr, r.Host, r.Header = "10.0.0.2:1", "app.example.com", http.Header{"X-Forwarded-Host": {"admin.example.com"}}
@@ -84,8 +80,6 @@ func TestProxies(t *testing.T) {
 		t.Errorf("a forged host reached the admin: %d", w.Code)
 	}
 
-	// Without ForwardedHost, a proxy's X-Forwarded-Host is a visitor's own
-	// (Cloudflare passes it through): ignored and removed.
 	keep := router(Proxies{})
 	if got := from(keep, "10.0.0.2", http.Header{"X-Forwarded-Host": {"admin.example.com"}, "X-Forwarded-Proto": {"https"}}); got != `ip=10.0.0.2 scheme=https host=app.example.com xff="" proto="https" xfh=""` {
 		t.Errorf("a forwarded host believed: %s", got)
@@ -97,7 +91,6 @@ func TestProxies(t *testing.T) {
 		t.Errorf("a proxy's forwarded host reached the admin: %d", w.Code)
 	}
 
-	// A provider's own header (Cloudflare's), trusted from a proxy only.
 	cf := router(Proxies{ClientIP: "CF-Connecting-IP"})
 	header := http.Header{"Cf-Connecting-Ip": {"203.0.113.50"}, "X-Forwarded-For": {"198.51.100.1"}}
 	if got := from(cf, "127.0.0.1", header); !strings.HasPrefix(got, "ip=203.0.113.50 ") {
@@ -107,7 +100,6 @@ func TestProxies(t *testing.T) {
 		t.Errorf("CF-Connecting-IP forged: %s", got)
 	}
 
-	// The app's own list of proxies, in place of the private networks.
 	own := router(Proxies{Trusted: []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}})
 	if got := from(own, "203.0.113.5", http.Header{"X-Forwarded-For": {"198.51.100.20"}}); !strings.HasPrefix(got, "ip=198.51.100.20 ") {
 		t.Errorf("a listed proxy: %s", got)
@@ -117,9 +109,6 @@ func TestProxies(t *testing.T) {
 	}
 }
 
-// Proxies by name: a container's name on a Docker network, looked up at
-// most once a minute. Only its address is trusted, not the network's; a
-// failed lookup trusts no one.
 func TestProxiesByName(t *testing.T) {
 	var (
 		lookups int
@@ -159,7 +148,6 @@ func TestProxiesByName(t *testing.T) {
 		t.Errorf("%d lookups in a minute, want 1", lookups)
 	}
 
-	// cloudflared restarts at another address: seen after the minute.
 	addrs = []netip.Addr{netip.MustParseAddr("172.18.0.6")}
 	now = now.Add(61 * time.Second)
 	if got := from(h, "172.18.0.6", tunnel); !strings.HasPrefix(got, "ip=203.0.113.50 ") {
@@ -175,7 +163,6 @@ func TestProxiesByName(t *testing.T) {
 	}
 }
 
-// The proxies an app lists in its environment (TRUSTED_PROXIES).
 func TestParseProxies(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"", "[] default"},
@@ -200,8 +187,6 @@ func TestParseProxies(t *testing.T) {
 		t.Error("a name parsed as an address")
 	}
 
-	// "none": nothing is a proxy, so a forged X-Forwarded-For from a private
-	// address (a container beside the app) is ignored, as from anywhere.
 	none, _ := ParseProxies("none")
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Proxies = Proxies{Trusted: none}
@@ -211,7 +196,6 @@ func TestParseProxies(t *testing.T) {
 	}
 }
 
-// Outside a router, ClientIP works it out with the default rule.
 func TestClientIPOutsideARouter(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.RemoteAddr = "10.0.0.2:1"
@@ -229,11 +213,11 @@ func TestHosts(t *testing.T) {
 	for host, want := range map[string]int{
 		"example.com":          200,
 		"EXAMPLE.com:8080":     200,
-		"shop.example.com":     200, // .shop.example.com: it and its subdomains
+		"shop.example.com":     200,
 		"eu.shop.example.com":  200,
 		"evil.com":             403,
 		"example.com.evil.com": 403,
-		"evilshop.example.com": 403, // ends with it, but isn't a subdomain
+		"evilshop.example.com": 403,
 	} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest("GET", "/who", nil)
@@ -243,7 +227,6 @@ func TestHosts(t *testing.T) {
 			t.Errorf("%s = %d, want %d", host, w.Code, want)
 		}
 	}
-	// The health check answers whatever the host: a proxy asks by address.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/up", nil)
 	r.Host = "10.0.0.5:8080"
@@ -283,7 +266,6 @@ func TestZone(t *testing.T) {
 	if got := shown(rt, Pipeline{user}); got != "Asia/Tokyo 03:00" {
 		t.Errorf("the user's zone: %q", got)
 	}
-	// Outside a router: UTC.
 	if z := Zone(httptest.NewRequest("GET", "/", nil)); z != time.UTC {
 		t.Errorf("outside a router: %v", z)
 	}

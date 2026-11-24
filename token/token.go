@@ -23,7 +23,7 @@ import (
 // to store.
 func New(prefix string) (tok, digest string) {
 	raw := make([]byte, 32)
-	rand.Read(raw) // crypto/rand doesn't fail on supported platforms
+	rand.Read(raw)
 	tok = prefix + base64.RawURLEncoding.EncodeToString(raw)
 	return tok, Digest(tok)
 }

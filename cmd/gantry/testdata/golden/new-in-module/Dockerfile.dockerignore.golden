@@ -1,6 +1,3 @@
-# The build's context is the module's root (../..), so this, beside the
-# Dockerfile, is what BuildKit reads to keep out what the app's image
-# doesn't need, anywhere in the module.
 .git
 **/.git
 .env

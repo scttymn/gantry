@@ -30,7 +30,6 @@ func (a *Assets) Precompile(ctx context.Context, dir string) (made int, err erro
 	return a.images.Precompile(ctx, filepath.Join(dir, "images"))
 }
 
-// sources are the scripts as they are, before any build's minifying.
 func (a *Assets) minifyScripts(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -49,8 +48,6 @@ func (a *Assets) minifyScripts(dir string) error {
 		keep[file] = true
 		out, err := m.Bytes("text/javascript", src)
 		if err != nil {
-			// Not minifiable (a syntax the minifier doesn't know): served as
-			// it is.
 			continue
 		}
 		if err := os.WriteFile(filepath.Join(dir, file), out, 0o644); err != nil {

@@ -1,5 +1,3 @@
--- A post as the API shows it: its author's name, and its likes counted now.
-
 -- name: Feed :many
 SELECT p.id, p.body, p.created_at, u.username AS author,
        (SELECT count(*) FROM likes l WHERE l.post_id = p.id) AS like_count

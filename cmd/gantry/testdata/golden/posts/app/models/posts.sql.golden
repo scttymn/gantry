@@ -1,13 +1,9 @@
--- Newest first.
-
 -- name: ListPosts :many
 SELECT * FROM posts ORDER BY id DESC;
 
 -- name: GetPost :one
 SELECT * FROM posts WHERE id = sqlc.arg(id);
 
--- The row, read in the transaction that changes it, so no other change
--- lands between the read and the write: SQLite's transaction holds the write lock already.
 -- name: GetPostForUpdate :one
 SELECT * FROM posts WHERE id = sqlc.arg(id);
 

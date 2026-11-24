@@ -7,9 +7,6 @@ import (
 	"time"
 )
 
-// Code that must only run once the change is saved (sending the email,
-// enqueuing the job) runs after commit, in order, and never on rollback
-// (Rails' after_commit).
 func TestAfterCommit(t *testing.T) {
 	ctx := context.Background()
 	d := openTemp(t)
@@ -21,7 +18,6 @@ func TestAfterCommit(t *testing.T) {
 			return err
 		}
 		tx.AfterCommit(func() {
-			// The change is there to see: it's committed.
 			var n int
 			d.Read.QueryRow(`SELECT COUNT(*) FROM notes`).Scan(&n)
 			ran = append(ran, "second", string(rune('0'+n)))
@@ -45,9 +41,6 @@ func TestAfterCommit(t *testing.T) {
 	}
 }
 
-// A panic in fn rolls the transaction back and goes on up, so a job or a
-// request that recovers it doesn't leave the write pool (on SQLite, its one
-// connection) held by a transaction no one will finish.
 func TestTxPanicRollsBack(t *testing.T) {
 	ctx := context.Background()
 	d := openTemp(t)

@@ -15,10 +15,6 @@ import (
 	"modernc.org/sqlite"
 )
 
-// The C build answers as the translated build's driver does: two databases
-// made the same, one opened by each, asked the same things, give the same
-// columns, types, values, results and errors. Each is asked through database/sql, on
-// one connection, with no statement kept.
 func TestSQLiteCMatchesTranslated(t *testing.T) {
 	tc, err := sqlite.NewConnector(sqliteDSN(filepath.Join(t.TempDir(), "translated.sqlite3"), false))
 	if err != nil {
@@ -31,7 +27,6 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 		p.SetMaxOpenConns(1)
 		t.Cleanup(func() { p.Close() })
 	}
-	// Two databases, the same: each statement is run once on each.
 	both := func(run func(Querier, string, ...any) answer, query string, args ...any) {
 		t.Helper()
 		same(t, translated, compiled, run, query, args...)
@@ -59,8 +54,6 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 	both(queryAnswer, `SELECT id, at, typeof(at), d, ts, max(at) AS latest FROM kinds GROUP BY id ORDER BY id`)
 	both(queryAnswer, `SELECT count(*), sum(f), group_concat(s) FROM kinds`)
 
-	// Arguments: in their place, by number ($ and ?, in any order), by name,
-	// one missing, one too many.
 	both(queryAnswer, `SELECT ?, ?`, 1, "two")
 	both(queryAnswer, `SELECT $2 || $1 || $2`, "b", "a")
 	both(queryAnswer, `SELECT ?2, ?1`, "b", "a")
@@ -69,8 +62,6 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 	both(queryAnswer, `SELECT ?`, 1, 2)
 	both(queryAnswer, `SELECT $1`, sql.Named("x", 1))
 
-	// Scripts: each statement runs, with the arguments it numbers; a query's
-	// rows are its last statement's that had any.
 	setup(`CREATE TABLE things (id integer PRIMARY KEY, name text NOT NULL UNIQUE)`)
 	both(execAnswer, `INSERT INTO things (name) VALUES (?1 || 'a'); INSERT INTO things (name) VALUES (?1 || 'b')`, "t")
 	both(queryAnswer, `INSERT INTO things (name) VALUES (?1 || 'c'); SELECT count(*) FROM things`, "t")
@@ -85,7 +76,6 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 	both(queryAnswer, `-- only a comment`)
 	both(queryAnswer, `   `)
 
-	// A statement asked as a query happens, read or not.
 	both(func(q Querier, query string, args ...any) answer {
 		rows, err := q.QueryContext(t.Context(), query, args...)
 		if err != nil {
@@ -95,7 +85,6 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 		return queryAnswer(q, `SELECT count(*) FROM things WHERE name = 'asked'`)
 	}, `INSERT INTO things (name) VALUES ('asked') ON CONFLICT DO NOTHING`)
 
-	// Results, and errors.
 	both(execAnswer, `INSERT INTO things (name) VALUES (?) ON CONFLICT DO NOTHING`, "z")
 	both(execAnswer, `UPDATE things SET name = name || '.'`)
 	both(execAnswer, `INSERT INTO things (name) VALUES ('ta!')`)
@@ -106,16 +95,12 @@ func TestSQLiteCMatchesTranslated(t *testing.T) {
 	both(execAnswer, `INSERT INTO things (name) VALUES (?)`, struct{}{})
 }
 
-// SQLite was told not to count its allocations before its first: counting
-// takes a lock every connection shares, on every one.
 func TestSQLiteCUncounted(t *testing.T) {
 	if !sqliteUncounted {
 		t.Fatal("SQLite was started before gantry's db could tell it not to count its allocations")
 	}
 }
 
-// A prepared statement run again while the rows of its last run are open
-// ends those rows, which say so: they never read a row that's gone.
 func TestSQLiteCRunAgain(t *testing.T) {
 	d := sqliteOne(t)
 	ctx := context.Background()
@@ -146,26 +131,18 @@ func TestSQLiteCRunAgain(t *testing.T) {
 	}
 }
 
-// The C build has what the translated one has, but for the options listed
-// here, none of which changes what SQL means: a new difference fails until
-// it's added, with why. (A build that started has sqliteCOptions: init
-// checks them.)
 func TestSQLiteCCompileOptions(t *testing.T) {
-	// None of these changes what SQL means: each is a C API gantry doesn't
-	// call, how the C was compiled, or a default gantry sets itself.
 	allowed := map[string]string{
-		// translated only
-		"DEFAULT_MEMSTATUS=0":       "the C build turns counting off when it starts",
-		"DEFAULT_WAL_SYNCHRONOUS=2": "gantry sets synchronous NORMAL on every connection",
-		"DISABLE_INTRINSIC":         "how the C was compiled for translation",
-		"ENABLE_COLUMN_METADATA":    "sqlite3_column_table_name and the like: a C API",
-		"ENABLE_MEMORY_MANAGEMENT":  "sqlite3_release_memory: a C API",
-		"ENABLE_PREUPDATE_HOOK":     "a C API",
-		"ENABLE_RBU":                "a C API",
-		"ENABLE_SESSION":            "a C API",
-		"ENABLE_SNAPSHOT":           "a C API",
-		"ENABLE_UNLOCK_NOTIFY":      "a C API",
-		// C only
+		"DEFAULT_MEMSTATUS=0":        "the C build turns counting off when it starts",
+		"DEFAULT_WAL_SYNCHRONOUS=2":  "gantry sets synchronous NORMAL on every connection",
+		"DISABLE_INTRINSIC":          "how the C was compiled for translation",
+		"ENABLE_COLUMN_METADATA":     "sqlite3_column_table_name and the like: a C API",
+		"ENABLE_MEMORY_MANAGEMENT":   "sqlite3_release_memory: a C API",
+		"ENABLE_PREUPDATE_HOOK":      "a C API",
+		"ENABLE_RBU":                 "a C API",
+		"ENABLE_SESSION":             "a C API",
+		"ENABLE_SNAPSHOT":            "a C API",
+		"ENABLE_UNLOCK_NOTIFY":       "a C API",
 		"DEFAULT_WAL_SYNCHRONOUS=1":  "gantry sets synchronous NORMAL on every connection",
 		"ENABLE_FTS3":                "FTS3 and FTS4 too: SQL the translated build refuses, none it runs differently",
 		"ENABLE_FTS3_PARENTHESIS":    "FTS3 and FTS4 too: SQL the translated build refuses, none it runs differently",
@@ -205,9 +182,6 @@ func TestSQLiteCCompileOptions(t *testing.T) {
 	}
 }
 
-// The two builds are one SQLite release: modernc.org/sqlite translates it
-// and github.com/mattn/go-sqlite3 bundles its C, so the two modules are
-// bumped together, to the versions that carry the same one.
 func TestSQLiteCVersionMatchesTranslated(t *testing.T) {
 	tc, err := sqlite.NewConnector(sqliteDSN(filepath.Join(t.TempDir(), "translated.sqlite3"), false))
 	if err != nil {
@@ -225,8 +199,6 @@ func TestSQLiteCVersionMatchesTranslated(t *testing.T) {
 	}
 }
 
-// conn is one of the C build's connections, without database/sql between:
-// what database/sql keeps an app from doing, the driver must still survive.
 func cConnFor(t *testing.T) *cConn {
 	t.Helper()
 	c, _ := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
@@ -238,8 +210,6 @@ func cConnFor(t *testing.T) *cConn {
 	return dc.(*cConn)
 }
 
-// A statement closed while its rows are open cuts them off: they don't read
-// a statement that's gone.
 func TestSQLiteCStmtClosedUnderRows(t *testing.T) {
 	c := cConnFor(t)
 	ctx := context.Background()
@@ -260,8 +230,6 @@ func TestSQLiteCStmtClosedUnderRows(t *testing.T) {
 	}
 }
 
-// A run cut off by the next still says, when closed, what ending it came
-// to: here a write refused when it ended.
 func TestSQLiteCRunAgainKeepsItsError(t *testing.T) {
 	c := cConnFor(t)
 	ctx := context.Background()
@@ -294,9 +262,6 @@ func TestSQLiteCRunAgainKeepsItsError(t *testing.T) {
 	}
 }
 
-// A script fails when one of its statements does as it ends (a RETURNING's
-// write), not only the last. (The translated build's driver gives the last
-// statement's answer: the C build is the stricter here.)
 func TestSQLiteCScriptFailsOnAnEarlierStatement(t *testing.T) {
 	d := sqliteOne(t)
 	mustExec(t, d, `CREATE TABLE parents (id integer PRIMARY KEY)`)

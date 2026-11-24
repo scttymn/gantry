@@ -1,5 +1,3 @@
-// Package test is what the app's tests share: a database of their own,
-// migrated. Fixtures go in test/fixtures/<table>.yml (testkit.Fixtures).
 package test
 
 import (
@@ -11,5 +9,4 @@ import (
 	"feed/db/migrations"
 )
 
-// DB is an empty, migrated database, removed after the test.
 func DB(t testing.TB) *db.DB { return testkit.DB(t, migrations.Up) }

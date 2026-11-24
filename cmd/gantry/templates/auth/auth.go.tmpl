@@ -1,5 +1,3 @@
-// Package auth connects Gantry's shared password authentication and first-user
-// setup to this app's views. Account/session behavior stays in gantry/auth.
 package auth
 
 import (
@@ -15,9 +13,6 @@ import (
 type Auth = gantryauth.Auth
 type User = gantryauth.User
 
-// New enables first-install setup. codeFile belongs on the private persistent
-// data volume. Set URL for emailed reset links. A session ends 30 days unused
-// or 90 days after sign-in; gantryauth.NoLimit lifts either.
 func New(d *db.DB, signer sign.Signer, sender mail.Sender, from, codeFile string) *Auth {
  return &Auth{
   DB:d, Signer:signer, Mail:sender, From:from, Limits:&web.Limits{},

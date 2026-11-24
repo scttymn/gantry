@@ -39,7 +39,6 @@ func Distance(from, to time.Time) string {
 	case minutes < 525600:
 		return Count(count(43200), "month")
 	}
-	// Years, as Rails counts them: a leap day between is taken off first.
 	fromYear, toYear := from.Year(), to.Year()
 	if from.Month() >= time.March {
 		fromYear++
@@ -79,7 +78,6 @@ func ByteSize(n int64) string {
 	x := math.Abs(float64(n))
 	exp := min(int(math.Log(x)/math.Log(1024)), len(sizeUnits))
 	x /= math.Pow(1024, float64(exp))
-	// Three significant digits, half up, as Rails' rounding.
 	digits := int(math.Floor(math.Log10(x))) + 1
 	scale := math.Pow(10, float64(3-digits))
 	x = math.Round(x*scale) / scale

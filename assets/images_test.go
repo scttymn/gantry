@@ -59,14 +59,11 @@ func draw(t *testing.T, im *Images, name string, o images.Img) string {
 func TestImagesImg(t *testing.T) {
 	_, im := pictures(t)
 	tag := draw(t, im, "hero.png", images.Img{Alt: "A hero", Sizes: "100vw", Priority: true})
-	// Each of the widths up to the picture's own (as uploaded photos'),
-	// under its fingerprinted name.
 	srcset := regexp.MustCompile(`<img[^>]* srcset="([^"]+)"`).FindStringSubmatch(tag)
 	want := regexp.MustCompile(`^/assets/resized/hero-[0-9a-f]{8}/160w-q80\.webp 160w, .*/240w-q80\.webp 240w, .*/320w-q80\.webp 320w, .*/480w-q80\.webp 480w$`)
 	if srcset == nil || !want.MatchString(srcset[1]) {
 		t.Errorf("srcset: %s", tag)
 	}
-	// AVIF first, in a <picture>, at the same widths.
 	avif := regexp.MustCompile(`^<picture><source type="image/avif" sizes="100vw" srcset="/assets/resized/hero-[0-9a-f]{8}/160w-q50\.avif 160w, .*/480w-q50\.avif 480w"><img .*></picture>$`)
 	if !avif.MatchString(tag) {
 		t.Errorf("no AVIF first: %s", tag)
@@ -76,7 +73,6 @@ func TestImagesImg(t *testing.T) {
 			t.Errorf("no %s: %s", part, tag)
 		}
 	}
-	// A picture in a folder: its key has no slash, so the server can read it.
 	if tag := draw(t, im, "maps/pin.png", images.Img{}); !strings.Contains(tag, "/assets/resized/maps--pin-") {
 		t.Errorf("in a folder: %s", tag)
 	}
@@ -92,17 +88,15 @@ func TestImagesImg(t *testing.T) {
 	}
 }
 
-// The build's copies: made once (a second build that changed no picture
-// makes none), a picture that's gone takes its copies with it.
 func TestImagesPrecompile(t *testing.T) {
 	_, im := pictures(t)
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "old-1a2b3c4d"), 0o755) // a picture since changed
+	os.MkdirAll(filepath.Join(dir, "old-1a2b3c4d"), 0o755)
 	made, err := im.Precompile(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if made != 2*(4+1) { // each format: hero 160 to 480, pin 160 (at its own 100)
+	if made != 2*(4+1) {
 		t.Errorf("made %d", made)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "old-1a2b3c4d")); err == nil {
@@ -132,7 +126,6 @@ func TestImagesPrecompile(t *testing.T) {
 	}
 }
 
-// The build's copies, embedded, are served as they are, and nothing's made.
 func TestImagesPrecompiled(t *testing.T) {
 	_, im := pictures(t)
 	dir := t.TempDir()
@@ -165,7 +158,6 @@ func TestImagesPrecompiled(t *testing.T) {
 	if !built.Precompiled() {
 		t.Error("not precompiled")
 	}
-	// Without the AVIF copies, the build didn't make them all.
 	webpOnly := fstest.MapFS{}
 	for name, f := range fsys {
 		if !strings.HasSuffix(name, ".avif") {
@@ -193,7 +185,6 @@ func TestImagesPrecompiled(t *testing.T) {
 	if entries, _ := os.ReadDir(built.pipeline.Dir); len(entries) != 0 {
 		t.Error("a copy was made on request")
 	}
-	// A copy of a picture that isn't in the assets isn't served.
 	fsys["built/images/stale-12345678/160w-q80.webp"] = &fstest.MapFile{Data: []byte("x")}
 	a2, _ := New(fsys)
 	a2.Images(nil)
@@ -216,7 +207,6 @@ func TestImagesServed(t *testing.T) {
 		return w
 	}
 	key := im.byName["hero.png"].key
-	// Asked for before Prepare: made then.
 	w := get("/assets/resized/" + key + "/320w-q80.webp")
 	if w.Code != 200 || w.Header().Get("Content-Type") != "image/webp" || !strings.Contains(w.Header().Get("Cache-Control"), "immutable") {
 		t.Fatalf("%d %v", w.Code, w.Header())
@@ -225,8 +215,8 @@ func TestImagesServed(t *testing.T) {
 		t.Errorf("width %d", wd)
 	}
 	for _, path := range []string{
-		"/assets/resized/" + key + "/333w-q80.webp", // not one of the widths
-		"/assets/resized/" + key + "/320w-q50.webp", // not the quality
+		"/assets/resized/" + key + "/333w-q80.webp",
+		"/assets/resized/" + key + "/320w-q50.webp",
 		"/assets/resized/nope-12345678/320w-q80.webp",
 		"/assets/resized/" + key + "/original",
 	} {
@@ -234,14 +224,11 @@ func TestImagesServed(t *testing.T) {
 			t.Errorf("%s: %d", path, w.Code)
 		}
 	}
-	// The assets themselves are served as ever.
 	if w := get(a.Path("hero.png")); w.Code != 200 {
 		t.Errorf("the original: %d", w.Code)
 	}
 }
 
-// A changed picture is a new one: its key is its content's, so the next
-// build makes its copies, and removes the old version's.
 func TestImagesChanged(t *testing.T) {
 	dir := t.TempDir()
 	_, before := pictures(t)
@@ -259,7 +246,7 @@ func TestImagesChanged(t *testing.T) {
 		t.Fatal("a changed picture kept its key")
 	}
 	made, err := after.Precompile(context.Background(), dir)
-	if err != nil || made != 2*3 { // 160, 240 and 320, each format: the widths up to its 400
+	if err != nil || made != 2*3 {
 		t.Errorf("made %d (%v)", made, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, newKey, "160w-q80.webp")); err != nil {
@@ -275,8 +262,6 @@ func TestImagesChanged(t *testing.T) {
 	}
 }
 
-// On a machine that would make AVIF at a crawl, the build makes WebP alone,
-// pages offer WebP alone, and no AVIF copy is made on request.
 func TestImagesWithoutAVIF(t *testing.T) {
 	was := avifSlow
 	avifSlow = func() string { return "no SSE4.1" }
@@ -318,7 +303,6 @@ func TestImagesWithoutAVIF(t *testing.T) {
 	if w.Code != 404 {
 		t.Errorf("an AVIF copy asked for: %d", w.Code)
 	}
-	// A build that did make them (on a machine that could) is offered.
 	fsys["built/images/"+key+"/160w-q50.avif"] = &fstest.MapFile{Data: []byte("avif")}
 	b, _ := New(fsys)
 	if tag := draw(t, b.Images(nil), "hero.png", images.Img{}); !strings.Contains(tag, `type="image/avif"`) {

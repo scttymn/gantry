@@ -64,10 +64,8 @@ type Pipeline struct {
 	// when zero.
 	MaxPixels int
 
-	// One copy is made at a time, so at most one child's memory is in use,
-	// and a request for a copy another is making waits for it, then finds it.
 	one          sync.Mutex
-	placeholders sync.Map // key → data URI, once read
+	placeholders sync.Map
 }
 
 func (p *Pipeline) encoder() Encoder {
@@ -222,7 +220,7 @@ func (p *Pipeline) Dimensions(data []byte) (width, height int, contentType strin
 	if cfg.Width <= 0 || cfg.Height <= 0 {
 		return 0, 0, "", fmt.Errorf("images: %d×%d has no pixels", cfg.Width, cfg.Height)
 	}
-	if cfg.Width > p.maxPixels()/cfg.Height { // a product could wrap
+	if cfg.Width > p.maxPixels()/cfg.Height {
 		return 0, 0, "", fmt.Errorf("%w: %d×%d is over %d", ErrTooManyPixels, cfg.Width, cfg.Height, p.maxPixels())
 	}
 	width, height = cfg.Width, cfg.Height
@@ -235,9 +233,6 @@ func (p *Pipeline) Dimensions(data []byte) (width, height int, contentType strin
 // Resize fits the image within [width, 2 × width] (Rails' resize_to_limit:
 // it never enlarges), turns it upright, and encodes it at quality.
 func (p *Pipeline) Resize(data []byte, width, quality int) ([]byte, error) {
-	// The pipeline's formats decide, not what happens to be registered with
-	// image.Decode: a decoder package can register itself just by being
-	// imported anywhere in the program.
 	if _, _, contentType, err := p.Dimensions(data); err != nil {
 		return nil, err
 	} else if !p.Resizable(contentType) {
@@ -341,18 +336,15 @@ func (p *Pipeline) Has(key string, width, quality int) bool {
 	return err == nil
 }
 
-// make writes the copy beside its place and renames it in, so a failed or
-// interrupted make leaves nothing a request could serve.
 func (p *Pipeline) make(ctx context.Context, src, path string, width, quality int) error {
 	p.one.Lock()
 	defer p.one.Unlock()
-	if _, err := os.Stat(path); err == nil { // made while this waited
+	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	// Its extension says the format, for a child that makes every format.
 	tmp := filepath.Join(filepath.Dir(path), fmt.Sprintf(".tmp-%dw-q%d-%d%s", width, quality, time.Now().UnixNano(), p.encoder().Ext()))
 	defer os.Remove(tmp)
 	maker := p.Maker
@@ -436,8 +428,6 @@ const (
 	AVIFMemory  = "320MiB"
 )
 
-// childNeeds is the memory a child needs free to make a copy named dst, and
-// the Go memory limit it runs with.
 func childNeeds(dst string) (bytes int64, limit string) {
 	if strings.HasSuffix(dst, AVIF{}.Ext()) {
 		return 320 << 20, AVIFMemory
@@ -501,11 +491,8 @@ func (c Child) Make(ctx context.Context, src, dst string, width, quality int) er
 	return nil
 }
 
-// childStarted runs in a child once it's lowered its priority; tests check
-// it there.
 var childStarted = func() {}
 
-// restFor waits d, or until ctx ends (the server shutting down).
 func restFor(ctx context.Context, d time.Duration) {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -515,25 +502,18 @@ func restFor(ctx context.Context, d time.Duration) {
 	}
 }
 
-// cgroupDir and meminfo are where memoryRoom reads; tests point them
-// elsewhere.
 var (
 	cgroupDir = "/sys/fs/cgroup"
 	meminfo   = "/proc/meminfo"
 )
 
-// memoryRoom is the memory free for a child: the container's limit less its
-// use (cgroup v2), or the machine's available memory, whichever is less.
-// Its use is its working set, as the kernel reclaims it: less the file cache
-// not in use (inactive_file), which fills as copies are written and is
-// dropped when a child needs the room.
 func memoryRoom() (free int64, known bool) {
 	free = math.MaxInt64
 	if max, err := os.ReadFile(filepath.Join(cgroupDir, "memory.max")); err == nil {
 		cur, err := os.ReadFile(filepath.Join(cgroupDir, "memory.current"))
 		limit, err1 := strconv.ParseInt(strings.TrimSpace(string(max)), 10, 64)
 		used, err2 := strconv.ParseInt(strings.TrimSpace(string(cur)), 10, 64)
-		if err == nil && err1 == nil && err2 == nil { // "max": no limit
+		if err == nil && err1 == nil && err2 == nil {
 			if stat, err := os.ReadFile(filepath.Join(cgroupDir, "memory.stat")); err == nil {
 				for line := range strings.Lines(string(stat)) {
 					if v, ok := strings.CutPrefix(line, "inactive_file "); ok {
@@ -585,7 +565,6 @@ func (p *Pipeline) RunChild(args []string) int {
 	return 0
 }
 
-// orientation is a JPEG's EXIF orientation, 1 (as stored) when it has none.
 func orientation(data []byte) int {
 	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
 		return 1
@@ -596,7 +575,7 @@ func orientation(data []byte) int {
 		if _, err := io.ReadFull(r, marker[:]); err != nil || marker[0] != 0xFF {
 			return 1
 		}
-		if marker[1] == 0xDA || marker[1] == 0xD9 { // image data: no more headers
+		if marker[1] == 0xDA || marker[1] == 0xD9 {
 			return 1
 		}
 		var size uint16
@@ -643,7 +622,6 @@ func exifOrientation(tiff []byte) int {
 	return 1
 }
 
-// orient turns the stored pixels the way the EXIF orientation says.
 func orient(img image.Image, o int) image.Image {
 	if o <= 1 || o > 8 {
 		return img

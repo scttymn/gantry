@@ -95,10 +95,20 @@ the current rules, generated from `DefaultRules()`, with their limits and
 exception syntax. Page-cache eligibility, image-pipeline adoption and
 render-blocking data fetches are future coverage areas, not checks that exist
 today. Some will need runtime measurement or richer analysis instead of static
-source matching. A cached page that reads who's signed in is one: telling
-needs the handler a route names, which is often in another package. The page
-cache guards it at runtime instead (it keeps no response that sets a cookie,
-and serves no request with a session), and `bin/gantry verify` tests it.
+source matching.
+
+A rule may follow a name out of its file. `cached-scope` and
+`cache-set-cookie` start at a route the page cache serves and follow its
+handler, often in another package, and what that calls. The scan's packages
+are parsed once, when a rule first needs one, and a name is followed only
+when its declaration says what it is: a parameter's type, `x := T{...}`, a
+field, a function's one result, the type an alias stands for. A handler the rules can't follow that way
+isn't reported, so a clean scan doesn't prove a cached page is the same for
+everyone. The page cache guards that at runtime too (it keeps no response
+that sets a cookie, and serves no request with a session), and
+`bin/gantry verify` tests it. These two rules have no golangci-lint
+counterpart: `forbidigo` and `depguard` match a call or an import wherever it
+is, and can't tell that the handler it's in is cached.
 
 Strict reads gantry too: `TestGantryPassesStrict` scans the framework, where
 the rules that aren't about an app's layout apply, and `bench/feed`, an app
@@ -113,3 +123,41 @@ source without running the app. `testkit.Verify` checks the map against
 `Router.Routes` in the app's `TestFeatures`. `bin/gantry verify` runs that test
 to check each feature's pages, its caching headers, and that cached pages
 aren't shown across users.
+
+## Comments
+
+Comments go stale, nothing checks them, and they give a workaround a place to
+explain itself instead of being fixed. Names, types and tests are checked by
+the compiler and CI, so that's where intent goes. The `comments` rule holds
+gantry and its apps to that:
+
+- Gantry's own Go has doc comments on exported names (functions, methods,
+  types, constants, variables, struct fields and interface methods) and on
+  package clauses, and no other comment: none inside a function, none
+  trailing a line, none on an unexported name, none in a `_test.go` file
+  (a test isn't documented API: its name says what it checks).
+- An app, and every template in `cmd/gantry/templates` that `gantry new` and
+  the generators write it from, has no comments at all, doc comments and
+  tests included.
+- `TODO`, `FIXME`, `HACK` and `XXX` are reported anywhere, doc comments
+  included: a plan is an issue, linked from the pull request. Commented-out
+  code is reported too: git keeps the old version.
+- What stays is what a tool reads: `//go:` directives, `//nolint:<linter> //
+  <reason>` (a bare `//nolint` is reported), sqlc's `-- name:` and goose's
+  `-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, cgo's preamble,
+  a script's `#!` line and `go.mod`'s `// indirect`. A license header is the
+  one other exception the policy allows, when gantry adopts one (#37); the
+  packages `importmap pin` vendors keep theirs, and aren't read.
+
+Go is parsed with its comments, and each comment group belongs to what it
+documents or the function it's in. Templates, SQL, `.templ`, YAML, shell,
+JavaScript and CSS are read a line at a time, with each one's comment markers:
+a marker counts at the start of a line or after a space, so `https://` and
+`"#fff"` aren't comments. Go that says it's generated (sqlc's, templ's) isn't
+read. `bench/` is modules of its own, and `bench/feed` is checked as the app it
+is.
+
+The rule takes no exceptions in `.gantry-check.json`: an exception for it
+fails the scan. There's no baseline either; gantry and `bench/feed` pass it
+(`TestGantryPassesStrict`), and every generated app does
+(`TestGeneratorMatrix`, `TestGolden`).

@@ -9,8 +9,10 @@ import (
 
 // Face is a font face to fetch before the page asks for it.
 type Face struct {
-	Family string // as the stylesheets name it: "IBM Plex Mono"
-	Weight int    // 400 when zero
+	// as the stylesheets name it: "IBM Plex Mono"
+	Family string
+	// 400 when zero
+	Weight int
 	Italic bool
 }
 
@@ -67,12 +69,12 @@ func (s *Styles) Preloads() []string { return s.preloads }
 var fontFaceRule = regexp.MustCompile(`(?is)@font-face\s*\{(.*?)\}`)
 
 type fontFace struct {
-	family       string // lower case, unquoted
+	family       string
 	weightFrom   int
 	weightTo     int
 	italic       bool
-	src          string // its WOFF2 file; "" when it has none
-	unicodeRange string // "" when it covers everything
+	src          string
+	unicodeRange string
 }
 
 func (r fontFace) matches(f Face) bool {
@@ -81,7 +83,6 @@ func (r fontFace) matches(f Face) bool {
 		r.weightFrom <= w && w <= r.weightTo && covers(r.unicodeRange, 'a')
 }
 
-// fontFaces reads a stylesheet's @font-face rules, minified or not.
 func fontFaces(css string) []fontFace {
 	var out []fontFace
 	for _, m := range fontFaceRule.FindAllStringSubmatch(css, -1) {
@@ -110,8 +111,6 @@ func fontFaces(css string) []fontFace {
 	return out
 }
 
-// declarations splits a rule's body at its semicolons, but not those
-// inside quotes or brackets (a data: URL's).
 func declarations(body string) []string {
 	var out []string
 	depth, quote, start := 0, byte(0), 0
@@ -135,8 +134,6 @@ func declarations(body string) []string {
 	return append(out, body[start:])
 }
 
-// weights reads a font-weight: one ("600", "bold") or a variable font's
-// range ("100 900").
 func weights(value string) (from, to int) {
 	named := map[string]int{"normal": 400, "bold": 700}
 	var ws []int
@@ -158,8 +155,6 @@ func weights(value string) (from, to int) {
 
 var srcURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)\s*(?:format\(\s*["']?([^"')]+)["']?\s*\))?`)
 
-// woff2 is the WOFF2 file among a src's: said so by its format(), or by its
-// name when it has none.
 func woff2(src string) string {
 	for _, m := range srcURL.FindAllStringSubmatch(src, -1) {
 		if strings.EqualFold(m[2], "woff2") || (m[2] == "" && strings.HasSuffix(strings.ToLower(m[1]), ".woff2")) {
@@ -169,8 +164,6 @@ func woff2(src string) string {
 	return ""
 }
 
-// covers reports whether a unicode-range ("U+0000-00FF, U+0131", or
-// minified, "U+??,U+131") takes in r. An empty range takes in everything.
 func covers(unicodeRange string, r rune) bool {
 	if strings.TrimSpace(unicodeRange) == "" {
 		return true

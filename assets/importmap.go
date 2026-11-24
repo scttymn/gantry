@@ -15,9 +15,9 @@ import (
 // ModulePin names a module for the page's import map (importmap-rails'
 // pin): code imports it by name, and the browser fetches the file.
 type ModulePin struct {
-	name, file string // "@hotwired/turbo", "@hotwired--turbo.js"
-	dir        string // PinAll's folder, instead
-	vendor     bool   // PinVendor's: named by file, "--" for "/"
+	name, file string
+	dir        string
+	vendor     bool
 }
 
 // Pin names file, an asset, name in the import map: Pin("application",
@@ -50,8 +50,8 @@ func PinVendor(dir string) ModulePin {
 // A pin of a file that isn't there is a programming error, so it panics at
 // start.
 type ImportMap struct {
-	imports map[string]string // name → URL
-	names   []string          // in the order pinned
+	imports map[string]string
+	names   []string
 	json    string
 }
 
@@ -87,7 +87,6 @@ func (a *Assets) ImportMap(pins ...ModulePin) *ImportMap {
 		}
 	}
 	b, _ := json.Marshal(map[string]any{"imports": m.imports})
-	// Safe inside <script>: json.Marshal escapes <, > and &.
 	m.json = string(b)
 	return m
 }
@@ -98,7 +97,8 @@ func (m *ImportMap) Imports() map[string]string { return m.imports }
 // Tag is the page's JavaScript, for its head (javascript_importmap_tags):
 // the import map, a modulepreload for each module so they're fetched at
 // once rather than one import at a time, and entry imported ("application"
-// when none is given).
+// when none is given). The map is JSON with <, > and & escaped, so no name
+// in it can close the script.
 func (m *ImportMap) Tag(entry ...string) templ.Component {
 	e := "application"
 	if len(entry) > 0 {

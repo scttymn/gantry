@@ -53,12 +53,12 @@ func newReloadBoot() string {
 type reloads struct {
 	boot     string
 	interval time.Duration
-	files    func() []string // the files whose change is a reload
+	files    func() []string
 
 	baseline sync.Once
 	mu       sync.Mutex
-	changes  int    // template text changes seen
-	last     string // the files' stamp when last polled
+	changes  int
+	last     string
 	streams  map[*reloadStream]struct{}
 	watching bool
 	servers  map[*http.Server]bool
@@ -69,9 +69,6 @@ type reloadStream struct {
 	done    chan struct{}
 }
 
-// version is the code's: the process and its template text changes. Pages
-// are told it before the files are first polled, so a change from then on
-// is a new version.
 func (h *reloads) version() string {
 	h.baseline.Do(func() {
 		var files []string
@@ -103,8 +100,6 @@ func (h *reloads) handler(next http.Handler) http.Handler {
 }
 
 func (h *reloads) serveEvents(w http.ResponseWriter, r *http.Request) {
-	// A graceful shutdown waits on open requests; this stream would hold it
-	// up until its timeout.
 	if srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server); ok {
 		h.endOnShutdown(srv)
 	}
@@ -115,7 +110,6 @@ func (h *reloads) serveEvents(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	stream := h.subscribe()
 	defer h.unsubscribe(stream)
-	// retry: how soon the browser reconnects when a restart drops the stream.
 	fmt.Fprintf(w, "retry: 250\nevent: version\ndata: %s\n\n", h.version())
 	if rc.Flush() != nil {
 		return
@@ -141,7 +135,7 @@ func (h *reloads) serveEvents(w http.ResponseWriter, r *http.Request) {
 
 func (h *reloads) subscribe() *reloadStream {
 	s := &reloadStream{changed: make(chan struct{}, 1), done: make(chan struct{})}
-	h.version() // the files' first stamp, before they're watched
+	h.version()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.streams == nil {
@@ -181,8 +175,6 @@ func (h *reloads) endOnShutdown(srv *http.Server) {
 	})
 }
 
-// change counts a template text change and tells every stream. Callers
-// hold h.mu.
 func (h *reloads) change() {
 	h.changes++
 	for s := range h.streams {
@@ -193,9 +185,6 @@ func (h *reloads) change() {
 	}
 }
 
-// watch polls the files while a stream is open. A change counts once a poll
-// finds nothing further changing, so templ has finished writing. With no
-// stream open nothing polls; the next stream's polls see what changed.
 func (h *reloads) watch() {
 	var files []string
 	if h.files != nil {
@@ -238,10 +227,6 @@ func stamp(files []string) string {
 	return b.String()
 }
 
-// templTextFiles are the files templ's watcher (templ generate --watch)
-// writes each template's text to, which the server reads on each render
-// instead of restarting. None when templ isn't watching. Folders templ's
-// watcher skips are skipped.
 func templTextFiles() []string {
 	root := os.Getenv("TEMPL_DEV_MODE_WATCH_ROOT")
 	if os.Getenv("TEMPL_DEV_MODE") != "true" || root == "" {
@@ -266,8 +251,6 @@ func templTextFiles() []string {
 	return files
 }
 
-// inject puts the script at the end of a page's body. Fragments (no
-// </body> or </html>) are left alone.
 func (h *reloads) inject(_ context.Context, body []byte) ([]byte, bool) {
 	z := html.NewTokenizer(bytes.NewReader(body))
 	offset, bodyEnd, htmlEnd := 0, -1, -1

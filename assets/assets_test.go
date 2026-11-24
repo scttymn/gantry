@@ -137,10 +137,9 @@ func TestAssets(t *testing.T) {
 		if !strings.Contains(css, "https://example.com/a.png") || !strings.Contains(css, "//cdn.example.com/b.png") {
 			t.Error("an outside url was changed")
 		}
-		if !strings.Contains(css, "url("+a.Path("logo.svg")+")") { // "/logo.svg", as Propshaft takes it
+		if !strings.Contains(css, "url("+a.Path("logo.svg")+")") {
 			t.Errorf("a rooted name: %q", css)
 		}
-		// The stylesheet's own fingerprint covers the rewritten fonts.
 		sum := sha256.Sum256(a.Read("fonts.css"))
 		if !strings.Contains(a.Path("fonts.css"), hex.EncodeToString(sum[:])[:8]) {
 			t.Error("fonts.css's digest isn't of its rewritten content")
@@ -212,8 +211,6 @@ func TestAssets(t *testing.T) {
 	})
 }
 
-// randomCSS is n bytes of rules that don't compress, so a bundle of it is
-// over the inline limit even gzipped.
 func randomCSS(n int) string {
 	var b strings.Builder
 	seed := uint64(1)
@@ -224,7 +221,6 @@ func randomCSS(n int) string {
 	return b.String()
 }
 
-// The router reads the app's error pages from its public files.
 func TestPublic(t *testing.T) {
 	a := MustNew(files)
 	if b, ok := a.Public("robots.txt"); !ok || string(b) != "User-agent: *\n" {

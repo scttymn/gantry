@@ -26,7 +26,7 @@ func (l *Limits) Allow(key string, to int, within time.Duration, now time.Time) 
 	if l.windows == nil {
 		l.windows = map[string]*window{}
 	}
-	if len(l.windows) > 10000 { // forget finished windows rather than grow
+	if len(l.windows) > 10000 {
 		for k, w := range l.windows {
 			if !now.Before(w.ends) {
 				delete(l.windows, k)

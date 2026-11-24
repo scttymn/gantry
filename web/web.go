@@ -12,6 +12,15 @@
 // Router.Handler wraps the routes in the middleware every app wants: gzip,
 // panics recovered, security headers, cross-origin form protection, and
 // method override for HTML forms.
+//
+// At start, the package tells Go's runtime four fifths of the least memory
+// the process may have (its cgroup's limit, any above it the mount shows,
+// and the machine's) as its memory limit. Go's collector otherwise lets the
+// heap grow to twice what's live, whatever the machine has: in 2 GB, an app
+// holding 1 GB live is killed for want of memory it had no use for. The
+// fifth left over is for what the runtime doesn't count: the kernel's side
+// of every open connection, and SQLite's own memory. GOMEMLIMIT, when it's
+// set, is the operator's, and is left as it is.
 package web
 
 import (
@@ -90,7 +99,8 @@ func StatusOf(err error) int {
 type Router struct {
 	Log       *slog.Logger
 	ErrorPage ErrorPage
-	Cache     *PageCache // for Cached routes; nil: they aren't cached
+	// for Cached routes; nil: they aren't cached
+	Cache *PageCache
 	// Public is the app's public folder (assets.All), where its error pages
 	// are: an error is its <status>.html when the app has one.
 	Public PublicFiles
@@ -108,10 +118,10 @@ type Router struct {
 	// web.SetZone changes it: UTC when nil.
 	TimeZone             *time.Location
 	mux                  *http.ServeMux
-	root                 *Scope        // the router's own routes
-	routes               []Route       // every route, as declared (Routes)
-	constraints          []constrained // tried in order, before them
-	crossOriginCallbacks []string      // exact POST callbacks that check their own proof
+	root                 *Scope
+	routes               []Route
+	constraints          []constrained
+	crossOriginCallbacks []string
 }
 
 // NewRouter is an empty router. page may be nil: errors are then answered
@@ -148,8 +158,6 @@ func (rt *Router) Fail(w http.ResponseWriter, r *http.Request, err error) {
 		if status < 500 {
 			rt.Log.Warn("error after the response started", "path", r.URL.Path, "err", err)
 		}
-		// Too late for an error page: cut the connection, so the client
-		// sees an error rather than a page or a file that looks whole.
 		panic(http.ErrAbortHandler)
 	}
 	rt.answer(w, r, status, err)
@@ -192,8 +200,6 @@ func (rt *Router) Handler() http.Handler {
 	h = rt.arrive(h)
 	h = withCurrent(h)
 	h = rt.Recover(h)
-	// Diagnostics are a framework default, including apps created before the
-	// feature existed. Inject before compression; production does no scanning.
 	if env.Development() {
 		if os.Getenv("GANTRY_DEV_WARNINGS") == "false" {
 			h = Timing(h, rt.Log)
@@ -253,8 +259,6 @@ func Up(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("up\n"))
 }
 
-// trackingWriter notes whether the response has started, so an error after
-// that isn't written into the middle of a page.
 type trackingWriter struct {
 	http.ResponseWriter
 	wrote bool

@@ -15,7 +15,6 @@ import (
 
 var fonts *testkit.FakeHTTP
 
-// Google's stylesheet, as it answers a browser: a face per subset.
 const googleCSS = `/* cyrillic */
 @font-face {
   font-family: 'Work Sans';
@@ -73,8 +72,6 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 			return f.Response(400, "Font family not found\nmore"), nil
 		}
 		if !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
-			// A plain client gets TTF, one a family: what the fallbacks are
-			// measured by.
 			var css strings.Builder
 			for _, fam := range r.URL.Query()["family"] {
 				name, _, _ := strings.Cut(fam, ":")
@@ -83,7 +80,6 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 			return f.Response(200, css.String()), nil
 		}
 		asked = append(asked, r)
-		// As Google does: font-display is what was asked for.
 		return f.Response(200, strings.ReplaceAll(googleCSS, "font-display: block", "font-display: "+r.URL.Query().Get("display"))), nil
 	})
 	for _, name := range []string{"WorkSans", "InstrumentSerif"} {
@@ -95,6 +91,10 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 		f.On("GET", "https://fonts.gstatic.com/s/worksans/"+name+".woff2", 200, "wOF2 work sans "+name)
 	}
 	f.On("GET", "https://fonts.gstatic.com/s/instrumentserif/italic.woff2", 200, "wOF2 instrument italic")
+	f.On("GET", "https://raw.githubusercontent.com/google/fonts/main/ofl/worksans/METADATA.pb", 200, "name: \"Work Sans\"\ndesigner: \"Wei Huang\"\nlicense: \"OFL\"\ncategory: \"SANS_SERIF\"\n")
+	for _, dir := range []string{"ofl", "apache", "ufl"} {
+		f.On("GET", "https://raw.githubusercontent.com/google/fonts/main/"+dir+"/instrumentserif/METADATA.pb", 404, "404: Not Found")
+	}
 	was := httpClient
 	httpClient = f.Client()
 	t.Cleanup(func() { httpClient = was })
@@ -110,14 +110,12 @@ func TestGenerateFonts(t *testing.T) {
 		t.Fatalf("%d %s", code, errOut.String())
 	}
 	r := (*asked)[0]
-	// In Google's order: upright, then italic, each by weight.
 	if got := r.URL.Query()["family"]; strings.Join(got, "|") != "Work Sans:ital,wght@0,400;0,600|Instrument Serif:ital,wght@0,400;1,400" {
 		t.Errorf("asked for %v", got)
 	}
 	if r.URL.Query().Get("display") != "swap" || !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
 		t.Errorf("display %q, agent %q", r.URL.Query().Get("display"), r.Header.Get("User-Agent"))
 	}
-	// A file two faces share is fetched once.
 	latin := 0
 	for _, r := range fonts.Requests() {
 		if strings.HasSuffix(r.URL.Path, "/worksans/latin.woff2") {
@@ -133,34 +131,39 @@ func TestGenerateFonts(t *testing.T) {
 	for _, f := range fontFiles {
 		names = append(names, f.Name())
 	}
-	// latin and latin-ext kept, cyrillic not; one file for the two weights
-	// Google serves from it.
-	if len(names) != 3 || !strings.HasPrefix(names[0], "instrument-serif-latin-") || !strings.HasPrefix(names[1], "work-sans-latin-") || !strings.HasPrefix(names[2], "work-sans-latin-ext-") {
+	if len(names) != 4 || names[0] != "LICENSE.txt" || !strings.HasPrefix(names[1], "instrument-serif-latin-") || !strings.HasPrefix(names[2], "work-sans-latin-") || !strings.HasPrefix(names[3], "work-sans-latin-ext-") {
 		t.Errorf("fonts: %v", names)
 	}
+	license, _ := os.ReadFile(filepath.Join(root, "assets", "fonts", "LICENSE.txt"))
+	for _, want := range []string{
+		"Work Sans: SIL Open Font License 1.1, https://github.com/google/fonts/blob/main/ofl/worksans/OFL.txt\n",
+		"Instrument Serif: see https://fonts.google.com/specimen/Instrument+Serif/license\n",
+	} {
+		if !strings.Contains(string(license), want) {
+			t.Errorf("assets/fonts/LICENSE.txt doesn't say %q:\n%s", want, license)
+		}
+	}
 	s := string(css)
-	if strings.Contains(s, "gstatic") || strings.Contains(s, "cyr") || strings.Count(s, "@font-face") != 4+2 || strings.Count(s, `url("`+names[1]+`")`) != 2 {
+	if strings.Contains(s, "gstatic") || strings.Contains(s, "cyr") || strings.Count(s, "@font-face") != 4+2 || strings.Count(s, `url("`+names[2]+`")`) != 2 {
 		t.Errorf("fonts.css:\n%s", s)
 	}
-	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || !strings.Contains(s, `gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`) || !strings.Contains(s, "/* Work Sans 600, latin */") ||
+	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || strings.Contains(s, "/*") ||
 		!strings.Contains(s, "font-family: 'Work Sans Fallback';\n  src: local('Arial'), local('Liberation Sans'), local('Roboto');") || !strings.Contains(s, "font-family: 'Instrument Serif Fallback';\n  src: local('Times New Roman'), local('Liberation Serif');") {
 		t.Errorf("fonts.css:\n%s", s)
 	}
 	for _, want := range []string{`gantry.Face{Family: "Work Sans"},`, `gantry.Face{Family: "Work Sans", Weight: 600},`, `gantry.Face{Family: "Instrument Serif", Italic: true},`,
-		`font-family: 'Work Sans', 'Work Sans Fallback', sans-serif;`, `font-family: 'Instrument Serif', 'Instrument Serif Fallback', serif;`} {
+		`font-family: 'Work Sans', 'Work Sans Fallback', sans-serif;`, `font-family: 'Instrument Serif', 'Instrument Serif Fallback', serif;`,
+		`gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`, "assets/fonts/LICENSE.txt"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no %s in\n%s", want, out.String())
 		}
 	}
 
-	// Again: refused without --force; with it, the stylesheet replaced and
-	// the fonts it no longer uses removed (latin-ext, here; the fake Google
-	// answers with every family whatever it's asked for).
 	errOut.Reset()
 	if code := run([]string{"g", "fonts", "Work Sans"}, root, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "--force") {
 		t.Errorf("%d %s", code, errOut.String())
 	}
-	os.WriteFile(filepath.Join(root, "assets", "fonts", "mine.woff2"), []byte("x"), 0o644) // not the stylesheet's
+	os.WriteFile(filepath.Join(root, "assets", "fonts", "mine.woff2"), []byte("x"), 0o644)
 	if code := run([]string{"g", "fonts", "Work Sans", "--subsets", "latin", "--force"}, root, &out, &errOut); code != 0 {
 		t.Fatalf("%d %s", code, errOut.String())
 	}
@@ -169,12 +172,37 @@ func TestGenerateFonts(t *testing.T) {
 	for _, f := range fontFiles {
 		names = append(names, f.Name())
 	}
-	if len(names) != 3 || names[1] != "mine.woff2" || !strings.HasPrefix(names[2], "work-sans-latin-") || strings.Contains(names[2], "ext") {
+	if len(names) != 4 || names[0] != "LICENSE.txt" || names[2] != "mine.woff2" || !strings.HasPrefix(names[3], "work-sans-latin-") || strings.Contains(names[3], "ext") {
 		t.Errorf("after --force: %v", names)
 	}
+	if license, _ := os.ReadFile(filepath.Join(root, "assets", "fonts", "LICENSE.txt")); !strings.Contains(string(license), "Work Sans: ") || strings.Contains(string(license), "Instrument Serif") {
+		t.Errorf("after --force, assets/fonts/LICENSE.txt names the families it doesn't have, or not the one it has:\n%s", license)
+	}
 	css, _ = os.ReadFile(filepath.Join(root, "assets", "css", "fonts.css"))
-	if !strings.Contains(string(css), `gantry g fonts "Work Sans" --subsets latin --force`) {
-		t.Errorf("header: %s", css[:300])
+	if strings.Contains(string(css), "/*") || !strings.Contains(out.String(), `gantry g fonts "Work Sans" --subsets latin --force`) {
+		t.Errorf("fonts.css:\n%s\nprinted:\n%s", css, out.String())
+	}
+}
+
+func TestFontLicenseIsGoogleFontsMetadatas(t *testing.T) {
+	f := testkit.HTTP(t)
+	const repo = "https://raw.githubusercontent.com/google/fonts/main/"
+	f.On("GET", repo+"ofl/robotomono/METADATA.pb", 404, "404: Not Found")
+	f.On("GET", repo+"apache/robotomono/METADATA.pb", 200, "name: \"Roboto Mono\"\nlicense: \"APACHE2\"\n")
+	for _, dir := range []string{"ofl", "apache"} {
+		f.On("GET", repo+dir+"/ubuntu/METADATA.pb", 404, "404: Not Found")
+	}
+	f.On("GET", repo+"ufl/ubuntu/METADATA.pb", 200, "name: \"Ubuntu\"\nlicense: \"UFL\"\n")
+	was := httpClient
+	httpClient = f.Client()
+	t.Cleanup(func() { httpClient = was })
+	for family, want := range map[string]string{
+		"Roboto Mono": "Roboto Mono: Apache License 2.0, https://github.com/google/fonts/blob/main/apache/robotomono/LICENSE.txt",
+		"Ubuntu":      "Ubuntu: Ubuntu Font Licence 1.0, https://github.com/google/fonts/blob/main/ufl/ubuntu/UFL.txt",
+	} {
+		if got := fontLicense(family); got != want {
+			t.Errorf("%s: %q, want %q", family, got, want)
+		}
 	}
 }
 
@@ -215,9 +243,6 @@ func TestGenerateFontsRules(t *testing.T) {
 	}
 }
 
-// A fallback is sized to its family's measure: Go Regular's, against Arial,
-// as next/font's adjustFontFallback computes it (checked against next/font
-// by hand: Inter 107.28% here, 107.12% there, a newer Inter).
 func TestFallbackFace(t *testing.T) {
 	m, err := measure(goregular.TTF)
 	if err != nil {
@@ -232,7 +257,6 @@ func TestFallbackFace(t *testing.T) {
 			t.Errorf("no %q in\n%s", want, face)
 		}
 	}
-	// The overrides are the family's, in the fallback's resized units.
 	size := (m.xWidth / 2048) / (904.0 / 2048)
 	if want := fmt.Sprintf("size-adjust: %.2f%%;\n  ascent-override: %.2f%%;", size*100, 1935/2048.0/size*100); !strings.Contains(face, want) {
 		t.Errorf("want %q in\n%s", want, face)

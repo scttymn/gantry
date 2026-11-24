@@ -16,7 +16,7 @@ import (
 
 func newServer(t *testing.T, quality int) (*Server, string) {
 	t.Helper()
-	src := source(t) // 1600×800 JPEG
+	src := source(t)
 	s := &Server{
 		Pipeline: &Pipeline{Dir: t.TempDir()},
 		Prefix:   "/photos/",
@@ -51,7 +51,7 @@ func TestServer(t *testing.T) {
 		for part := range strings.SplitSeq(srcset, ", ") {
 			urls = append(urls, strings.Fields(part)[0])
 		}
-		if len(urls) != 10 { // src, and 160 to 1600
+		if len(urls) != 10 {
 			t.Fatal(urls)
 		}
 		for _, u := range urls {
@@ -81,11 +81,11 @@ func TestServer(t *testing.T) {
 	t.Run("nothing else is served, so an address can't make it build files", func(t *testing.T) {
 		s, _ := newServer(t, 80)
 		for _, p := range []string{
-			"/photos/k/800w-q80.webp",  // not one of the widths
-			"/photos/k/720w-q60.webp",  // not the current quality
-			"/photos/k/720w-q080.webp", // written oddly
-			"/photos/k/720w-q80.jpg",   // another format
-			"/photos/k/original",       // resizable: only copies
+			"/photos/k/800w-q80.webp",
+			"/photos/k/720w-q60.webp",
+			"/photos/k/720w-q080.webp",
+			"/photos/k/720w-q80.jpg",
+			"/photos/k/original",
 			"/photos/nope/720w-q80.webp",
 			"/photos/k/../k/720w-q80.webp",
 			"/photos/k/720w-q80.webp/x",
@@ -123,8 +123,6 @@ func TestServer(t *testing.T) {
 	})
 }
 
-// A large original to a slow client (a phone) isn't cut off by the server's
-// WriteTimeout while it's still moving.
 func TestServerSlowClient(t *testing.T) {
 	big := filepath.Join(t.TempDir(), "big.pdf")
 	if err := os.WriteFile(big, make([]byte, 32<<20), 0o644); err != nil {
@@ -220,9 +218,6 @@ func TestImg(t *testing.T) {
 	})
 }
 
-// AVIF beside WebP (the standard way: docs/plans/mission-control.md, G3's
-// images): offered first once a photo's AVIF copies are made, and served as
-// its WebP ones are.
 func TestServerAVIF(t *testing.T) {
 	ctx := context.Background()
 	s, src := newServer(t, 80)
@@ -249,13 +244,11 @@ func TestServerAVIF(t *testing.T) {
 	if !strings.HasPrefix(got, want) || !strings.HasSuffix(got, "></picture>") || !strings.Contains(got, `srcset="/photos/k/160w-q80.webp 160w`) {
 		t.Errorf("\n%s\nwant it to start\n%s", got, want)
 	}
-	// With a placeholder for phones: that source first, then AVIF.
 	ph := render(Photo{Key: "k", ContentType: "image/jpeg", Width: 500, Placeholder: "data:image/webp;base64,AAAA"}, Img{PlaceholderWhen: "(max-width: 640px)"})
 	if !strings.HasPrefix(ph, `<picture><source media="(max-width: 640px)" srcset="data:image/webp;base64,AAAA"><source type="image/avif"`) || strings.Count(ph, "<picture>") != 1 {
 		t.Errorf("with a placeholder: %s", ph)
 	}
 
-	// Served: a made copy, and one asked for as the WebP ones are.
 	for _, path := range []string{"/photos/k/240w-q50.avif", "/photos/k/720w-q50.avif"} {
 		rec := get(s, path)
 		if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/avif" {
@@ -270,12 +263,10 @@ func TestServerAVIF(t *testing.T) {
 			t.Errorf("%s: %d", path, rec.Code)
 		}
 	}
-	// An app can say when a photo's AVIF is ready (the assets': the build's).
 	s.HasAVIF = func(key string) bool { return false }
 	if got := render(photo, Img{}); strings.Contains(got, "avif") {
 		t.Errorf("HasAVIF false, AVIF offered: %s", got)
 	}
-	// Without AVIF, WebP alone, as ever.
 	s.AVIF, s.HasAVIF = nil, nil
 	if got := render(photo, Img{}); strings.Contains(got, "picture") {
 		t.Errorf("no AVIF pipeline: %s", got)
@@ -290,11 +281,10 @@ func TestAVIFFor(t *testing.T) {
 	}
 }
 
-// One resizing child makes both formats: the copy's name says which.
 func TestResizeFileByExtension(t *testing.T) {
 	src := source(t)
 	dir := t.TempDir()
-	var p Pipeline // WebP by default
+	var p Pipeline
 	for ext, want := range map[string]string{".avif": "image/avif", ".webp": "image/webp", ".tmp": "image/webp"} {
 		dst := filepath.Join(dir, "copy"+ext)
 		if err := p.ResizeFile(src, dst, 160, 50); err != nil {
@@ -305,7 +295,6 @@ func TestResizeFileByExtension(t *testing.T) {
 			t.Errorf("%s: %s %v", ext, ct, err)
 		}
 	}
-	// And the file a copy is made into keeps its extension, for the child.
 	var seen string
 	a := AVIFFor(&Pipeline{Dir: dir, Maker: makerFunc(func(dst string) { seen = dst })})
 	a.Copy(context.Background(), "k", src, 160, 0)

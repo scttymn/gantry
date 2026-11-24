@@ -26,8 +26,10 @@ import (
 
 // Options are a cache's settings.
 type Options struct {
-	Size int              // bytes kept, keys and values: 32 MB when 0 (Rails' memory store)
-	Now  func() time.Time // time.Now when nil; tests set it
+	// bytes kept, keys and values: 32 MB when 0 (Rails' memory store)
+	Size int
+	// time.Now when nil; tests set it
+	Now func() time.Time
 }
 
 // Cache is a store of values by key.
@@ -35,7 +37,7 @@ type Cache struct {
 	o       Options
 	mu      sync.Mutex
 	entries map[string]*list.Element
-	order   *list.List // most recently used first
+	order   *list.List
 	used    int
 	flight  singleflight.Group
 }
@@ -43,7 +45,7 @@ type Cache struct {
 type entry struct {
 	key     string
 	value   []byte
-	expires time.Time // zero: never
+	expires time.Time
 }
 
 // New is an empty cache.

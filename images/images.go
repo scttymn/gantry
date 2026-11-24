@@ -37,14 +37,16 @@ import (
 
 	"golang.org/x/sys/cpu"
 
-	"github.com/gen2brain/avif" // registers AVIF with image.Decode; WASM, no cgo
-	"github.com/gen2brain/webp" // registers WebP with image.Decode; WASM, no cgo
+	"github.com/gen2brain/avif"
+	"github.com/gen2brain/webp"
 )
 
 // An Encoder writes images in one format.
 type Encoder interface {
-	ContentType() string // "image/webp"
-	Ext() string         // ".webp"
+	// "image/webp"
+	ContentType() string
+	// ".webp"
+	Ext() string
 	Encode(w io.Writer, img image.Image, quality int) error
 }
 
@@ -69,7 +71,6 @@ func (WebP) Encode(w io.Writer, img image.Image, quality int) error {
 // WebP's 80.
 type AVIF struct{}
 
-// avifSpeed is the encoder's: 8 of 0 (slowest) to 10.
 const avifSpeed = 8
 
 // AVIFQuality is AVIF's quality that looks like WebP at 80 (libvips' AVIF
@@ -101,8 +102,6 @@ func AVIFFor(p *Pipeline) *Pipeline {
 		PlaceholderWidth: p.PlaceholderWidth, PlaceholderQuality: p.PlaceholderQuality, MaxPixels: p.MaxPixels}
 }
 
-// encoderFor is the encoder that writes a file named so: a copy's name says
-// its format, so one resizing child makes every format.
 func encoderFor(path string) (Encoder, bool) {
 	for _, e := range []Encoder{WebP{}, AVIF{}, JPEG{}} {
 		if strings.HasSuffix(path, e.Ext()) {
@@ -129,8 +128,10 @@ func (JPEG) Encode(w io.Writer, img image.Image, quality int) error {
 
 // A Decoder reads a format Go's image package doesn't.
 type Decoder interface {
-	ContentType() string    // "image/heic"
-	Match(data []byte) bool // the bytes are in this format
+	// "image/heic"
+	ContentType() string
+	// the bytes are in this format
+	Match(data []byte) bool
 	Decode(r io.Reader) (image.Image, error)
 	DecodeConfig(r io.Reader) (image.Config, error)
 }

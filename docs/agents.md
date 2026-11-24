@@ -94,8 +94,12 @@ sets a cookie or says `Cache-Control: private` or `no-store` is never kept. An
 app that renames its session cookie sets
 `rt.Cache.Skip = a.Auth.HasSessionCookie`; `Skip` replaces the default check.
 Use `db.DB.Version` for database-driven invalidation where appropriate, and
-account for other data sources and time-dependent content. A clean Strict scan
-does not check this for you yet.
+account for other data sources and time-dependent content. Strict fails on a
+cached route whose handler reads who's signed in or a cookie (`cached-scope`),
+or sets a cookie, the flash or a session (`cache-set-cookie`), as far as it
+can follow the handler through the app's code. A clean scan doesn't prove the
+page is the same for everyone. Data, time and anything else per-visitor are
+still yours to check.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user
@@ -156,6 +160,11 @@ server. For each finding, inspect the named file and use the recommended Gantry
 pattern when it applies. Review advisory findings even though they do not fail
 strict mode. Do not hide findings by disabling the panel or moving code beyond
 the scanner's reach.
+
+Write no comments: an app has none, tests included, and `comments` fails
+`check --strict` on any but a tool's directives (`//go:`, sqlc's `-- name:`,
+goose's `-- +goose`). Put the intent in a name, a type or a test. If a
+comment would explain a workaround, fix what made it necessary instead.
 
 With Gantry's router, `GANTRY_ENV=development` automatically enables the browser
 panel and request timing. Do not add a panel component to the app's views or

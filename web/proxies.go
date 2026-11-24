@@ -59,12 +59,9 @@ var PrivateNetworks = []netip.Prefix{
 	netip.MustParsePrefix("fe80::/10"),
 }
 
-// forwarding are the headers a proxy speaks in, removed when the peer isn't
-// one.
 var forwarding = []string{"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Host", "X-Forwarded-Port",
 	"X-Forwarded-Ssl", "Forwarded", "X-Real-Ip"}
 
-// origin is where a request comes from, worked out once as it arrives.
 type origin struct{ ip, scheme, host string }
 
 var originKey = NewKey[origin]("origin")
@@ -88,7 +85,6 @@ func (p Proxies) trusts(a netip.Addr) bool {
 	return false
 }
 
-// origin is where r comes from, and whether its peer is a trusted proxy.
 func (p Proxies) origin(r *http.Request) (origin, bool) {
 	peer := r.RemoteAddr
 	if h, _, err := net.SplitHostPort(peer); err == nil {
@@ -107,8 +103,6 @@ func (p Proxies) origin(r *http.Request) (origin, bool) {
 			o.ip = a.Unmap().String()
 		}
 	} else {
-		// The nearest address that isn't a proxy's, from the right: each
-		// proxy appends the address it was reached from.
 		chain := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
 		for i := len(chain) - 1; i >= 0; i-- {
 			if a, err := netip.ParseAddr(strings.TrimSpace(chain[i])); err == nil && !p.trusts(a) {
@@ -117,8 +111,6 @@ func (p Proxies) origin(r *http.Request) (origin, bool) {
 			}
 		}
 	}
-	// The last value of each, the nearest proxy's: one that appends puts it
-	// after whatever the visitor sent.
 	if proto := strings.ToLower(lastValue(r.Header, "X-Forwarded-Proto")); proto == "https" || proto == "http" {
 		o.scheme = proto
 	}
@@ -128,8 +120,6 @@ func (p Proxies) origin(r *http.Request) (origin, bool) {
 	return o, true
 }
 
-// lastValue is the last of a header's comma-separated values, across all
-// its lines.
 func lastValue(h http.Header, name string) string {
 	values := h.Values(name)
 	if len(values) == 0 {
@@ -164,8 +154,6 @@ func ParseProxies(s string) ([]netip.Prefix, error) {
 	return prefixes, nil
 }
 
-// arrive works out where each request comes from, keeps it in Current, and
-// refuses a host the app doesn't answer to.
 func (rt *Router) arrive(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		o, trusted := rt.Proxies.origin(r)
@@ -186,9 +174,6 @@ func (rt *Router) arrive(next http.Handler) http.Handler {
 	})
 }
 
-// withoutForwarding is r without the headers names (and a provider's
-// client IP header), on a copy, so nothing later reads a forged one. r
-// itself when it has none.
 func withoutForwarding(r *http.Request, names []string, clientIP ...string) *http.Request {
 	names = append(names[:len(names):len(names)], clientIP...)
 	var copied *http.Request
@@ -208,8 +193,6 @@ func withoutForwarding(r *http.Request, names []string, clientIP ...string) *htt
 	return copied
 }
 
-// allowedHost reports whether host is one of hosts (Rails' config.hosts):
-// "example.com" is that host, ".example.com" it and its subdomains.
 func allowedHost(hosts []string, host string) bool {
 	for _, h := range hosts {
 		h = cleanHost(h)
@@ -220,8 +203,6 @@ func allowedHost(hosts []string, host string) bool {
 	return false
 }
 
-// cleanHost is a host for comparing: without its port, lowercase, and
-// without a trailing dot.
 func cleanHost(host string) string {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
@@ -260,10 +241,8 @@ func RequestHost(r *http.Request) string {
 	return cleanHost(r.Host)
 }
 
-// A proxy's addresses by name, looked up at most once a minute (lookupProxy
-// and proxyClock are variables for the tests).
 var (
-	proxyNames  sync.Map // name → *proxyLookup
+	proxyNames  sync.Map
 	proxyClock  = time.Now
 	lookupProxy = func(name string) ([]netip.Addr, error) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -284,7 +263,7 @@ func proxyAddrs(name string) []netip.Addr {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if now := proxyClock(); l.at.IsZero() || now.Sub(l.at) > time.Minute {
-		addrs, _ := lookupProxy(name) // failed: none
+		addrs, _ := lookupProxy(name)
 		for i := range addrs {
 			addrs[i] = addrs[i].Unmap()
 		}

@@ -1,5 +1,3 @@
--- Email-code challenges and shared rate limits. The app owns these tables.
--- No plaintext codes or challenge tokens are stored. Expiry is Unix seconds.
 -- +goose Up
 CREATE TABLE auth_login_codes (
   challenge_digest text PRIMARY KEY,

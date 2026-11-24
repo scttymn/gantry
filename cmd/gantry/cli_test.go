@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// A command used wrongly says how to use it, flags and all, from the same
-// table the top-level usage comes from.
 func TestUsage(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run([]string{"--help"}, t.TempDir(), &out, &errOut); code != 0 {
@@ -66,7 +64,6 @@ func TestUsage(t *testing.T) {
 	}
 }
 
-// A command's --help or -h is its usage, asked for: on stdout, exit 0.
 func TestCommandHelp(t *testing.T) {
 	for _, c := range commands {
 		if c.flags == nil && c.name != "new" {
@@ -86,8 +83,6 @@ func TestCommandHelp(t *testing.T) {
 	}
 }
 
-// docsWithCommands are where gantry's commands are shown to people and
-// agents: what they run is what they copy from here.
 var docsWithCommands = []string{"README.md", "docs/*.md", "llms.txt", "cmd/gantry/templates/new/README.md.tmpl"}
 
 var (
@@ -96,9 +91,6 @@ var (
 	flagName   = regexp.MustCompile(`--[a-z][a-z0-9-]*`)
 )
 
-// Every gantry command in the docs is one gantry has, with flags it takes.
-// Houston's commands (the table's houston entries) are passed on as they
-// are, so their flags are Houston's to check.
 func TestDocsCommands(t *testing.T) {
 	var files []string
 	for _, pattern := range docsWithCommands {
@@ -121,11 +113,9 @@ func TestDocsCommands(t *testing.T) {
 
 type docInvocation struct {
 	line int
-	text string // after "gantry ": "g auth --email-code"
+	text string
 }
 
-// invocations are the gantry commands in a file's code: fenced blocks and
-// `inline code`, not prose ("gantry runs apps with Houston").
 func invocations(t *testing.T, file string) []docInvocation {
 	t.Helper()
 	f, err := os.Open(file)
@@ -161,7 +151,6 @@ func invocations(t *testing.T, file string) []docInvocation {
 	return found
 }
 
-// checkInvocation is what's wrong with a documented command, or "".
 func checkInvocation(text string) string {
 	words := strings.Fields(text)
 	if helpArgs[words[0]] {
@@ -199,7 +188,6 @@ func didYouMean(name string, known map[string]bool) string {
 	return " (did you mean " + best + "?)"
 }
 
-// distance is the Levenshtein distance between a and b.
 func distance(a, b string) int {
 	prev := make([]int, len(b)+1)
 	for j := range prev {
@@ -220,8 +208,6 @@ func distance(a, b string) int {
 	return prev[len(b)]
 }
 
-// The docs check catches what it's for: a flag a command doesn't take, a
-// command gantry doesn't have, and nothing in a Houston command.
 func TestCheckInvocation(t *testing.T) {
 	for text, want := range map[string]string{
 		"g auth --email-codes":             "unknown flag --email-codes (did you mean --email-code?)",

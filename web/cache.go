@@ -26,7 +26,8 @@ import (
 // Only 200s are kept, never a response that sets a cookie or says private
 // or no-store, and never one to a request with an Authorization header.
 // Browsers are told no-cache with an ETag and a Last-Modified, so they check
-// back each time and get a 304 when nothing changed. Last-Modified is when
+// back each time and get a 304 when nothing changed: by the ETag when the
+// request has If-None-Match (RFC 9110: it wins), else by the date. Last-Modified is when
 // the page last changed: its first render since the app started (a
 // deploy), or the first render that came out different from the one before
 // (an edit in the admin, say). Rendered again the same, it keeps its date.
@@ -60,12 +61,12 @@ type PageCache struct {
 
 type cachedPage struct {
 	status   int
-	kept     bool        // cacheable, and in the cache
-	header   http.Header // the handler's own headers
+	kept     bool
+	header   http.Header
 	body     []byte
 	gzipped  []byte
 	etag     string
-	modified time.Time // when this content was first served: Last-Modified
+	modified time.Time
 	version  int64
 	made     time.Time
 }
@@ -113,13 +114,13 @@ func (c *PageCache) Handler(next http.Handler) http.Handler {
 				version, versioned = v, true
 			}
 		}
-		key := RequestHost(r) + r.URL.RequestURI() // a host may be another site (Router.Hosts)
+		key := RequestHost(r) + r.URL.RequestURI()
 		page := c.fresh(key, version, versioned)
 		if page == nil {
 			var own *cachedPage
 			made, err, _ := c.making.Do(key, func() (any, error) {
 				if p := c.fresh(key, version, versioned); p != nil {
-					return p, nil // made while this one waited
+					return p, nil
 				}
 				own = c.make(key, version, next, r)
 				return own, nil
@@ -129,8 +130,6 @@ func (c *PageCache) Handler(next http.Handler) http.Handler {
 			}
 			page = made.(*cachedPage)
 			if page != own && !page.kept {
-				// Another request's render, kept for no one (its cookie,
-				// its error): this one gets its own.
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -147,7 +146,6 @@ func (c *PageCache) Clear() {
 	c.mu.Unlock()
 }
 
-// fresh is the kept page for key, if it's still good.
 func (c *PageCache) fresh(key string, version int64, versioned bool) *cachedPage {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -158,21 +156,14 @@ func (c *PageCache) fresh(key string, version int64, versioned bool) *cachedPage
 	return p
 }
 
-// make renders the page into memory and keeps it if it's cacheable. A page
-// that isn't is still returned, uncached, for this request alone; those
-// that waited on the same render make their own.
 func (c *PageCache) make(key string, version int64, next http.Handler, r *http.Request) *cachedPage {
-	// The render is shared by whoever waits on it, so it isn't cut short
-	// when this request's client goes.
-	// A HEAD is rendered as the GET it shares a page with: its own render
-	// may have no body (http.ServeContent writes none).
 	rec := &recorder{header: http.Header{}, status: http.StatusOK}
 	get := r.Clone(context.WithoutCancel(r.Context()))
 	get.Method = http.MethodGet
 	next.ServeHTTP(rec, get)
 	page := &cachedPage{status: rec.status, header: rec.header, body: rec.body.Bytes(), version: version, made: c.now()}
 	if rec.status != http.StatusOK || len(rec.header.Values("Set-Cookie")) > 0 || rec.header.Get("Content-Encoding") != "" || private(rec.header) {
-		return page // for this request alone, never kept
+		return page
 	}
 	page.kept = true
 	sum := sha256.Sum256(page.body)
@@ -188,10 +179,8 @@ func (c *PageCache) make(key string, version int64, next http.Handler, r *http.R
 	if before := c.entries[key]; before != nil {
 		switch {
 		case before.etag == page.etag:
-			page.modified = before.modified // the same content: the same date
+			page.modified = before.modified
 		case !page.modified.After(before.modified):
-			// Changed within the second it last changed: a later second,
-			// so a browser holding the first isn't told it's current.
 			page.modified = before.modified.Add(time.Second)
 		}
 	}
@@ -203,8 +192,6 @@ func (c *PageCache) make(key string, version int64, next http.Handler, r *http.R
 	return page
 }
 
-// evict drops the stale pages, and when none are, the oldest. Called with
-// c.mu held.
 func (c *PageCache) evict() {
 	now := c.now()
 	for k, p := range c.entries {
@@ -223,14 +210,12 @@ func (c *PageCache) evict() {
 	}
 }
 
-// serve writes a page: a 304 when the browser's copy is current, the
-// gzipped bytes to a client that takes them, else the body as rendered.
 func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage) {
 	h := w.Header()
 	for k, v := range p.header {
-		h[k] = slices.Clone(v) // what's downstream may change the response's
+		h[k] = slices.Clone(v)
 	}
-	if !p.kept { // an error page, say: as it was written
+	if !p.kept {
 		w.WriteHeader(p.status)
 		if r.Method != http.MethodHead {
 			w.Write(p.body)
@@ -243,14 +228,13 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 		h.Set("Cache-Control", "no-cache")
 	}
 	if p.gzipped != nil && !slices.Contains(h.Values("Vary"), "Accept-Encoding") {
-		h.Add("Vary", "Accept-Encoding") // unless compress.Handler said so
+		h.Add("Vary", "Accept-Encoding")
 	}
 	if unchanged(r, p) {
 		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	body := p.body
-	// A HEAD's headers are the plain page's, as compress.Handler leaves them.
 	if p.gzipped != nil && r.Method == http.MethodGet && compress.Accepts(r) {
 		h.Set("Content-Encoding", "gzip")
 		body = p.gzipped
@@ -262,8 +246,6 @@ func (c *PageCache) serve(w http.ResponseWriter, r *http.Request, p *cachedPage)
 	}
 }
 
-// skip is Skip's answer, or without one, whether the request carries a
-// session cookie by auth's default name.
 func (c *PageCache) skip(r *http.Request) bool {
 	if c.Skip != nil {
 		return c.Skip(r)
@@ -272,8 +254,6 @@ func (c *PageCache) skip(r *http.Request) bool {
 	return err == nil && s.Value != ""
 }
 
-// private reports whether the response's Cache-Control keeps it out of a
-// cache shared by visitors: private, or no-store.
 func private(h http.Header) bool {
 	for _, v := range h.Values("Cache-Control") {
 		for d := range strings.SplitSeq(v, ",") {
@@ -286,8 +266,6 @@ func private(h http.Header) bool {
 	return false
 }
 
-// unchanged reports whether the browser's copy of p is p, by its ETag when
-// the request has one (RFC 9110: If-None-Match wins), else by its date.
 func unchanged(r *http.Request, p *cachedPage) bool {
 	if match := r.Header.Get("If-None-Match"); match != "" {
 		return match == p.etag || match == "W/"+p.etag
@@ -296,7 +274,6 @@ func unchanged(r *http.Request, p *cachedPage) bool {
 	return err == nil && !p.modified.After(since)
 }
 
-// recorder keeps a response in memory.
 type recorder struct {
 	header http.Header
 	status int

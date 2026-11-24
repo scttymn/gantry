@@ -13,8 +13,6 @@ import (
 	"testing"
 )
 
-// benchFeedOwn is what bench/feed has of its own in place of what gantry
-// new writes, and why: the challenge's API, where a new app has a page.
 var benchFeedOwn = map[string]string{
 	".env":                 "random keys, each app its own, ignored by git",
 	"app/routes.go":        "the challenge's routes",
@@ -28,10 +26,7 @@ var benchFeedOwn = map[string]string{
 	"sqlc.yaml":            "emit_json_tags: a row is the API's JSON",
 }
 
-// benchFeedPart is a file bench/feed keeps gantry new's copy of inside text
-// of its own: the part that's gantry new's, and what's around it.
 var benchFeedPart = map[string]func(bench string) (before, generated, after string){
-	// go mod tidy adds the indirect requirements, then the replace.
 	"go.mod": func(b string) (string, string, string) {
 		i := strings.Index(b, "\n)\n")
 		if i < 0 {
@@ -39,7 +34,6 @@ var benchFeedPart = map[string]func(bench string) (before, generated, after stri
 		}
 		return "", b[:i+3], b[i+3:]
 	},
-	// A paragraph saying what the app is for.
 	"README.md": func(b string) (string, string, string) {
 		before, rest, ok := strings.Cut(b, "\n\n")
 		if !ok {
@@ -49,9 +43,6 @@ var benchFeedPart = map[string]func(bench string) (before, generated, after stri
 	},
 }
 
-// bench/feed is a generated app (gantry new feed), so the bench measures
-// what an app runs: what gantry new writes is in it as written, apart from
-// what it has of its own.
 func TestBenchFeedIsANewApp(t *testing.T) {
 	root := t.TempDir()
 	if err := newApp(root, []string{"feed", "--skip-houston"}, io.Discard, io.Discard); err != nil {
@@ -112,9 +103,6 @@ func TestBenchFeedIsANewApp(t *testing.T) {
 	}
 }
 
-// declared is what the Go file at path has that a copy of its own in
-// bench/feed must keep: each top-level name (a method as Type.Method), and
-// each string a switch's case matches, as a command's name is.
 func declared(t *testing.T, path string) []string {
 	t.Helper()
 	f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)

@@ -41,9 +41,11 @@ type Feature struct {
 
 // Visit is a page Verify requests, and what it must answer.
 type Visit struct {
-	Path     string `yaml:"path"`
-	Status   int    `yaml:"status"`   // 200 when 0
-	Selector string `yaml:"selector"` // an element the page has: "h1", "form#new_post"
+	Path string `yaml:"path"`
+	// 200 when 0
+	Status int `yaml:"status"`
+	// an element the page has: "h1", "form#new_post"
+	Selector string `yaml:"selector"`
 }
 
 // Role is who a feature is for. Each can do what the one before it can: a
@@ -103,7 +105,6 @@ func Features(t testing.TB, path string) []Feature {
 	return m.Features
 }
 
-// covers reports whether r is one of the feature's routes.
 func (f Feature) covers(r web.Route) bool {
 	for _, route := range f.Routes {
 		method, path, ok := strings.Cut(route, " ")
@@ -172,8 +173,6 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 			t.Errorf("%s: %s is for %s visitors, and Verify has no SignIn for %s", path, f.Name, f.Role, f.Role)
 		}
 	}
-	// Before anything else requests them, so a signed-in user is the
-	// first to see each cached page.
 	for _, f := range features {
 		if f.Cacheable {
 			for _, visit := range f.Visit {
@@ -195,7 +194,6 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 	}
 }
 
-// visitAs requests a feature's page as role.
 func visitAs(t testing.TB, h http.Handler, f Feature, visit Visit, role Role, signIn SignIn) {
 	t.Helper()
 	v := Browser(t, h)
@@ -229,7 +227,6 @@ func visitAs(t testing.TB, h http.Handler, f Feature, visit Visit, role Role, si
 	t.Logf("%s: GET %s %d", as, visit.Path, p.Code)
 }
 
-// cached checks the page cache serves a page, as a browser sees it.
 func cached(t testing.TB, h http.Handler, f Feature, path string, signIn SignIn) {
 	t.Helper()
 	v := Browser(t, h)
@@ -249,8 +246,6 @@ func cached(t testing.TB, h http.Handler, f Feature, path string, signIn SignIn)
 	}
 }
 
-// leaks checks no one is shown a signed-in user's copy of a cacheable
-// page: not another user of their role, nor a public visitor.
 func leaks(t testing.TB, h http.Handler, f Feature, path string, roles Roles) {
 	t.Helper()
 	for _, role := range allRoles[1:] {
@@ -276,9 +271,6 @@ func leaks(t testing.TB, h http.Handler, f Feature, path string, roles Roles) {
 	}
 }
 
-// probe is path with a query parameter of role's own, so the page cache
-// keeps each role's probe apart (its key is the host, path and query): a
-// role's user 0 renders the page, not an earlier role's copy.
 func probe(t testing.TB, path string, role Role) string {
 	t.Helper()
 	u, err := url.Parse(path)
@@ -291,9 +283,6 @@ func probe(t testing.TB, path string, role Role) string {
 	return u.String()
 }
 
-// headers are what the visitor sends with a request for path: its Header,
-// and the cookies it has for that path (one may be scoped to /admin), for
-// Links to request a page's references as the visitor who saw it.
 func (v *Visitor) headers(path string) http.Header {
 	u, _ := url.Parse(origin)
 	u, _ = u.Parse(path)

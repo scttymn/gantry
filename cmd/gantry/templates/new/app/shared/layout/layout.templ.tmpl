@@ -1,4 +1,3 @@
-// Package layout is the page shell every page is drawn in.
 package layout
 
 import (
@@ -7,13 +6,11 @@ import (
 	"{{.Module}}/assets"
 )
 
-// Page is what the layout needs from a page: its title, and what its link
-// preview and search result say.
 type Page struct {
 	Title       string
 	Description string
-	Path        string // the page's address on the site: "/terms"
-	Image       string // its own preview picture; the site's when ""
+	Path        string
+	Image       string
 }
 
 templ Layout(p Page) {

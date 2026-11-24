@@ -1,5 +1,3 @@
--- Users (gantry g auth; app/auth). Emails are stored lowercased.
-
 -- name: FindUserByEmail :one
 SELECT * FROM users WHERE email_address = sqlc.arg(email_address);
 

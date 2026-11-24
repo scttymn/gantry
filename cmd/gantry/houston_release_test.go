@@ -11,11 +11,6 @@ import (
 	"testing"
 )
 
-// An app tracks one version, gantry's: the Houston it runs with is the one
-// its gantry release names (gantry houston-release), and gantry keeps the
-// app's bin/gantry current. The pin in bin/gantry only serves a gantry
-// release older than this.
-
 func TestHoustonReleaseCommand(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run([]string{"houston-release"}, t.TempDir(), &out, &errOut); code != 0 || out.String() != houstonRelease+"\n" {
@@ -23,8 +18,6 @@ func TestHoustonReleaseCommand(t *testing.T) {
 	}
 }
 
-// Houston's digests come with the gantry release, which gh can attest, so a
-// replaced Houston release can't pass on its own SHA256SUMS.
 func TestHoustonReleaseSHA256Command(t *testing.T) {
 	var out, errOut bytes.Buffer
 	if code := run([]string{"houston-release", "--sha256"}, t.TempDir(), &out, &errOut); code != 0 {
@@ -46,15 +39,10 @@ func TestHoustonReleaseSHA256Command(t *testing.T) {
 	}
 }
 
-// gantryNaming is a gantry release that names its Houston release, from
-// before gantry pinned Houston's digests: it answers houston-release the same
-// whatever follows.
 func gantryNaming(houston string) []byte {
 	return []byte("#!/bin/sh\nif [ \"$1\" = houston-release ]; then echo " + houston + "; exit 0; fi\necho gantry-ok\nhouston\n")
 }
 
-// gantryPinning is a gantry release that names its Houston release and pins
-// its digests (sums, in SHA256SUMS form).
 func gantryPinning(houston, sums string) []byte {
 	return []byte("#!/bin/sh\nif [ \"$1 $2\" = 'houston-release --sha256' ]; then printf '%s' '" + sums + "'; exit 0; fi\n" +
 		"if [ \"$1\" = houston-release ]; then echo " + houston + "; exit 0; fi\necho gantry-ok\nhouston\n")
@@ -69,7 +57,7 @@ func TestBinstubChecksHoustonAgainstGantrysDigests(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		gantry  []byte
-		houston []byte // served with a SHA256SUMS line that matches it
+		houston []byte
 		want    string
 		ok      bool
 	}{
@@ -116,8 +104,6 @@ func TestBinstubUsesTheHoustonGantryNames(t *testing.T) {
 	}
 }
 
-// An older gantry, without houston-release (or answering anything but a
-// release tag), gets the Houston bin/gantry pins.
 func TestBinstubFallsBackToItsPin(t *testing.T) {
 	dir, rs, env := appWithCLIs(t, "v0.11.3")
 	code, out := runStub(t, dir, env, "dev")
@@ -146,6 +132,15 @@ func TestRefreshBinstub(t *testing.T) {
 		}
 		if info, _ := os.Stat(filepath.Join(dir, "bin", "gantry")); info.Mode()&0o111 == 0 {
 			t.Errorf("bin/gantry isn't executable: %v", info.Mode())
+		}
+	})
+	t.Run("one with the header comment it had before is rewritten", func(t *testing.T) {
+		dir := t.TempDir()
+		commented := strings.Replace(string(current), "#!/bin/sh\n", "#!/bin/sh\n# Downloads this app's gantry (the release go.mod requires) and the Houston\n", 1)
+		writeBinstub(t, dir, []byte(commented))
+		refreshBinstub(dir, &bytes.Buffer{})
+		if got := readBinstub(t, dir); !bytes.Equal(got, current) {
+			t.Fatalf("bin/gantry wasn't refreshed:\n%s", got)
 		}
 	})
 	t.Run("a current one is left alone, silently", func(t *testing.T) {

@@ -11,8 +11,6 @@ import (
 
 type developmentWarningsKey struct{}
 
-// developmentWarning has devcheck.Warning's fields, so the panel builds without
-// devcheck (-tags nodevcheck).
 type developmentWarning struct {
 	File                    string
 	Line                    int

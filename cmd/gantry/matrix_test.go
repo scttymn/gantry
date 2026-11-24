@@ -21,21 +21,14 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// matrixRow is a generator, run in an app: a row of the generator matrix.
 type matrixRow struct {
-	args []string // gantry's
-	// then does what its next steps leave to a person, as one would, for
-	// the app to use it; nil when the app builds without.
+	args []string
 	then func(t *testing.T, dir, out string)
 }
 
-// matrixApps are the apps the matrix's rows run in, each row in the app the
-// rows before it left: generators that compose share one, and those that
-// can't (an app has one auth recipe) have their own. Each starts as a new
-// app; the first one's is a row too.
 var matrixApps = []struct {
 	name     string
-	inModule bool // made with gantry new --in-module, in a module's apps/control
+	inModule bool
 	rows     []matrixRow
 }{
 	{name: "shop", rows: []matrixRow{
@@ -45,9 +38,7 @@ var matrixApps = []struct {
 		{args: []string{"g", "resource", "admin/events", "name:string:required", "starts_on:date", "position:position"}, then: routed(`
 		{path: "/admin/events", create: map[string]string{"event[name]": "Open day", "event[starts_on]": "2026-12-01"}, update: map[string]string{"event[name]": "Open house"},
 			listed: []string{"Open day", "2026-12-01"}, editing: map[string]string{"event[position]": "1", "event[starts_on]": "2026-12-01"}, blank: map[string]string{"event[name]": " "}},`)},
-		// Built, not routed: its Photos is App's Storage, which a new app hasn't.
 		{args: []string{"g", "resource", "admin/galleries", "caption:string", "photo:photo"}},
-		// Its package, resources, imported beside the helpers' resource.
 		{args: []string{"g", "resource", "resources", "name:string", "position:position"}, then: routed(`
 		{path: "/resources", create: map[string]string{"resource[name]": "Guide"}, update: map[string]string{"resource[name]": "Handbook"}, listed: []string{"Guide"}, editing: map[string]string{"resource[position]": "1"}},`)},
 		{args: []string{"g", "migration", "create_notes", "body:text:required", "seen_at:datetime", "done:bool"}},
@@ -75,20 +66,12 @@ var matrixApps = []struct {
 		{args: []string{"g", "auth", "--email-code", "--signup"}},
 		{args: []string{"g", "auth", "--social"}},
 	}},
-	// Its packages are under the module's path, which Strict's layer rules
-	// must still tell apart from everything else's.
 	{name: "in-module", inModule: true, rows: []matrixRow{
 		{args: []string{"g", "api-tokens", "--prefix", "control_"}},
 		{args: []string{"g", "storage"}},
 	}},
 }
 
-// Every generator, on each engine, in a new app as people make one: each
-// row's output, with its next steps done, passes Strict, generates its
-// queries (sqlc) and views (templ), vets clean, passes the app's tests, and
-// check --generated finds it fresh, against this checkout. The apps run in
-// parallel, their rows in turn. Without templ and sqlc (bin/go has them) or
-// with -short, the rows are generated and scanned only.
 func TestGeneratorMatrix(t *testing.T) {
 	repo, _ := filepath.Abs("../..")
 	build := !testing.Short()
@@ -97,9 +80,6 @@ func TestGeneratorMatrix(t *testing.T) {
 			build = false
 		}
 	}
-	// An app's views are built against pins.Templ's runtime, and code another
-	// templ made can call what that runtime hasn't (v0.3.1020's calls
-	// templ.JoinURLErrs, which v0.3.1118's hasn't): say so, not go vet's error.
 	if build {
 		v, _ := exec.Command("templ", "version").Output()
 		if have := strings.TrimSpace(string(v)); have != pins.Templ {
@@ -107,12 +87,10 @@ func TestGeneratorMatrix(t *testing.T) {
 		}
 	}
 	if url := os.Getenv("GANTRY_TEST_POSTGRES_URL"); url != "" {
-		t.Setenv("TEST_DATABASE_URL", url) // the apps' tests', testkit.Postgres's
+		t.Setenv("TEST_DATABASE_URL", url)
 	}
 	fakeGoogle(t)
 
-	// Generators read now and httpClient, which the apps share: one runs at
-	// a time.
 	var generating sync.Mutex
 	gantryAt := func(t *testing.T, dir string, when time.Time, args ...string) string {
 		t.Helper()
@@ -135,7 +113,6 @@ func TestGeneratorMatrix(t *testing.T) {
 				t.Parallel()
 				var dir string
 				if a.inModule {
-					// The module's go.mod points gantry at this checkout.
 					root := big(t, repo)
 					gantryAt(t, filepath.Join(root, "apps"), start, "new", "control", "--db", engine, "--in-module", "--skip-houston")
 					dir = filepath.Join(root, "apps", "control")
@@ -143,9 +120,6 @@ func TestGeneratorMatrix(t *testing.T) {
 					root := t.TempDir()
 					gantryAt(t, root, start, "new", "shop", "--db", engine, "--module", "example.com/shop", "--skip-houston", "--gantry", repo)
 					dir = filepath.Join(root, "shop")
-					// This checkout, not the release go.mod requires: go.work alone
-					// still reads that release's go.mod, which isn't published until
-					// it's tagged.
 					mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
 					os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
 				}
@@ -184,7 +158,7 @@ func TestGeneratorMatrix(t *testing.T) {
 						}
 					}, nil)
 					if !ok {
-						return // the rows after it build on it
+						return
 					}
 				}
 			})
@@ -192,7 +166,6 @@ func TestGeneratorMatrix(t *testing.T) {
 	}
 }
 
-// rowName is a row's command, without its fields: "g resource posts".
 func rowName(args []string) string {
 	for i, a := range args {
 		if strings.Contains(a, ":") {
@@ -202,9 +175,6 @@ func rowName(args []string) string {
 	return strings.Join(args, " ")
 }
 
-// buildApp is a cell's build, as gantry new's steps and the generators' next
-// steps run it: the schema the migrations leave, sqlc's queries and templ's
-// views, then go vet and the app's tests; and check --generated agrees.
 func buildApp(t *testing.T, dir, engine string) {
 	t.Helper()
 	migrate := func(ctx context.Context, d *db.DB) error {
@@ -241,8 +211,6 @@ func buildApp(t *testing.T, dir, engine string) {
 	}
 }
 
-// pictureChild checks a new app's binary is its pictures' resizing child
-// (images.Child), with the app's pipeline and so its pixel limit.
 func pictureChild(t *testing.T, dir string) {
 	t.Helper()
 	for _, step := range [][]string{{"go", "run", "./cmd/shop", "assets"}, {"go", "build", "-o", "shop", "./cmd/shop"}} {
@@ -276,8 +244,6 @@ func pictureChild(t *testing.T, dir string) {
 	}
 }
 
-// edit replaces, in the file at path, each old with its new, as a person
-// following next steps would; each old must be there.
 func edit(t *testing.T, path string, oldNew ...string) {
 	t.Helper()
 	b, _ := os.ReadFile(path)
@@ -293,9 +259,6 @@ func edit(t *testing.T, path string, oldNew ...string) {
 	}
 }
 
-// routed is a resource's then: wired in as g resource's next steps say, and
-// its pages used through their routes by the app's own test (resourcesTest,
-// with testCase, as Go, among its cases), so its queries run on the engine.
 func routed(testCase string) func(t *testing.T, dir, out string) {
 	return func(t *testing.T, dir, out string) {
 		t.Helper()
@@ -304,13 +267,10 @@ func routed(testCase string) func(t *testing.T, dir, out string) {
 		if _, err := os.Stat(path); err != nil {
 			os.WriteFile(path, []byte(resourcesTest), 0o644)
 		}
-		edit(t, path, "\t\t// cases\n", testCase[1:]+"\n\t\t// cases\n")
+		edit(t, path, "\t}{\n", "\t}{\n"+testCase[1:]+"\n")
 	}
 }
 
-// wire does in app/routes.go what g resource's next steps say: their
-// imports (each once, as a person adds one), and their code, in Router;
-// and its feature in test/features.yaml.
 func wire(t *testing.T, dir, out string) {
 	t.Helper()
 	_, next, ok := strings.Cut(out, "\nNext:\n")
@@ -344,8 +304,6 @@ func wire(t *testing.T, dir, out string) {
 	feature(t, dir, out)
 }
 
-// feature does in test/features.yaml what a generator's next steps say: the
-// feature they print, under the map's features.
 func feature(t *testing.T, dir, out string) {
 	t.Helper()
 	_, step, ok := strings.Cut(out, "In test/features.yaml")
@@ -381,16 +339,14 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// Each resource's pages, as a person uses them, so its queries run.
 func TestResources(t *testing.T) {
 	for _, tc := range []struct {
 		path           string
 		create, update map[string]string
-		listed         []string          // the new record, in the list
-		editing        map[string]string // its edit form's values
-		blank          map[string]string // a form missing what's required
+		listed         []string
+		editing        map[string]string
+		blank          map[string]string
 	}{
-		// cases
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			b := testkit.Browser(t, handler(t))

@@ -16,7 +16,6 @@ import (
 	"github.com/scttymn/gantry/storage"
 )
 
-// shopApp is a new app, written without Houston, on engine.
 func shopApp(t *testing.T, engine string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -42,7 +41,6 @@ func TestAPITokensRules(t *testing.T) {
 	}
 }
 
-// An app in a folder of a module imports under the module's path.
 func TestAPITokensInModule(t *testing.T) {
 	root := big(t, "")
 	gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston")
@@ -67,8 +65,6 @@ func TestAuthRules(t *testing.T) {
 	}
 }
 
-// The tables g storage writes migrate, on each engine, and the storage
-// package works on them.
 func TestStorageMigrates(t *testing.T) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
@@ -146,8 +142,6 @@ func TestStorageRules(t *testing.T) {
 	}
 }
 
-// Each auth recipe is applied once: an app has one user and session system.
-// That it builds and passes Strict is TestGeneratorMatrix's.
 func TestEmailCodeRecipe(t *testing.T) {
 	for _, args := range [][]string{{"g", "auth"}, {"g", "auth", "--email-code"}, {"g", "auth", "--email-code", "--signup"}} {
 		dir := shopApp(t, "sqlite")
@@ -164,8 +158,6 @@ func TestEmailCodeRecipe(t *testing.T) {
 	}
 }
 
-// The social recipe adds to existing auth, of either kind, without writing
-// over it, once, with its migration after auth's.
 func TestSocialRecipe(t *testing.T) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		for _, mode := range []string{"password", "email-code"} {
@@ -210,10 +202,6 @@ func TestSocialRecipe(t *testing.T) {
 	}
 }
 
-// No auth recipe's view renders with a status of its own: gantry sets
-// Page.Status (422 on a form redrawn with errors), and a view that writes
-// 200 hides it. The recipes' tests check today's views in a built app;
-// this catches a view added later, without building one.
 func TestRecipeViewsKeepPageStatus(t *testing.T) {
 	old := `package auth
 var v = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
@@ -237,8 +225,6 @@ var v = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
 	}
 }
 
-// hardCodedStatuses is where, in src, a function taking a gantryauth.Page
-// calls web.Render with a literal status or an http.Status constant.
 func hardCodedStatuses(t *testing.T, name string, src []byte) []string {
 	t.Helper()
 	fset := token.NewFileSet()

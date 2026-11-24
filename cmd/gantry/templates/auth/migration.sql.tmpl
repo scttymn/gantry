@@ -1,6 +1,3 @@
--- Users and their sessions (gantry g auth), in Rails 8's shape: a
--- session's cookie holds a random token, and only its SHA-256 is kept
--- here, so a copy of the database signs nobody in.
 -- +goose Up
 CREATE TABLE "users" (
 {{- if .Postgres}}
@@ -40,8 +37,6 @@ CREATE TABLE "sessions" (
 CREATE UNIQUE INDEX "index_sessions_on_token_digest" ON "sessions" ("token_digest");
 CREATE INDEX "index_sessions_on_user_id" ON "sessions" ("user_id");
 
--- A fresh install alone starts pending. Never derive this flag from user count
--- on later starts. Existing apps adopting setup must insert completed=true.
 CREATE TABLE auth_setup (
  id integer PRIMARY KEY CHECK (id=1),
  completed boolean NOT NULL,

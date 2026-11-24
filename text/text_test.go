@@ -5,7 +5,6 @@ import (
 	"time"
 )
 
-// Rails' answers, from ActiveSupport's own tests and a Rails console.
 func TestInflections(t *testing.T) {
 	for one, many := range map[string]string{
 		"post": "posts", "category": "categories", "address": "addresses", "box": "boxes",
@@ -23,7 +22,7 @@ func TestInflections(t *testing.T) {
 			t.Errorf("Pluralize(%q) = %q, want %q", one, got, many)
 		}
 		if one == "goldfish" {
-			continue // Rails: "goldfishes" goes back to "goldfish" only by luck of the rules
+			continue
 		}
 		if got := Singularize(many); got != one {
 			t.Errorf("Singularize(%q) = %q, want %q", many, got, one)
@@ -34,7 +33,6 @@ func TestInflections(t *testing.T) {
 			t.Errorf("Pluralize(%q) = %q", word, got)
 		}
 	}
-	// A rule's match is replaced, and the rest kept: Rails' sub.
 	if got := Singularize("oxenford"); got != "oxford" {
 		t.Errorf("Singularize(oxenford) = %q", got)
 	}
@@ -85,7 +83,6 @@ func TestDistance(t *testing.T) {
 			t.Errorf("%v backwards: %q, want %q", c.d, got, c.want)
 		}
 	}
-	// A leap day between doesn't make a year more than a year.
 	leap := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	if got := TimeAgo(leap, leap.AddDate(1, 0, 0)); got != "about 1 year" {
 		t.Errorf("across a leap day: %q", got)
@@ -93,7 +90,6 @@ func TestDistance(t *testing.T) {
 	if got := TimeAgo(leap, leap.AddDate(0, 0, 639)); got != "over 1 year" {
 		t.Errorf("639 days from a leap year's January: %q (without the leap day, it'd be almost 2)", got)
 	}
-	// From March on, that year's leap day is behind.
 	march := time.Date(2024, 3, 15, 0, 0, 0, 0, time.UTC)
 	if got := TimeAgo(march, march.AddDate(0, 0, 639)); got != "almost 2 years" {
 		t.Errorf("639 days from a leap year's March: %q", got)

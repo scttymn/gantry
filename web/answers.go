@@ -57,13 +57,6 @@ func AcceptJSON(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// answer answers status, for err (which may be nil):
-//   - to a client asking for JSON: {"error": ...}, the handler's own message
-//     below 500 (Status(409, err)), else the status's name; a 422 from
-//     Invalid gives its fields' errors
-//   - to a browser: the app's ErrorPage, if it has one and it doesn't fail;
-//     else its public <status>.html; else the router's own page
-//   - to anything else (an image, a script): the bare status
 func (rt *Router) answer(w http.ResponseWriter, r *http.Request, status int, err error) {
 	switch {
 	case WantsJSON(r):
@@ -86,9 +79,6 @@ func (rt *Router) answer(w http.ResponseWriter, r *http.Request, status int, err
 	}
 }
 
-// appPage draws the app's error page, and reports whether it did: a page
-// that panics (its database is down, say) before writing is logged, and the
-// static page is served instead.
 func (rt *Router) appPage(w http.ResponseWriter, r *http.Request, status int) (drawn bool) {
 	tw := &trackingWriter{ResponseWriter: w}
 	defer func() {
@@ -101,13 +91,10 @@ func (rt *Router) appPage(w http.ResponseWriter, r *http.Request, status int) (d
 	return true
 }
 
-// staticPage is the app's public <status>.html, else the router's own page.
 func (rt *Router) staticPage(w http.ResponseWriter, status int) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if rt.Public != nil {
 		if page, ok := rt.Public.Public(fmt.Sprintf("%d.html", status)); ok {
-			// Set, not deleted: a cached route's answer is recorded with
-			// headers of its own, laid over the app's when it's served.
 			if rt.Security.CSP != "" {
 				w.Header().Set(rt.Security.cspHeader(), staticPagePolicy)
 			}

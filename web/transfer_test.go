@@ -15,8 +15,6 @@ import (
 	"time"
 )
 
-// slowly is a body that arrives in chunks with a pause before each: a phone's
-// upload, or a large file to one.
 type slowly struct {
 	chunks, size int
 	pause        time.Duration
@@ -31,7 +29,6 @@ func (s *slowly) Read(p []byte) (int, error) {
 	return copy(p, strings.Repeat("x", min(s.size, len(p)))), nil
 }
 
-// stalled is a body that sends prefix, then nothing until the test ends.
 func stalled(t *testing.T, prefix string) io.Reader {
 	r, w := io.Pipe()
 	go w.Write([]byte(prefix))
@@ -39,12 +36,8 @@ func stalled(t *testing.T, prefix string) io.Reader {
 	return r
 }
 
-// client gives up on a request after 5 s, so a transfer the server never
-// cuts off fails the test rather than hanging it.
 var client = &http.Client{Timeout: 5 * time.Second}
 
-// transfers is a router that echoes what it's sent and downloads body, on
-// a server whose ReadTimeout and WriteTimeout are 100 ms.
 func transfers(t *testing.T, body func() io.Reader) (srv *httptest.Server, ended <-chan struct{}) {
 	done := make(chan struct{}, 10)
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
@@ -72,8 +65,6 @@ func transfers(t *testing.T, body func() io.Reader) (srv *httptest.Server, ended
 	return srv, done
 }
 
-// multipartBody is a form with a note and a photo, its photo's bytes from
-// photo.
 func multipartBody(photo io.Reader) (io.Reader, string) {
 	var head bytes.Buffer
 	mw := multipart.NewWriter(&head)
@@ -83,8 +74,6 @@ func multipartBody(photo io.Reader) (io.Reader, string) {
 	return io.MultiReader(&head, photo, strings.NewReader("\r\n--"+boundary+"--\r\n")), mw.FormDataContentType()
 }
 
-// An upload or a download that takes longer than the server's ReadTimeout
-// and WriteTimeout, but keeps moving at a phone's pace, isn't cut off.
 func TestSlowTransfers(t *testing.T) {
 	srv, _ := transfers(t, func() io.Reader { return &slowly{chunks: 8, size: 4 << 10, pause: 50 * time.Millisecond} })
 	want := strings.Repeat("x", 8*4<<10)
@@ -121,8 +110,6 @@ func TestSlowTransfers(t *testing.T) {
 	}
 }
 
-// A transfer past 8.6 GiB earns its time as any other: the deadline doesn't
-// overflow into the past and cut it off.
 func TestPaceOfAHugeTransfer(t *testing.T) {
 	start := time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC)
 	p := pace{start: start, timeout: time.Minute, moved: 10 << 30}
@@ -136,8 +123,6 @@ func TestPaceOfAHugeTransfer(t *testing.T) {
 	}
 }
 
-// A download from memory (a bytes.Reader hands io.Copy all of itself in one
-// write) is paced as it's read too, not cut off at the timeout.
 func TestSlowDownloadFromMemory(t *testing.T) {
 	const size = 32 << 20
 	srv, _ := transfers(t, func() io.Reader { return bytes.NewReader(make([]byte, size)) })
@@ -160,13 +145,10 @@ func TestSlowDownloadFromMemory(t *testing.T) {
 	}
 }
 
-// One that stops, or trickles in a byte at a time (slowloris), is cut off
-// as the server's timeouts alone would cut it off: it doesn't hold the
-// connection open by sending just enough.
 func TestStalledTransfers(t *testing.T) {
 	srv, ended := transfers(t, func() io.Reader { return strings.NewReader(strings.Repeat("x", 64<<20)) })
 
-	trickle := &slowly{chunks: 150, size: 1, pause: 20 * time.Millisecond} // 3 s, if let
+	trickle := &slowly{chunks: 150, size: 1, pause: 20 * time.Millisecond}
 	for _, tc := range []struct {
 		name string
 		body func() (io.Reader, string)
@@ -177,8 +159,6 @@ func TestStalledTransfers(t *testing.T) {
 			return stalled(t, "note=hi"), "application/x-www-form-urlencoded"
 		}},
 	} {
-		// Over a connection of its own: Go's client waits on a body it's
-		// still sending before it hands back the answer.
 		body, contentType := tc.body()
 		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 		if err != nil {
@@ -196,7 +176,6 @@ func TestStalledTransfers(t *testing.T) {
 		}
 	}
 
-	// A client that stops reading a download.
 	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +189,6 @@ func TestStalledTransfers(t *testing.T) {
 	}
 }
 
-// A malformed form is 400, and one over its limit 413, not a timeout.
 func TestFormErrors(t *testing.T) {
 	srv, _ := transfers(t, func() io.Reader { return strings.NewReader("") })
 	for _, tc := range []struct {
@@ -232,7 +210,6 @@ func TestFormErrors(t *testing.T) {
 	}
 }
 
-// A negative timeout is none, as net/http has it.
 func TestNegativeServerTimeout(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Handle("GET /download", func(w http.ResponseWriter, r *http.Request) error {

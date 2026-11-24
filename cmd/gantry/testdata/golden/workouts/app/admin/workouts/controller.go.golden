@@ -1,4 +1,3 @@
-// Package workouts is the admin's workouts, at /admin/workouts.
 package workouts
 
 import (
@@ -17,22 +16,19 @@ import (
 
 const (
 	path     = "/admin/workouts"
-	param    = "workout" // the form's fields are workout[date], …
+	param    = "workout"
 	title    = "Workouts"
 	singular = "Workout"
 )
 
-// Controller is the workouts' pages: the list, the forms, and deleting.
 type Controller struct{ resource.Controller }
 
 var fields = []resource.Field{resource.F("date", resource.Type("date")), resource.F("name"), resource.F("rx", resource.Type("textarea"))}
 
-// formValues are a workout as its form holds them: text, as typed.
 func formValues(workout models.Workout) map[string]string {
 	return map[string]string{"date": resource.DateText(workout.Date), "name": workout.Name, "rx": workout.Rx}
 }
 
-// fromForm reads a form's values back into a workout.
 func fromForm(v map[string]string) models.Workout {
 	return models.Workout{Date: resource.OptionalDate(v["date"]), Name: v["name"], Rx: v["rx"]}
 }
@@ -78,9 +74,6 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, workout.ID, formValues(workout), nil)
 }
 
-// Update reads, checks and writes the row in one transaction, so an edit
-// saved meanwhile isn't overwritten with what this one read. The form is
-// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	sent := resource.Overlay(r, param, map[string]string{})
 	var (
@@ -123,7 +116,6 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 	return c.Deleted(w, r, path, singular)
 }
 
-// form is the new or edit form, with what's wrong when it's sent back.
 func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
 	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)

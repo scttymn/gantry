@@ -12,7 +12,6 @@ import (
 	"time"
 )
 
-// sqliteOne is one connection to a new database, gantry's writer's kind.
 func sqliteOne(t *testing.T) *sql.DB {
 	t.Helper()
 	pool, err := sqlitePool(filepath.Join(t.TempDir(), "test.sqlite3"), false)
@@ -24,8 +23,6 @@ func sqliteOne(t *testing.T) *sql.DB {
 	return pool
 }
 
-// SQLite reads SQL no further than a NUL: what's after one isn't run, and
-// isn't waited on.
 func TestSQLiteNUL(t *testing.T) {
 	d := sqliteOne(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -40,8 +37,6 @@ func TestSQLiteNUL(t *testing.T) {
 	}
 }
 
-// A read-only transaction doesn't take the write lock, so it starts while
-// another connection is writing.
 func TestSQLiteReadOnlyTxWhileWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.sqlite3")
 	a, _ := sqlitePool(path, false)
@@ -70,8 +65,6 @@ func TestSQLiteReadOnlyTxWhileWriting(t *testing.T) {
 	}
 }
 
-// A query whose context is done after it has answered, its rows left open,
-// doesn't reach what the connection runs next.
 func TestSQLiteCancelAfterAnswer(t *testing.T) {
 	d := sqliteOne(t)
 	mustExec(t, d, `CREATE TABLE n (i integer)`)
@@ -98,9 +91,6 @@ func TestSQLiteCancelAfterAnswer(t *testing.T) {
 	}
 }
 
-// A write asked as a query that fails only when it ends (a deferred foreign
-// key, checked at the end of the statement) says so when its rows are
-// closed before they're read to their end, and isn't made.
 func TestSQLiteReturningFailsAtClose(t *testing.T) {
 	d := sqliteOne(t)
 	mustExec(t, d, `CREATE TABLE parents (id integer PRIMARY KEY)`)
@@ -119,8 +109,6 @@ func TestSQLiteReturningFailsAtClose(t *testing.T) {
 	}
 }
 
-// What an app's SQL may use, on either build: full-text search, and the
-// math functions.
 func TestSQLiteFeatures(t *testing.T) {
 	d := sqliteOne(t)
 	mustExec(t, d, `CREATE VIRTUAL TABLE search USING fts5(body)`)
@@ -150,7 +138,6 @@ func TestSQLiteFeatures(t *testing.T) {
 	}
 }
 
-// A refused write's error has its SQLite code, as an app asks for it.
 func TestSQLiteErrorCode(t *testing.T) {
 	d := sqliteOne(t)
 	mustExec(t, d, `CREATE TABLE things (name text UNIQUE)`)
@@ -162,7 +149,6 @@ func TestSQLiteErrorCode(t *testing.T) {
 	}
 }
 
-// logSize is the size of the database's write-ahead log: 0 when there's none.
 func logSize(t *testing.T, path string) int64 {
 	t.Helper()
 	fi, err := os.Stat(path + "-wal")
@@ -175,10 +161,6 @@ func logSize(t *testing.T, path string) int64 {
 	return fi.Size()
 }
 
-// The write-ahead log grows to hold a transaction, however big (a seed of
-// the whole database, a migration that rewrites a table), and SQLite
-// reuses it after, but never gives the space back. Gantry has it cut back,
-// at the next write, to what SQLite's own checkpoints need of it.
 func TestSQLiteLogShrinksAfterABigWrite(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.sqlite3")
 	d, err := Open(context.Background(), "sqlite://"+path)
@@ -197,13 +179,9 @@ func TestSQLiteLogShrinksAfterABigWrite(t *testing.T) {
 	}
 }
 
-// The log's limit is what SQLite's own checkpoints need: as many pages as
-// it checkpoints at (wal_autocheckpoint), each with its frame's header, of
-// the database's own page size.
 func TestSQLiteLogLimitFollowsThePageSize(t *testing.T) {
 	for _, pageSize := range []int64{4096, 8192} {
 		path := filepath.Join(t.TempDir(), "test.sqlite3")
-		// A database made elsewhere, with its own page size.
 		raw, err := sqlitePool(path, false)
 		if err != nil {
 			t.Fatal(err)
@@ -228,8 +206,6 @@ func TestSQLiteLogLimitFollowsThePageSize(t *testing.T) {
 	}
 }
 
-// Migrations are gantry's own big writes: when they're done, the log is
-// emptied, whether or not the app writes again.
 func TestMigrateLeavesNoLog(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.sqlite3")
 	d, err := Open(context.Background(), "sqlite://"+path)

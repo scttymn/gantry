@@ -6,7 +6,6 @@ import (
 	"testing/fstest"
 )
 
-// migrations runs Migrations with a recorder, as a test would.
 func migrations(t *testing.T, fsys fstest.MapFS) *recorder {
 	r := &recorder{TB: t}
 	done := make(chan struct{})

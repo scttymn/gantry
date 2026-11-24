@@ -27,7 +27,6 @@ func LoadConfig(getenv func(string) string) Config {
 		TLS: getenv("SMTP_TLS"), InboxPath: getenv("MAIL_INBOX_PATH")}
 }
 
-// smtpTLS is SMTP_TLS's values; blank is mandatory.
 var smtpTLS = map[string]TLS{"": TLSMandatory, "mandatory": TLSMandatory, "opportunistic": TLSOpportunistic, "none": TLSNone}
 
 // Mailer is the app's one mail service. Send supplies the default From when a

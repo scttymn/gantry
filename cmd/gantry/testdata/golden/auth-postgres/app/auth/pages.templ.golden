@@ -80,7 +80,6 @@ templ setup(p gantryauth.Page) {
  }
 }
 
-// SignOut uses the shared default logout path; change it with Paths.Logout.
 templ SignOut() {
  <form id="sign-out" method="post" action="/logout"><button type="submit">Sign out</button></form>
 }

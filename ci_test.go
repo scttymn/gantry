@@ -12,10 +12,6 @@ import (
 	"testing"
 )
 
-// bin/ci runs on the machine what the ci workflow runs on a pull request, and
-// the pre-push hook runs bin/ci. A step added to ci.yml fails here until bin/ci
-// runs it too, under the same name; bin/ci has no step ci.yml hasn't. The C
-// flags, build tags and Postgres image are internal/pins' (TestCopiesMatchTheirPin).
 func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 	read := func(file string) string {
 		b, err := os.ReadFile(file)
@@ -47,8 +43,6 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		}
 	}
 
-	// What the steps run that a step's name doesn't say: each one ci.yml has
-	// (the first group, or the whole match) must be in bin/ci as it is there.
 	for what, re := range map[string]string{
 		"tool version":           `go run ([\w.-]+(?:/[\w.-]+)+@v[\d.]+)`,
 		"linker flags":           `-ldflags "[^"]+"`,
@@ -75,10 +69,6 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 	}
 }
 
-// fakeDocker logs each call to $FAKE_DOCKER_LOG and succeeds, but for docker
-// ps under FAKE_DOCKER_PS, a network (the throwaway Postgres's) unless
-// FAKE_POSTGRES=0, and a call with $FAKE_FAIL in it. A build prints an image
-// ID of its own, as Docker's does, and logs it as "built ID".
 const fakeDocker = `#!/bin/sh
 echo "$*" >>"$FAKE_DOCKER_LOG"
 case "$*" in *"${FAKE_FAIL:-no such call}"*) exit 1 ;; esac
@@ -89,11 +79,6 @@ case "$1 $2" in
 esac
 `
 
-// binCI runs bin/ci --fast on fakeDocker, a df with FAKE_FREE_KB free (100 GB
-// unless set), a jq that finds nothing and a git that tracks bin/ci alone
-// (for bin/shellcheck), with env and nothing of the test's own environment. Of
-// the rest of PATH it has the tools bin/ci uses, less without. It returns
-// bin/ci's output, docker's calls, and its error.
 func binCI(t *testing.T, env []string, without ...string) (string, []string, error) {
 	t.Helper()
 	bin, home := t.TempDir(), t.TempDir()
@@ -184,8 +169,6 @@ func TestBinCIPostgres(t *testing.T) {
 	})
 }
 
-// Every checkout's bin/ci shares Go's build cache: one over 5 GB is cleaned,
-// but not under another bin/ci's build, whose files it would take.
 func TestBinCICleansTheCacheAlone(t *testing.T) {
 	gone := exec.Command("true")
 	if err := gone.Run(); err != nil {
@@ -193,7 +176,7 @@ func TestBinCICleansTheCacheAlone(t *testing.T) {
 	}
 	for _, c := range []struct {
 		name   string
-		other  int // another run's mark, by pid
+		other  int
 		cleans bool
 	}{
 		{"alone", 0, true},
@@ -234,7 +217,6 @@ func TestBinCICleansTheCacheAlone(t *testing.T) {
 	}
 }
 
-// bin/ci stops before it starts what it can't finish.
 func TestBinCIStopsFirst(t *testing.T) {
 	for name, c := range map[string]struct {
 		env     []string
@@ -257,10 +239,6 @@ func TestBinCIStopsFirst(t *testing.T) {
 	}
 }
 
-// Each script runs the toolchain's image by the ID its own build printed, or
-// an image by its digest: never by a tag, which is every checkout's. Three
-// bin/ci runs at once failed when one's build moved gantry-toolchain under
-// the others, whose tests then built its templ's views on their runtime.
 func TestScriptsRunTheirOwnBuild(t *testing.T) {
 	ownBuild := func(t *testing.T, out string, calls []string) {
 		t.Helper()
@@ -293,7 +271,6 @@ func TestScriptsRunTheirOwnBuild(t *testing.T) {
 	})
 	for script, args := range map[string][]string{"bin/go": {"go", "version"}, "bin/bench": {"-quick"}} {
 		t.Run(script, func(t *testing.T) {
-			// A copy, on fakeDocker: each writes its .cache in its checkout.
 			root, bin := t.TempDir(), t.TempDir()
 			body, err := os.ReadFile(script)
 			if err != nil {
@@ -320,8 +297,6 @@ func TestScriptsRunTheirOwnBuild(t *testing.T) {
 	}
 }
 
-// The pre-push hook runs bin/ci on the commit being pushed: it refuses a push
-// of any other, or from a tree with changes bin/ci would test too.
 func TestPrePushHook(t *testing.T) {
 	hook, err := filepath.Abs(".githooks/pre-push")
 	if err != nil {

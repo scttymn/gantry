@@ -54,8 +54,6 @@ func Crawl(t testing.TB, h http.Handler, p Page, within string) {
 	}
 }
 
-// links checks a page's references, and returns the pages it links to that
-// answered with HTML.
 func links(t testing.TB, h http.Handler, p Page) (pages []string) {
 	t.Helper()
 	rec := request(h, p.Path, p.Header)
@@ -78,7 +76,7 @@ func links(t testing.TB, h http.Handler, p Page) (pages []string) {
 			continue
 		}
 		if u.Scheme != "" || u.Host != "" || (u.Path == "" && u.RawQuery == "") {
-			continue // another site, data:, mailto:, or a fragment
+			continue
 		}
 		u = base.ResolveReference(u)
 		u.Fragment = ""
@@ -114,16 +112,12 @@ func request(h http.Handler, target string, header http.Header) *httptest.Respon
 
 type reference struct {
 	url  string
-	from string // where the page has it: "img srcset", say
-	link bool   // an <a>, which may redirect
+	from string
+	link bool
 }
 
-// cssURL is a url(): double-quoted, single-quoted or bare. A quoted one is
-// read whole, so a data: URL's own url() inside it (an SVG's filter) isn't
-// taken for another.
 var cssURL = regexp.MustCompile(`url\(\s*(?:"([^"]*)"|'([^']*)'|([^"'\s)][^)]*?))\s*\)`)
 
-// references are the URLs a page refers to, in order.
 func references(page string) ([]reference, error) {
 	doc, err := html.Parse(strings.NewReader(page))
 	if err != nil {
@@ -175,9 +169,6 @@ func references(page string) ([]reference, error) {
 	return out, nil
 }
 
-// srcsetURLs are a srcset's URLs, read as the HTML standard does: a URL
-// runs to the next whitespace (so a data: URL keeps its comma), and a
-// candidate's descriptors run to the next comma.
 func srcsetURLs(srcset string) []string {
 	var out []string
 	s := srcset
@@ -193,7 +184,7 @@ func srcsetURLs(srcset string) []string {
 		u := s[:end]
 		s = s[end:]
 		if trimmed := strings.TrimRight(u, ","); trimmed != u {
-			out = append(out, trimmed) // no descriptors
+			out = append(out, trimmed)
 			continue
 		}
 		out = append(out, u)

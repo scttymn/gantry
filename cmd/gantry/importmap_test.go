@@ -11,9 +11,6 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// jspm answers as it did for Turbo and Stimulus (2026-09-29). Its CDN
-// serves Turbo's file with status turbo and, of each package's package.json
-// and license files, the ones cdn has, by URL; the others are 404s.
 func fakeJSPM(t *testing.T, turbo int, cdn map[string]string) *[]map[string]any {
 	t.Helper()
 	f := testkit.HTTP(t)
@@ -51,9 +48,6 @@ const (
 	stimulusLicense = "MIT License\n\nCopyright © 2021 Basecamp, LLC.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software.\n"
 )
 
-// A pinned file carries its package's license under its first line, in the
-// /*! */ comment gantry new's Turbo and Stimulus have: the package, its
-// homepage, and the license file of the same version on the CDN.
 func TestImportmapPin(t *testing.T) {
 	asked := fakeJSPM(t, 200, map[string]string{
 		"https://ga.jspm.io/npm:@hotwired/turbo@8.0.23/package.json":   `{"name":"@hotwired/turbo","version":"8.0.23","homepage":"https://turbo.hotwired.dev","license":"MIT"}`,
@@ -102,8 +96,6 @@ func TestImportmapPin(t *testing.T) {
 	}
 }
 
-// A package the CDN has no license file for is pinned without one, and pin
-// says so, with the license its package.json names, if it names one.
 func TestImportmapPinNoLicense(t *testing.T) {
 	fakeJSPM(t, 200, map[string]string{
 		"https://ga.jspm.io/npm:@hotwired/turbo@8.0.23/package.json": `{"name":"@hotwired/turbo","version":"8.0.23","license":"MIT"}`,
@@ -128,9 +120,6 @@ func TestImportmapPinNoLicense(t *testing.T) {
 	}
 }
 
-// Turbo's package has no license file (8.0.23's tarball doesn't), so
-// re-pinning it over the copy gantry new ships keeps that copy's notice,
-// with the new version in its title line, and pin says so.
 func TestImportmapRepinKeepsNotice(t *testing.T) {
 	fakeJSPM(t, 200, map[string]string{
 		"https://ga.jspm.io/npm:@hotwired/turbo@8.0.23/package.json": `{"name":"@hotwired/turbo","version":"8.0.23","license":"MIT"}`,
@@ -177,7 +166,6 @@ func TestImportmapFailures(t *testing.T) {
 	if code := run([]string{"importmap", "pin", "no-such-package"}, root, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "Unable to resolve npm:no-such-package") {
 		t.Errorf("an unknown package: %d %s", code, errOut.String())
 	}
-	// A file that won't download (the second) leaves nothing half-written.
 	errOut.Reset()
 	if code := run([]string{"importmap", "pin", "@hotwired/turbo"}, root, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "404") {
 		t.Errorf("a failed download: %d %s", code, errOut.String())

@@ -38,7 +38,7 @@ import (
 const prefix = "gantry:v1:"
 
 type key struct {
-	id   string // the first 8 hex of the key's SHA-256: which key, not the key
+	id   string
 	aead cipher.AEAD
 }
 

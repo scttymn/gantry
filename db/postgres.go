@@ -5,7 +5,7 @@ import (
 	"runtime"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // registers "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func openPostgres(url string) (*DB, error) {
@@ -13,8 +13,6 @@ func openPostgres(url string) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Sized for a small host: a few connections per CPU is what Postgres
-	// serves best, and each one costs the server memory.
 	n := max(4, 2*runtime.GOMAXPROCS(0))
 	pool.SetMaxOpenConns(n)
 	pool.SetMaxIdleConns(n)

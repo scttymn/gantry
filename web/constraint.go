@@ -9,8 +9,6 @@ import (
 // Check is a constraint's test of a request (Rails' matches?).
 type Check = func(*http.Request) bool
 
-// constrained is a constraint's routes: its own mux, reached when its check
-// passes.
 type constrained struct {
 	check Check
 	mux   *http.ServeMux
@@ -31,7 +29,6 @@ func (s *Scope) Constraint(check Check, routes func(s *Scope)) {
 	}
 	c := &Scope{rt: s.rt, mux: http.NewServeMux(), prefix: s.prefix, filters: slices.Clip(s.filters), check: check}
 	routes(c)
-	// After its routes: a constraint declared inside it comes first.
 	s.rt.constraints = append(s.rt.constraints, constrained{check: check, mux: c.mux})
 }
 
@@ -39,8 +36,6 @@ func (s *Scope) Constraint(check Check, routes func(s *Scope)) {
 // Scope.Constraint).
 func (rt *Router) Constraint(check Check, routes func(s *Scope)) { rt.root.Constraint(check, routes) }
 
-// route serves r from the first constraint that has it, else from the
-// routes outside any.
 func (rt *Router) route(w http.ResponseWriter, r *http.Request) {
 	for _, c := range rt.constraints {
 		if !c.check(r) {

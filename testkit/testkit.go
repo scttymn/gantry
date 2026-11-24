@@ -134,7 +134,6 @@ func Fixtures(t testing.TB, d *db.DB, fsys fs.FS, replace map[string]any) IDs {
 	return ids
 }
 
-// columnsOf is a table's column names, on either engine.
 func columnsOf(t testing.TB, d *db.DB, table string) []string {
 	t.Helper()
 	rows, err := d.Read.Query(fmt.Sprintf(`SELECT * FROM %q LIMIT 0`, table))
