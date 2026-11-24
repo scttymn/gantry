@@ -219,7 +219,17 @@ func seedsNothing(t *testing.T, dir string) {
 	path := filepath.Join(dir, "test", "features.yaml")
 	before, _ := os.ReadFile(path)
 	var out, errOut strings.Builder
-	if err := generateFeatures(dir, []string{"--local"}, &out, &errOut); err != nil || !strings.Contains(out.String(), "every route is in a feature") {
+	list := func() ([]byte, error) {
+		line, err := appLine(dir, []string{"routes", "--json"}, true, &errOut)
+		if err != nil {
+			return nil, err
+		}
+		cmd := exec.Command(line[0], line[1:]...)
+		cmd.Dir, cmd.Stderr = dir, &errOut
+		cmd.Env = append(os.Environ(), "DATA_DIR="+t.TempDir())
+		return cmd.Output()
+	}
+	if err := seedFeatures(dir, list, &out); err != nil || !strings.Contains(out.String(), "every route is in a feature") {
 		t.Errorf("g features --local, where TestFeatures passes, should add nothing: %v\n%s%s", err, out.String(), errOut.String())
 	}
 	if after, _ := os.ReadFile(path); !bytes.Equal(after, before) {

@@ -93,6 +93,10 @@ func generateFeatures(root string, args []string, out, errOut io.Writer) error {
 	if flags.NArg() > 0 {
 		return usageError{}
 	}
+	return seedFeatures(root, func() ([]byte, error) { return appOutput(root, []string{"routes", "--json"}, *local, errOut) }, out)
+}
+
+func seedFeatures(root string, listRoutes func() ([]byte, error), out io.Writer) error {
 	path := filepath.Join(root, "test", "features.yaml")
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -104,7 +108,7 @@ func generateFeatures(root string, args []string, out, errOut io.Writer) error {
 	if err := yaml.Unmarshal(existing, &mapped); err != nil {
 		return fmt.Errorf("test/features.yaml: %w", err)
 	}
-	listed, err := appOutput(root, []string{"routes", "--json"}, *local, errOut)
+	listed, err := listRoutes()
 	if err != nil {
 		return fmt.Errorf("the app didn't list its routes (%v), so test/features.yaml is as it was: its routes --json said why, above. An app made before gantry routes adds that command first (docs/development.md#an-app-made-before-the-feature-map)", err)
 	}
