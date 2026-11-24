@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/internal/pins"
 )
 
 // checkout is the repository's root, from this package's directory.
@@ -195,6 +197,32 @@ func TestNamedTestsExist(t *testing.T) {
 	for test, names := range staleTestNames(texts) {
 		slices.Sort(names)
 		t.Errorf("%s names %s, which no file defines: name the test that does its work now", strings.Join(names, ", "), test)
+	}
+}
+
+var templStamp = regexp.MustCompile(`(?m)^// templ: version: (\S+)$`)
+
+// Every _templ.go here (bench/feed's) was made by the templ gantry builds
+// with: one made by another can call what pins.Templ's runtime hasn't (or has
+// no more). gantry new's views aren't generated until an app runs templ, so
+// bumping templ means regenerating these.
+func TestTemplCodeIsPinned(t *testing.T) {
+	n := 0
+	files(t, checkout, func(name, text string) {
+		if !strings.HasSuffix(name, "_templ.go") {
+			return
+		}
+		n++
+		m := templStamp.FindStringSubmatch(text)
+		switch {
+		case m == nil:
+			t.Errorf("%s has no templ version line", name)
+		case m[1] != pins.Templ:
+			t.Errorf("%s was made by templ %s, and gantry builds with %s (internal/pins): regenerate it, go run github.com/a-h/templ/cmd/templ@%[3]s generate in its module", name, m[1], pins.Templ)
+		}
+	})
+	if n == 0 {
+		t.Fatal("found no _templ.go files")
 	}
 }
 
