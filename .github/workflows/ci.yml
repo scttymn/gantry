@@ -91,6 +91,18 @@ jobs:
         # app's bin/gantry's template and goldens too, and one added anywhere
         # (TestEveryScriptIsShellchecked).
         run: bin/shellcheck
+      - name: TLA+ specs
+        # Formal model checks for jobs, web.PageCache and auth (spec/*.tla).
+        run: bin/tlc
+      - name: Fuzz smoke
+        run: |
+          bin/go sh -c 'go test -fuzz=^FuzzSignVerify$ -fuzztime=1s ./sign &&
+            go test -fuzz=^FuzzSent$ -fuzztime=1s ./web &&
+            go test -fuzz=^FuzzProxies$ -fuzztime=1s ./web &&
+            go test -fuzz=^FuzzPageCache$ -fuzztime=1s ./web &&
+            go test -fuzz=^FuzzDimensionsAndResize$ -fuzztime=1s ./images &&
+            go test -fuzz=^FuzzJSAndHTMLRules$ -fuzztime=1s ./devcheck &&
+            go test -fuzz=^FuzzCovers$ -fuzztime=1s ./internal/featuremap'
       - name: golangci-lint
         # .golangci.yml's linters, staticcheck's checks among them, on gantry
         # and the bench modules. Built by the toolchain's Go, as gantry's

@@ -20,6 +20,12 @@ const (
 	// PostgresImage is a Postgres app's database, and the workflows' for
 	// gantry's tests; psql and pg_dump are its major's.
 	PostgresImage = "postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf"
+	// TemurinImage is the multi-arch JRE image bin/tlc runs TLC in.
+	TemurinImage = "eclipse-temurin:21-jre-alpine@sha256:5d7689f47d670aca766b9503a70bccc2d73b4eb9221ae8f714ae958313c4ce70"
+	// TLAVersion is the TLA+ tools release (tla2tools.jar) bin/tlc checks specs with.
+	TLAVersion = "v1.7.4"
+	// TLASHA256 is tla2tools.jar's SHA-256 digest for TLAVersion.
+	TLASHA256 = "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88"
 	// SQLiteCFlags is CGO_CFLAGS for SQLite compiled from C: Go's own, and the options SQLiteTags don't give.
 	SQLiteCFlags = "-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY"
 	// SQLiteTags is an app's build tags: the sqlite_ ones select db's C build (db/sqlite_c.go), the rest a static binary's.

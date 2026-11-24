@@ -446,6 +446,16 @@ Don't point a crawl of your own at a production app. Verify signs in as two
 test users of each role and requests every feature's pages. Against
 production, those users and requests would be in real data.
 
+### Stateful property walking (`testkit.Walk`)
+
+For fuzz-style stateful testing of an app's own routes and forms, `testkit.Walk`
+drives an `http.Handler` through a seeded random sequence of link visits, role
+switches (`testkit.Roles`), valid and invalid form submissions, and stale
+`lock_version` replays. At every step it asserts no panics or 5xx responses,
+optional `testkit.Links` resolution (`CheckLinks: true`), no public leakage of
+signed-in role markers, and 409 conflicts on stale `lock_version` edits. Any
+failure prints the seed and step trace so the exact sequence can be replayed.
+
 ## Edit forms and lock_version
 
 A table that `g resource` or `g migration create_<table>` makes has a

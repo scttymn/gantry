@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# Runs TLC on every TLA+ specification under spec/ using a digest-pinned
+# multi-arch JRE container and a SHA-256-verified tla2tools.jar cached in
+# Gantry's shared cache directory.
+#
+#   bin/tlc          model-check every spec/*.tla
+#   bin/tlc --list   name them, one a line
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+list=
+case "${1:-}" in
+	"") ;;
+	--list) list=1 ;;
+	*) echo "usage: bin/tlc [--list]" >&2; exit 2 ;;
+esac
+
+specs=()
+for spec in spec/*.tla; do
+	[ -f "$spec" ] || continue
+	specs+=("$spec")
+done
+[ "${#specs[@]}" -gt 0 ] || { echo "bin/tlc: no spec/*.tla files found" >&2; exit 1; }
+
+if [ -n "$list" ]; then
+	printf '%s\n' "${specs[@]}"
+	exit
+fi
+
+tla_version=v1.7.4
+tla_sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
+image=eclipse-temurin:21-jre-alpine@sha256:5d7689f47d670aca766b9503a70bccc2d73b4eb9221ae8f714ae958313c4ce70
+
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/gantry
+[ "$(uname -s)" = Darwin ] && cache=$HOME/Library/Caches/gantry
+mkdir -p "$cache"
+jar="$cache/tla2tools-$tla_version.jar"
+
+verify_sha256() {
+	local file=$1 got
+	if command -v sha256sum >/dev/null 2>&1; then
+		got=$(sha256sum "$file" | awk '{print $1}')
+	else
+		got=$(shasum -a 256 "$file" | awk '{print $1}')
+	fi
+	[ "$got" = "$tla_sha256" ]
+}
+
+if [ ! -f "$jar" ] || ! verify_sha256 "$jar"; then
+	tmp=$(mktemp "$cache/tla2tools.XXXXXX")
+	trap 'rm -f "$tmp"' EXIT
+	curl -fsSL --proto '=https' --retry 3 --max-time 120 \
+		"https://github.com/tlaplus/tlaplus/releases/download/$tla_version/tla2tools.jar" -o "$tmp"
+	if ! verify_sha256 "$tmp"; then
+		echo "bin/tlc: tla2tools.jar SHA-256 mismatch (expected $tla_sha256)" >&2
+		exit 1
+	fi
+	mv "$tmp" "$jar"
+	trap - EXIT
+fi
+
+for spec in "${specs[@]}"; do
+	base=$(basename "$spec" .tla)
+	cfg="spec/$base.cfg"
+	[ -f "$cfg" ] || { echo "bin/tlc: missing $cfg for $spec" >&2; exit 1; }
+	echo "== TLC $spec"
+	timeout 300 docker run --rm \
+		-v "$PWD/spec:/spec:ro" \
+		-v "$cache:/cache:ro" \
+		-w /tmp \
+		"$image" \
+		java -XX:+UseParallelGC -cp "/cache/tla2tools-$tla_version.jar" tlc2.TLC \
+		-deadlock -cleanup -metadir /tmp/tlc-states -workers auto -config "/spec/$base.cfg" "/spec/$base.tla"
+done
