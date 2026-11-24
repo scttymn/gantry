@@ -71,6 +71,10 @@ var (
 	version   = regexp.MustCompile(`@(\d+\.\d+\.\d+[^/\s"]*)`)
 )
 
+// licenseFiles are the names npm packs a package's license under, in the
+// order pin asks the CDN for them, beside the package's package.json.
+var licenseFiles = []string{"LICENSE", "LICENSE.md", "LICENSE.txt", "license", "license.md", "LICENCE"}
+
 func pinPackages(root string, specs []string, out io.Writer) error {
 	body, _ := json.Marshal(map[string]any{"install": specs, "flattenScope": true, "env": []string{"browser", "module", "production"}})
 	resp, err := httpClient.Post(jspmAPI, "application/json", bytes.NewReader(body))
@@ -99,17 +103,22 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 	// Everything is fetched before anything is written, so a failure
 	// leaves the folder as it was.
 	files := map[string][]byte{}
+	unlicensed := map[string]string{} // a package with no license file: the license its package.json names
 	for _, name := range names {
 		url := got.Map.Imports[name]
 		src, err := fetch(url)
 		if err != nil {
 			return err
 		}
-		v := ""
-		if m := version.FindStringSubmatch(url); m != nil {
-			v = "@" + m[1]
+		v, notice, named := "", "", ""
+		if m := version.FindStringSubmatchIndex(url); m != nil {
+			v = "@" + url[m[2]:m[3]]
+			notice, named = license(name+" "+url[m[2]:m[3]], url[:m[1]]+"/")
 		}
-		files[name] = append([]byte("// "+name+v+" downloaded from "+url+"\n\n"), sourceMap.ReplaceAll(src, nil)...)
+		if notice == "" {
+			unlicensed[name] = named
+		}
+		files[name] = append([]byte("// "+name+v+" downloaded from "+url+"\n\n"+notice), sourceMap.ReplaceAll(src, nil)...)
 	}
 	for _, name := range names {
 		path := filepath.Join(root, vendorDir, vendorFile(name))
@@ -117,8 +126,40 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "  pinned %s (%s)\n", name, relTo(root, path))
+		if named, ok := unlicensed[name]; ok {
+			if named != "" {
+				named = " (package.json says " + named + ")"
+			}
+			fmt.Fprintf(out, "  no license file found for %s%s: add its notice to %s by hand\n", name, named, relTo(root, path))
+		}
 	}
 	return nil
+}
+
+// license is the comment pin puts under a pinned file's first line, as
+// gantry new's Turbo and Stimulus have it: a /*! */ comment, which
+// minifiers keep, with the package and its version (title), its homepage,
+// and its license file, from the CDN folder pkg, where its package.json is.
+// With no license file there it's "", and named, the license the
+// package.json names, if it names one, is what pin can say instead.
+func license(title, pkg string) (comment, named string) {
+	var meta struct{ Homepage, License string }
+	if src, err := fetch(pkg + "package.json"); err == nil {
+		// What won't parse (an old package's {"type": "MIT"} license, say)
+		// is left out of the comment and the warning, which do without it.
+		_ = json.Unmarshal(src, &meta)
+	}
+	for _, file := range licenseFiles {
+		text, err := fetch(pkg + file)
+		if err != nil {
+			continue
+		}
+		if meta.Homepage != "" {
+			title += "\n" + meta.Homepage
+		}
+		return "/*!\n" + title + "\n\n" + strings.TrimSpace(string(text)) + "\n*/\n\n", meta.License
+	}
+	return "", meta.License
 }
 
 func fetch(url string) ([]byte, error) {
