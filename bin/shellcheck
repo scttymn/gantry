@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck on every shell script git tracks, as the ci workflow's step runs
+# Runs shellcheck on every shell script git tracks, as the ci workflow's step runs
 # it: each file whose first line runs sh, bash, dash or ksh, or that's named
 # .sh or .bash, a generator's template (.tmpl) or golden (.golden) of one too.
 # A script added anywhere is checked, with no list to add it to
