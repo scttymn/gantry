@@ -12,7 +12,7 @@ goldens. `TestGeneratorMatrix` runs every generator on SQLite and Postgres in
 a new app, with its next steps done, and fails on a Strict finding, sqlc or
 templ failing, `go vet`, the app's tests, or stale generated code. It builds
 the apps only where templ and sqlc are installed, as in `bin/go`; elsewhere
-it generates and scans them.
+it generates and scans them. A templ that isn't the pinned one fails it.
 
 `db` has SQLite two ways: compiled from C (`db/sqlite_c.go`, gantry's own
 binding) when the build has cgo, as an app's does, and translated to Go
@@ -29,7 +29,10 @@ The versions gantry and its apps build with (Go, templ, the toolchain's and
 Postgres's images, SQLite's C flags and build tags) are in
 [`internal/pins`](internal/pins/pins.go), and `gantry new` writes them into an
 app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
-page) are held to them by its test, which says where to change one.
+page) are held to them by its test, which says where to change one. A new
+templ means new views too: bench/feed's `_templ.go` are made by the pinned
+templ (`TestTemplCodeIsPinned`), so bump bench/feed's go.mod with gantry's and
+run `templ generate` and `go mod tidy` there.
 
 Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
 passes in (`internal/testenv`), e.g.

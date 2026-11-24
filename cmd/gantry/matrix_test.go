@@ -16,6 +16,7 @@ import (
 	"github.com/scttymn/gantry/db"
 	"github.com/scttymn/gantry/devcheck"
 	"github.com/scttymn/gantry/images"
+	"github.com/scttymn/gantry/internal/pins"
 	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/testkit"
 )
@@ -94,6 +95,15 @@ func TestGeneratorMatrix(t *testing.T) {
 	for _, tool := range []string{"templ", "sqlc"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			build = false
+		}
+	}
+	// An app's views are built against pins.Templ's runtime, and code another
+	// templ made can call what that runtime hasn't (v0.3.1020's calls
+	// templ.JoinURLErrs, which v0.3.1118's hasn't): say so, not go vet's error.
+	if build {
+		v, _ := exec.Command("templ", "version").Output()
+		if have := strings.TrimSpace(string(v)); have != pins.Templ {
+			t.Fatalf("the templ on PATH is %q, and gantry builds with %s (internal/pins): run the tests in bin/go, whose toolchain installs it", have, pins.Templ)
 		}
 	}
 	if url := os.Getenv("GANTRY_TEST_POSTGRES_URL"); url != "" {
