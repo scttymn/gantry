@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -119,6 +120,61 @@ func TestGenerateFeaturesCachedHome(t *testing.T) {
 	}
 }
 
+func TestGenerateFeaturesCoversWhatItAdds(t *testing.T) {
+	root := shopRoot(t, "")
+	listedRoutes(t, []web.Route{
+		{Method: "GET", Path: "/docs/"},
+		{Method: "GET", Path: "/docs/{slug}"},
+		{Path: "/webhooks"},
+		{Method: "POST", Path: "/webhooks"},
+		{Method: "GET", Path: "/beta", Constrained: true},
+		{Method: "GET", Path: "/beta", Constrained: true},
+	}, nil)
+	if code, _, stderr := gantry(t, root, "g", "features", "--local"); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	var names []string
+	for _, f := range testkit.Features(t, filepath.Join(root, "test", "features.yaml")) {
+		names = append(names, f.Name)
+	}
+	if want := []string{"GET /docs/", "/webhooks", "GET /beta"}; !reflect.DeepEqual(names, want) {
+		t.Errorf("features %q, want %q: a route a feature it added covers was added again", names, want)
+	}
+}
+
+func TestGenerateFeaturesStarters(t *testing.T) {
+	root := shopRoot(t, "")
+	listedRoutes(t, []web.Route{
+		{Method: "GET", Path: "/{$}", Filters: []string{"auth.(*Auth).Required"}},
+		{Method: "GET", Path: "/up", Constrained: true},
+	}, nil)
+	code, out, stderr := gantry(t, root, "g", "features", "--local")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr)
+	}
+	if want := "GET /{$}: home, as a new app's map has it, filtered by auth.(*Auth).Required\n"; !strings.Contains(out, want) {
+		t.Errorf("no %q in\n%s", want, out)
+	}
+	got := testkit.Features(t, filepath.Join(root, "test", "features.yaml"))
+	want := []testkit.Feature{
+		{Name: "home", Routes: []string{"GET /{$}"}, Role: testkit.Public, Visit: []testkit.Visit{{Path: "/", Selector: "h1"}}},
+		{Name: "GET /up", Routes: []string{"GET /up"}, Role: testkit.Public},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("a constrained /up takes a new app's feature, with its visit:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+func TestGenerateFeaturesWithoutHouston(t *testing.T) {
+	root := shopRoot(t, "")
+	ran := listedRoutes(t, shopRoutes, nil)
+	lookPath = func(string) (string, error) { return "", exec.ErrNotFound }
+	code, _, stderr := gantry(t, root, "g", "features")
+	if code != 1 || !strings.Contains(stderr, "Houston, which isn't installed") || strings.Contains(stderr, "didn't list its routes") || len(*ran) != 0 {
+		t.Errorf("exit %d, ran %q: %s", code, *ran, stderr)
+	}
+}
+
 func TestGenerateFeaturesKeepsTheMap(t *testing.T) {
 	const mapped = `features:
     - name: home
@@ -197,7 +253,7 @@ func TestGenerateFeaturesRefuses(t *testing.T) {
 		})
 	}
 	listedRoutes(t, shopRoutes, nil)
-	if code, _, stderr := gantry(t, t.TempDir(), "g", "features"); code != 1 || !strings.Contains(stderr, "run gantry at the app's root") {
+	if code, _, stderr := gantry(t, t.TempDir(), "g", "features"); code != 1 || !strings.Contains(stderr, "run gantry at the app's root") || strings.Contains(stderr, "said why") {
 		t.Errorf("outside an app: exit %d: %s", code, stderr)
 	}
 }

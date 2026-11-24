@@ -72,15 +72,6 @@ var outputIn = func(dir, name string, args ...string) ([]byte, error) {
 	return cmd.Output()
 }
 
-func appOutput(root string, args []string, local bool, errOut io.Writer) ([]byte, error) {
-	line, err := appLine(root, args, local, errOut)
-	if err != nil {
-		return nil, err
-	}
-	out, err := outputIn(root, line[0], line[1:]...)
-	return out, exitError(err)
-}
-
 func houston(root string, args []string, errOut io.Writer) error {
 	if err := needHouston(errOut); err != nil {
 		return err

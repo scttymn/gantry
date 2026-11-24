@@ -93,7 +93,17 @@ func generateFeatures(root string, args []string, out, errOut io.Writer) error {
 	if flags.NArg() > 0 {
 		return usageError{}
 	}
-	return seedFeatures(root, func() ([]byte, error) { return appOutput(root, []string{"routes", "--json"}, *local, errOut) }, out)
+	line, err := appLine(root, []string{"routes", "--json"}, *local, errOut)
+	if err != nil {
+		return err
+	}
+	return seedFeatures(root, func() ([]byte, error) {
+		listed, err := outputIn(root, line[0], line[1:]...)
+		if err != nil {
+			return nil, fmt.Errorf("the app didn't list its routes (%v), so test/features.yaml is as it was: its routes --json said why, above. An app made before gantry routes adds that command first (docs/development.md#an-app-made-before-the-feature-map)", exitError(err))
+		}
+		return listed, nil
+	}, out)
 }
 
 func seedFeatures(root string, listRoutes func() ([]byte, error), out io.Writer) error {
@@ -110,7 +120,7 @@ func seedFeatures(root string, listRoutes func() ([]byte, error), out io.Writer)
 	}
 	listed, err := listRoutes()
 	if err != nil {
-		return fmt.Errorf("the app didn't list its routes (%v), so test/features.yaml is as it was: its routes --json said why, above. An app made before gantry routes adds that command first (docs/development.md#an-app-made-before-the-feature-map)", err)
+		return err
 	}
 	var routes []listedRoute
 	if err := json.Unmarshal(listed, &routes); err != nil {
@@ -130,30 +140,29 @@ func seedFeatures(root string, listRoutes func() ([]byte, error), out io.Writer)
 		if r.Mounted || slices.ContainsFunc(mapped.Features, func(f mappedFeature) bool { return f.covers(r) }) {
 			continue
 		}
-		if i := slices.IndexFunc(starters, func(s seededFeature) bool {
-			return !names[s.Name] && s.Cacheable == r.Cached && mappedFeature{s.Name, s.Routes}.covers(r)
-		}); i >= 0 {
-			s := starters[i]
-			names[s.Name] = true
-			mapped.Features = append(mapped.Features, mappedFeature{s.Name, s.Routes})
-			added = append(added, s)
-			fmt.Fprintf(&report, "    %s: %s, as a new app's map has it\n", r.name(), s.Name)
-			continue
-		}
-		name := r.name()
-		for n := 2; names[name]; n++ {
-			name = fmt.Sprintf("%s %d", r.name(), n)
-		}
-		names[name] = true
-		f := seededFeature{Name: name, Routes: []string{r.name()}, Role: "public", Cacheable: r.Cached}
+		var f seededFeature
 		var about []string
-		if visit := r.visit(); visit != "" {
-			f.Visit = []seededVisit{{Path: visit}}
-			about = append(about, "visited at "+visit)
+		if i := slices.IndexFunc(starters, func(s seededFeature) bool {
+			return !names[s.Name] && !r.Constrained && s.Cacheable == r.Cached && mappedFeature{s.Name, s.Routes}.covers(r)
+		}); i >= 0 {
+			f = starters[i]
+			about = append(about, f.Name+", as a new app's map has it")
+		} else {
+			name := r.name()
+			for n := 2; names[name]; n++ {
+				name = fmt.Sprintf("%s %d", r.name(), n)
+			}
+			f = seededFeature{Name: name, Routes: []string{r.name()}, Role: "public", Cacheable: r.Cached}
+			if visit := r.visit(); visit != "" {
+				f.Visit = []seededVisit{{Path: visit}}
+				about = append(about, "visited at "+visit)
+			}
 		}
 		if len(r.Filters) > 0 {
 			about = append(about, "filtered by "+strings.Join(r.Filters, ", "))
 		}
+		names[f.Name] = true
+		mapped.Features = append(mapped.Features, mappedFeature{f.Name, f.Routes})
 		added = append(added, f)
 		fmt.Fprintf(&report, "    %s", r.name())
 		if len(about) > 0 {
