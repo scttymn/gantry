@@ -35,7 +35,8 @@ Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) bumps the Go
 modules and the workflows' actions weekly. A dependency comes in one pull
 request for every module that has it (`bench/feed` has gantry's, as indirect
 requirements), and `modernc.org/sqlite` and `github.com/mattn/go-sqlite3` come
-together: the two are one SQLite release (`TestSQLiteCVersionMatchesTranslated`).
+together: the two are one SQLite release (`TestSQLiteCVersionMatchesTranslated`),
+at one version in every module (`TestModulesHaveGantrysSQLite`).
 `ci.yml`'s first check, `Modules tidy`, names any module whose `go.mod` or
 `go.sum` `go mod tidy` would change, and the command that fixes it.
 
@@ -49,8 +50,8 @@ one pull request with all its copies:
   `bench/feed` among them, along. Postgres stays on its major: a new one needs
   an app's data upgraded, and psql's client with it.
 - `modernc.org/libc`: `modernc.org/sqlite` runs on the one its `go.mod`
-  requires, and `go get modernc.org/sqlite@<version>` brings it
-  (`TestSQLiteLibcIsTheDriversOwn`).
+  requires, and `go get modernc.org/sqlite@<version>` brings it, in each
+  module that has it (`TestModulesHaveGantrysSQLite`).
 
 Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
 passes in (`internal/testenv`), e.g.

@@ -25,7 +25,7 @@ updates:
       # say which templ.
       - dependency-name: github.com/a-h/templ
       # modernc.org/sqlite runs on the libc its go.mod requires and no other,
-      # and brings it (TestSQLiteLibcIsTheDriversOwn).
+      # and brings it (TestModulesHaveGantrysSQLite).
       - dependency-name: modernc.org/libc
     groups:
       # The translated SQLite and the C one are one SQLite release, so they
@@ -34,6 +34,7 @@ updates:
         patterns: ["modernc.org/sqlite", "github.com/mattn/go-sqlite3"]
       # Any other: a pull request each, in every module that has it.
       each:
+        patterns: ["*"]
         group-by: dependency-name
       # group-by is for version updates only: the week's security updates,
       # in every module, are one pull request.
