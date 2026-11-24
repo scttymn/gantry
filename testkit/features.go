@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/scttymn/gantry/internal/featuremap"
 	"github.com/scttymn/gantry/web"
 )
 
@@ -106,19 +107,7 @@ func Features(t testing.TB, path string) []Feature {
 }
 
 func (f Feature) covers(r web.Route) bool {
-	for _, route := range f.Routes {
-		method, path, ok := strings.Cut(route, " ")
-		if !ok {
-			method, path = "", route
-		}
-		if method != "" && method != r.Method {
-			continue
-		}
-		if r.Path == path || strings.HasSuffix(path, "/") && strings.HasPrefix(r.Path, path) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(f.Routes, func(route string) bool { return featuremap.Covers(route, r.Method, r.Path) })
 }
 
 func rank(r Role) int { return slices.Index(allRoles, r) }

@@ -141,6 +141,9 @@ func TestGeneratorMatrix(t *testing.T) {
 							testenv.Postgres(t)
 						}
 						buildApp(t, dir, engine)
+						if engine == "sqlite" {
+							seedsNothing(t, dir)
+						}
 						if after != nil {
 							after(t)
 						}
@@ -208,6 +211,19 @@ func buildApp(t *testing.T, dir, engine string) {
 	var out strings.Builder
 	if err := generatedCheck(dir, &out); err != nil {
 		t.Errorf("check --generated: %v\n%s", err, out.String())
+	}
+}
+
+func seedsNothing(t *testing.T, dir string) {
+	t.Helper()
+	path := filepath.Join(dir, "test", "features.yaml")
+	before, _ := os.ReadFile(path)
+	var out, errOut strings.Builder
+	if err := generateFeatures(dir, []string{"--local"}, &out, &errOut); err != nil || !strings.Contains(out.String(), "every route is in a feature") {
+		t.Errorf("g features --local, where TestFeatures passes, should add nothing: %v\n%s%s", err, out.String(), errOut.String())
+	}
+	if after, _ := os.ReadFile(path); !bytes.Equal(after, before) {
+		t.Errorf("g features --local changed a map TestFeatures passes:\n%s", after)
 	}
 }
 

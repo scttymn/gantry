@@ -43,25 +43,58 @@ func appCommand(command string) func(root string, args []string, out, errOut io.
 	}
 }
 
-func runApp(root string, args []string, local bool, errOut io.Writer) error {
+func appLine(root string, args []string, local bool, errOut io.Writer) ([]string, error) {
 	name, err := appBinary(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	run := append([]string{"go", "run", "./cmd/" + name}, args...)
 	if local {
-		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=development"}, run...)...))
+		return append([]string{"env", "GANTRY_ENV=development"}, run...), nil
 	}
-	return houston(root, append([]string{"exec"}, run...), errOut)
+	if err := needHouston(errOut); err != nil {
+		return nil, err
+	}
+	return append([]string{"houston", "exec"}, run...), nil
+}
+
+func runApp(root string, args []string, local bool, errOut io.Writer) error {
+	line, err := appLine(root, args, local, errOut)
+	if err != nil {
+		return err
+	}
+	return exitError(runIn(root, line[0], line[1:]...))
+}
+
+var outputIn = func(dir, name string, args ...string) ([]byte, error) {
+	cmd := exec.Command(name, args...)
+	cmd.Dir, cmd.Stdin, cmd.Stderr = dir, os.Stdin, os.Stderr
+	return cmd.Output()
+}
+
+func appOutput(root string, args []string, local bool, errOut io.Writer) ([]byte, error) {
+	line, err := appLine(root, args, local, errOut)
+	if err != nil {
+		return nil, err
+	}
+	out, err := outputIn(root, line[0], line[1:]...)
+	return out, exitError(err)
 }
 
 func houston(root string, args []string, errOut io.Writer) error {
+	if err := needHouston(errOut); err != nil {
+		return err
+	}
+	return exitError(runIn(root, "houston", args...))
+}
+
+func needHouston(errOut io.Writer) error {
 	if _, err := lookPath("houston"); err != nil {
 		fmt.Fprintln(errOut, "gantry runs apps with Houston, which isn't installed (or isn't on PATH).\n"+
 			"Install it: https://github.com/scttymn/houston#install, then run this again.")
 		return errExit(1)
 	}
-	return exitError(runIn(root, "houston", args...))
+	return nil
 }
 
 var lookPath = exec.LookPath

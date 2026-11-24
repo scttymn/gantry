@@ -478,7 +478,7 @@ func TestAppCommands(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "cmd", "shop"), 0o755)
 	steps(t, "")
-	if code, _, stderr := gantry(t, root, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") {
+	if code, _, stderr := gantry(t, root, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") || !strings.Contains(stderr, "bin/gantry g features") {
 		t.Errorf("verify without a feature map: exit %d: %s", code, stderr)
 	}
 	os.MkdirAll(filepath.Join(root, "test"), 0o755)

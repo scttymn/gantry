@@ -23,6 +23,7 @@ func TestUsage(t *testing.T) {
 		"gantry g auth [--email-code] [--signup] [--social]",
 		"gantry check [--generated] [--json] [--rules] [--strict]",
 		"gantry routes [--json] [--local]",
+		"gantry g features [--local]",
 		"gantry secret ",
 		"gantry dev|",
 	} {
@@ -38,6 +39,7 @@ func TestUsage(t *testing.T) {
 		{[]string{"new", "shop", "--in-modules"}, []string{"-in-modules", "usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
 		{[]string{"routes", "posts"}, []string{"usage: gantry routes [--json] [--local]"}},
+		{[]string{"g", "features", "posts"}, []string{"usage: gantry g features [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"check", "--generated", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"check", "--generated", "--json"}, []string{"usage: gantry check"}},

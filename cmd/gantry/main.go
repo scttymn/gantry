@@ -47,6 +47,7 @@ var commands = []command{
 		run: func(root string, args []string, out, _ io.Writer) error { return generateStorage(root, args, out) }},
 	{name: "g fonts", args: "FAMILY[:400,600,400i]...", about: "Google Fonts, served from the app", flags: func() *flag.FlagSet { fs, _, _ := fontsFlags(); return fs },
 		run: func(root string, args []string, out, _ io.Writer) error { return generateFonts(root, args, out) }},
+	{name: "g features", about: "a feature in test/features.yaml for each route in none, from the app's router", flags: localFlag, run: generateFeatures},
 	{name: "importmap", args: "pin|unpin PACKAGE[@VERSION]...", about: "JavaScript packages, into assets/js/vendor",
 		run: func(root string, args []string, out, _ io.Writer) error { return importmapCommand(root, args, out) }},
 	{name: "secret", about: "a new SECRET_KEY: 32 random bytes, in hex", flags: func() *flag.FlagSet { return flagSet("secret") }, run: printSecret},
