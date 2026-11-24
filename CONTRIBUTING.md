@@ -31,13 +31,34 @@ Postgres's images, SQLite's C flags and build tags) are in
 app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
 page) are held to them by its test, which says where to change one.
 
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) bumps the Go
+modules and the workflows' actions weekly. A dependency comes in one pull
+request for every module that has it (`bench/feed` has gantry's, as indirect
+requirements), and `modernc.org/sqlite` and `github.com/mattn/go-sqlite3` come
+together: the two are one SQLite release (`TestSQLiteCVersionMatchesTranslated`).
+`ci.yml`'s first check, `Modules tidy`, names any module whose `go.mod` or
+`go.sum` `go mod tidy` would change, and the command that fixes it.
+
+What it leaves alone has copies it can't change, and is bumped by hand, each in
+one pull request with all its copies:
+
+- templ, Go's, sqlc's and Postgres's images: change the pin in
+  `internal/pins/pins.go` (templ's is `go.mod`'s: `go get` it at the root and
+  in `bench/feed`), then `bin/go go test ./internal/pins` names each copy to
+  match, and `bin/go go test ./cmd/gantry -update` brings the generated apps,
+  `bench/feed` among them, along. Postgres stays on its major: a new one needs
+  an app's data upgraded, and psql's client with it.
+- `modernc.org/libc`: `modernc.org/sqlite` runs on the one its `go.mod`
+  requires, and `go get modernc.org/sqlite@<version>` brings it
+  (`TestSQLiteLibcIsTheDriversOwn`).
+
 Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
 passes in (`internal/testenv`), e.g.
 `GANTRY_TEST_POSTGRES_URL=postgres://postgres:pw@host.docker.internal:5432/postgres?sslmode=disable bin/go go test ./...`.
 Without it they skip, except under `CI=true`, where they fail.
 
 Every pull request and push to `main` runs the `ci` workflow: both passes on
-SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
+SQLite and Postgres, the cgo one again with `-race`, every module tidy, `go vet`, gofmt,
 golangci-lint and govulncheck (`go vet`, golangci-lint and govulncheck on the
 cgo build too, golangci-lint on the bench modules), shellcheck on `bin/go`,
 `bin/bench`, `bin/ci`, the pre-push hook and an app's `bin/gantry`, the bench

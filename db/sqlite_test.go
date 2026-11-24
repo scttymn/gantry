@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,34 @@ func sqliteOne(t *testing.T) *sql.DB {
 	pool.SetMaxOpenConns(1)
 	t.Cleanup(func() { pool.Close() })
 	return pool
+}
+
+// modernc.org/sqlite runs on the modernc.org/libc its own go.mod requires,
+// and on no other ("Fragile modernc.org/libc dependency", its docs say): a
+// bump of libc alone fails here. go get modernc.org/sqlite brings its own.
+func TestSQLiteLibcIsTheDriversOwn(t *testing.T) {
+	gomod := func(args ...string) string {
+		t.Helper()
+		out, err := exec.Command("go", args...).Output()
+		if err != nil {
+			t.Fatalf("go %s: %v", strings.Join(args, " "), err)
+		}
+		return string(out)
+	}
+	versions := strings.Fields(gomod("list", "-m", "-f", "{{.Version}}", "modernc.org/sqlite", "modernc.org/libc"))
+	if len(versions) != 2 {
+		t.Fatalf("go list -m modernc.org/sqlite modernc.org/libc: %q", versions)
+	}
+	edge := "modernc.org/sqlite@" + versions[0] + " modernc.org/libc@"
+	var required string
+	for line := range strings.Lines(gomod("mod", "graph")) {
+		if v, ok := strings.CutPrefix(strings.TrimSpace(line), edge); ok {
+			required = v
+		}
+	}
+	if required != versions[1] {
+		t.Errorf("gantry builds modernc.org/sqlite %s with modernc.org/libc %s, and it requires %q: go get modernc.org/libc@%s", versions[0], versions[1], required, required)
+	}
 }
 
 // SQLite reads SQL no further than a NUL: what's after one isn't run, and

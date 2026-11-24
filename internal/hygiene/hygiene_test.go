@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // checkout is the repository's root, from this package's directory.
@@ -269,4 +271,52 @@ func TestEmailAddressesAreExamples(t *testing.T) {
 			t.Errorf("%s: %s isn't at an example domain (example.com, *.test, *.localhost, ...)", name, bad)
 		}
 	})
+}
+
+// Every module here is checked tidy by ci.yml (bin/ci runs the same list:
+// TestBinCIRunsTheCIWorkflow) and bumped by Dependabot in the pull request
+// that bumps it at the root, so a new module isn't left out of either.
+func TestModulesAreAllChecked(t *testing.T) {
+	var modules []string
+	files(t, checkout, func(name, _ string) {
+		if path.Base(name) == "go.mod" {
+			modules = append(modules, path.Dir(name))
+		}
+	})
+	read := func(file string) string {
+		b, err := os.ReadFile(filepath.Join(checkout, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	tidied := regexp.MustCompile(`for module in ([^;]+); do`).FindStringSubmatch(read(".github/workflows/ci.yml"))
+	if tidied == nil {
+		t.Fatal("ci.yml's Modules tidy step has no for module in ...; do")
+	}
+	var dependabot struct {
+		Updates []struct {
+			Ecosystem   string   `yaml:"package-ecosystem"`
+			Directories []string `yaml:"directories"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal([]byte(read(".github/dependabot.yml")), &dependabot); err != nil {
+		t.Fatalf(".github/dependabot.yml: %v", err)
+	}
+	var dirs []string
+	for _, u := range dependabot.Updates {
+		if u.Ecosystem == "gomod" {
+			for _, d := range u.Directories {
+				dirs = append(dirs, path.Clean("./"+strings.TrimPrefix(d, "/")))
+			}
+		}
+	}
+	for _, m := range modules {
+		if !slices.Contains(strings.Fields(tidied[1]), m) {
+			t.Errorf("%s/go.mod's module isn't in ci.yml's Modules tidy step (and bin/ci's): add %s to its list", m, m)
+		}
+		if !slices.Contains(dirs, m) {
+			t.Errorf("%s/go.mod's module isn't in .github/dependabot.yml's gomod directories: add it there", m)
+		}
+	}
 }
