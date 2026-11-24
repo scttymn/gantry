@@ -14,8 +14,8 @@ type Package struct {
 	ImportPath   string
 	Dir          string
 	Imports      []string
-	TestImports  []string
-	XTestImports []string
+	UnitImports  []string
+	XUnitImports []string
 }
 
 // FuzzTarget identifies one Go fuzz test to smoke-run.
@@ -439,10 +439,10 @@ func toSet(items []string) map[string]bool {
 }
 
 func allImports(p Package) []string {
-	out := make([]string, 0, len(p.Imports)+len(p.TestImports)+len(p.XTestImports))
+	out := make([]string, 0, len(p.Imports)+len(p.UnitImports)+len(p.XUnitImports))
 	out = append(out, p.Imports...)
-	out = append(out, p.TestImports...)
-	out = append(out, p.XTestImports...)
+	out = append(out, p.UnitImports...)
+	out = append(out, p.XUnitImports...)
 	return out
 }
 

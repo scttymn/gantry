@@ -21,16 +21,16 @@ func sampleGraph() ([]Package, []string, []string, []string) {
 		{ImportPath: testMod + "/internal/pins", Dir: "internal/pins"},
 		{ImportPath: testMod + "/internal/testenv", Dir: "internal/testenv"},
 		{ImportPath: testMod + "/internal/featuremap", Dir: "internal/featuremap"},
-		{ImportPath: testMod + "/db", Dir: "db", TestImports: []string{testMod + "/internal/testenv"}},
+		{ImportPath: testMod + "/db", Dir: "db", UnitImports: []string{testMod + "/internal/testenv"}},
 		{ImportPath: testMod + "/token", Dir: "token"},
 		{ImportPath: testMod + "/sign", Dir: "sign", Imports: []string{testMod + "/db", testMod + "/internal/env"}},
 		{ImportPath: testMod + "/web", Dir: "web", Imports: []string{testMod + "/sign", testMod + "/devcheck"}},
 		{ImportPath: testMod + "/devcheck", Dir: "devcheck"},
 		{ImportPath: testMod + "/images", Dir: "images", Imports: []string{testMod + "/web"}},
-		{ImportPath: testMod + "/jobs", Dir: "jobs", Imports: []string{testMod + "/db"}, TestImports: []string{testMod + "/internal/testenv"}},
-		{ImportPath: testMod + "/auth", Dir: "auth", Imports: []string{testMod + "/db", testMod + "/sign", testMod + "/token", testMod + "/web"}, TestImports: []string{testMod + "/internal/testenv"}},
-		{ImportPath: testMod + "/testkit", Dir: "testkit", Imports: []string{testMod + "/db", testMod + "/web", testMod + "/internal/featuremap"}, TestImports: []string{testMod + "/internal/testenv"}},
-		{ImportPath: testMod + "/cmd/gantry", Dir: "cmd/gantry", Imports: []string{testMod + "/devcheck", testMod + "/internal/pins", testMod + "/testkit"}, TestImports: []string{testMod + "/internal/testenv"}},
+		{ImportPath: testMod + "/jobs", Dir: "jobs", Imports: []string{testMod + "/db"}, UnitImports: []string{testMod + "/internal/testenv"}},
+		{ImportPath: testMod + "/auth", Dir: "auth", Imports: []string{testMod + "/db", testMod + "/sign", testMod + "/token", testMod + "/web"}, UnitImports: []string{testMod + "/internal/testenv"}},
+		{ImportPath: testMod + "/testkit", Dir: "testkit", Imports: []string{testMod + "/db", testMod + "/web", testMod + "/internal/featuremap"}, UnitImports: []string{testMod + "/internal/testenv"}},
+		{ImportPath: testMod + "/cmd/gantry", Dir: "cmd/gantry", Imports: []string{testMod + "/devcheck", testMod + "/internal/pins", testMod + "/testkit"}, UnitImports: []string{testMod + "/internal/testenv"}},
 	}
 	specs := []string{"spec/Auth.tla", "spec/Jobs.tla", "spec/PageCache.tla"}
 	scripts := []string{"bin/ci", "bin/go", "bin/shellcheck", "bin/tlc", ".githooks/pre-push"}

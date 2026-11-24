@@ -26,11 +26,11 @@ func main() {
 }
 
 type listPkg struct {
-	ImportPath   string   `json:"ImportPath"`
-	Dir          string   `json:"Dir"`
-	Imports      []string `json:"Imports"`
-	TestImports  []string `json:"TestImports"`
-	XTestImports []string `json:"XTestImports"`
+	ImportPath   string   `json:"importpath"`
+	Dir          string   `json:"dir"`
+	Imports      []string `json:"imports"`
+	UnitImports  []string `json:"testimports"`
+	XUnitImports []string `json:"xtestimports"`
 }
 
 func run(args []string, in io.Reader, out io.Writer) error {
@@ -162,8 +162,8 @@ func listPackages(root string) ([]ciplan.Package, error) {
 			ImportPath:   lp.ImportPath,
 			Dir:          filepath.ToSlash(rel),
 			Imports:      lp.Imports,
-			TestImports:  lp.TestImports,
-			XTestImports: lp.XTestImports,
+			UnitImports:  lp.UnitImports,
+			XUnitImports: lp.XUnitImports,
 		})
 	}
 	return pkgs, nil
