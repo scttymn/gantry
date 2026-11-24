@@ -554,6 +554,90 @@ func (a *App) guest(w http.ResponseWriter, r *http.Request) error {
 	return err
 }
 `}), []string{"app/routes.go:16", "app/routes.go:20", "app/routes.go:21", "app/routes.go:22", "app/routes.go:23"}},
+		// g auth's app/auth has type Auth = gantryauth.Auth; an alias's fields
+		// and methods are the aliased type's.
+		{"through an alias of gantry's Auth", "cached-scope", withCachedApp(map[string]string{
+			"app/auth/auth.go":        "package auth\n\nimport gantryauth \"github.com/scttymn/gantry/auth\"\n\ntype Auth = gantryauth.Auth\n",
+			"app/admin/controller.go": "package admin\n\nimport \"example.com/shop/app/shared/resource\"\n\ntype Controller = resource.Controller\n",
+			"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/admin"
+	"example.com/shop/app/auth"
+)
+
+type App struct{ Auth *auth.Auth }
+
+func (a *App) Router(rt *web.Router) {
+	rt.Cached("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+		return render(w, a.Auth.SignedIn(r))
+	})
+	desk := admin.Controller{}
+	rt.Cached("GET /admin", func(w http.ResponseWriter, r *http.Request) error {
+		_, message, _ := desk.Flash.Take(w, r)
+		return render(w, message)
+	})
+}
+`,
+		}), []string{"app/routes.go:15", "app/routes.go:19"}},
+		// A method may come before its type: earlier in the file, or in a
+		// file that sorts first.
+		{"methods declared before their type", "cached-scope", withCachedApp(map[string]string{
+			"app/docs/actions.go":    "package docs\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/scttymn/gantry/auth\"\n)\n\nfunc (c Controller) Show(w http.ResponseWriter, r *http.Request) error {\n\t_, ok := auth.Current(r)\n\treturn render(w, ok)\n}\n",
+			"app/docs/controller.go": "package docs\n\ntype Controller struct{}\n",
+			"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/docs"
+)
+
+func (a *App) theme(w http.ResponseWriter, r *http.Request) error {
+	c, _ := r.Cookie("theme")
+	return render(w, c.Value)
+}
+
+type App struct{}
+
+func (a *App) Router(rt *web.Router) {
+	rt.Cached("GET /docs", docs.Controller{}.Show)
+	rt.Cached("GET /theme", a.theme)
+}
+`,
+		}), []string{"app/routes.go:19", "app/routes.go:20"}},
+		// homePage := homePage is the outer one's value, and a range's
+		// expression is read before its variables are declared.
+		{"a name declared again from itself", "cached-scope", withCachedApp(map[string]string{"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/home"
+)
+
+func (a *App) Router(rt *web.Router) {
+	homePage := home.Controller{}
+	rt.Scope("/welcome", nil, func(s *web.Scope) {
+		homePage := homePage
+		s.Cached("GET /{$}", homePage.Show)
+	})
+	rt.Cached("GET /crumbs", func(w http.ResponseWriter, r *http.Request) error {
+		for _, r := range r.Cookies() {
+			render(w, r.Name)
+		}
+		return nil
+	})
+}
+`}), []string{"app/routes.go:15", "app/routes.go:17"}},
 		{"cookies set where the page isn't cached", "cache-set-cookie", withCachedApp(map[string]string{"app/routes.go": `package app
 
 import (

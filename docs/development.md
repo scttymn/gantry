@@ -109,8 +109,10 @@ a function (given to `http.HandlerFunc` or the router's `Wrap`) or a type's
 wrapped in the cache's `Handler`. They follow the handler, and what it calls,
 into the app's other files and packages, as far as the code says what each
 name is: a parameter's type, `x := T{...}`, a struct's field (an embedded
-one's too), or a function's one result. So a resource's `Index`, through the
-`Render` of the `resource.Controller` it embeds, is found taking the flash.
+one's too), or a function's one result. An alias is the type it stands for,
+so `g auth`'s `app/auth.Auth` is gantry's. So a resource's `Index`, through
+the `Render` of the `resource.Controller` it embeds, is found taking the
+flash.
 The finding is at the route, with the way there. A handler they can't read
 isn't reported: gantry's own (`a.Live.Serve`), another module's, or one a
 call returns (`rt.Cached("GET /x", a.page())`). `cached-scope` looks for

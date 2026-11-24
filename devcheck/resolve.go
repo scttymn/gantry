@@ -71,10 +71,8 @@ func (f fn) String() string {
 		return "the function at " + f.file.at(f.lit.Pos())
 	}
 	name := f.file.file.Name.Name + "."
-	if f.top.Recv != nil && len(f.top.Recv.List) == 1 {
-		if t := f.file.typeName(f.top.Recv.List[0].Type); t.name != "" {
-			name += t.name + "."
-		}
+	if recv := receiver(f.top); recv != "" {
+		name += recv + "."
 	}
 	return name + f.top.Name.Name
 }
@@ -165,13 +163,11 @@ func (p *program) pkg(importPath string) *goPackage {
 					pkg.funcs[d.Name.Name] = fn{file: f, top: d}
 					continue
 				}
-				if len(d.Recv.List) == 1 {
-					if t := f.typeName(d.Recv.List[0].Type); t.name != "" {
-						if pkg.methods[t.name] == nil {
-							pkg.methods[t.name] = map[string]fn{}
-						}
-						pkg.methods[t.name][d.Name.Name] = fn{file: f, top: d}
+				if recv := receiver(d); recv != "" {
+					if pkg.methods[recv] == nil {
+						pkg.methods[recv] = map[string]fn{}
 					}
+					pkg.methods[recv][d.Name.Name] = fn{file: f, top: d}
 				}
 			case *ast.GenDecl:
 				for _, spec := range d.Specs {
@@ -184,6 +180,28 @@ func (p *program) pkg(importPath string) *goPackage {
 	}
 	p.pkgs[importPath] = pkg
 	return pkg
+}
+
+// receiver is the name of the type a method is declared on, its package's
+// own by Go's rules, so it needs no lookup: the type may be declared after
+// the method, or in another file.
+func receiver(d *ast.FuncDecl) string {
+	if d.Recv == nil || len(d.Recv.List) != 1 {
+		return ""
+	}
+	t := d.Recv.List[0].Type
+	for {
+		switch e := t.(type) {
+		case *ast.StarExpr:
+			t = e.X
+		case *ast.ParenExpr:
+			t = e.X
+		case *ast.Ident:
+			return e.Name
+		default:
+			return "" // a generic type's, T[K]: not followed
+		}
+	}
 }
 
 // file is the scanned file at a project-relative path, as the program read it.
@@ -263,9 +281,15 @@ func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Exp
 			if pos >= n.End() {
 				return false
 			}
+		// A declaration's names are declared after it: in x := x, or in a
+		// range's expression, x is still the one before. Inside it (a
+		// function literal on its right), keep looking.
 		case *ast.RangeStmt:
 			if pos >= n.End() {
 				return false
+			}
+			if pos < n.Body.Pos() {
+				break
 			}
 			for _, e := range []ast.Expr{n.Key, n.Value} {
 				if id, ok := e.(*ast.Ident); ok && n.Tok == token.DEFINE && id.Name == name {
@@ -273,7 +297,7 @@ func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Exp
 				}
 			}
 		case *ast.AssignStmt:
-			if n.Tok != token.DEFINE {
+			if n.Tok != token.DEFINE || pos < n.End() {
 				break
 			}
 			for i, l := range n.Lhs {
@@ -285,6 +309,9 @@ func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Exp
 				}
 			}
 		case *ast.ValueSpec:
+			if pos < n.End() {
+				break
+			}
 			for i, id := range n.Names {
 				if id.Name == name {
 					typ, value, found = n.Type, nil, true
@@ -316,8 +343,31 @@ func imported(f *goFile, top *ast.FuncDecl, e ast.Expr) string {
 // refers to itself can't loop.
 const maxDepth = 16
 
-// typeOf is the named type of e, in f's function top.
+// typeOf is the named type of e, in f's function top, an alias's the type it
+// stands for.
 func (p *program) typeOf(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) named {
+	return p.unalias(p.exprType(f, top, e, depth), depth)
+}
+
+// unalias is the type an alias stands for, through aliases of aliases (g
+// auth's type Auth = gantryauth.Auth is gantry's Auth), and t itself when
+// it isn't one.
+func (p *program) unalias(t named, depth int) named {
+	for ; depth <= maxDepth; depth++ {
+		pkg := p.pkg(t.pkg)
+		if pkg == nil {
+			return t
+		}
+		decl, ok := pkg.types[t.name]
+		if !ok || !decl.spec.Assign.IsValid() {
+			return t
+		}
+		t = decl.file.typeName(decl.spec.Type)
+	}
+	return named{}
+}
+
+func (p *program) exprType(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) named {
 	if depth > maxDepth {
 		return named{}
 	}
@@ -362,7 +412,7 @@ func (p *program) typeOf(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) na
 
 // field is the type of t's field name, its own or one it embeds.
 func (p *program) field(t named, name string, depth int) named {
-	if t.name == "" || depth > maxDepth {
+	if t = p.unalias(t, depth); t.name == "" || depth > maxDepth {
 		return named{}
 	}
 	pkg := p.pkg(t.pkg)
@@ -403,7 +453,7 @@ func (p *program) field(t named, name string, depth int) named {
 // method is t's method name, its own or one a type it embeds has: the code,
 // when the program reads t's package, and what it is either way.
 func (p *program) method(t named, name string, depth int) (fn, ref) {
-	if t.name == "" || depth > maxDepth {
+	if t = p.unalias(t, depth); t.name == "" || depth > maxDepth {
 		return fn{}, ref{}
 	}
 	pkg := p.pkg(t.pkg)

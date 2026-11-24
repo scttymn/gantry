@@ -102,7 +102,7 @@ A rule may follow a name out of its file. `cached-scope` and
 handler, often in another package, and what that calls. The scan's packages
 are parsed once, when a rule first needs one, and a name is followed only
 when its declaration says what it is: a parameter's type, `x := T{...}`, a
-field, a function's one result. A handler the rules can't follow that way
+field, a function's one result, the type an alias stands for. A handler the rules can't follow that way
 isn't reported, so a clean scan doesn't prove a cached page is the same for
 everyone. The page cache guards that at runtime too (it keeps no response
 that sets a cookie, and serves no request with a session), and
