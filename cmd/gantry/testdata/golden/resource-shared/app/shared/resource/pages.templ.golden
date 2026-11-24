@@ -87,18 +87,22 @@ templ FormPage(p Page, f Form) {
 }
 
 templ input(f Form, field Field) {
-	<p>
-		<label for={ f.Param + "_" + field.Name }>{ field.Label }</label>
-		switch field.Type {
-			case "textarea":
-				<textarea id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }>{ f.Values[field.Name] }</textarea>
-			case "file":
-				if f.Photos[field.Name] != nil {
-					@f.Photos[field.Name]
-				}
-				<input type="file" id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }/>
-			default:
-				<input type={ field.Type } id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" } value={ f.Values[field.Name] }/>
-		}
-	</p>
+	if field.Type == "hidden" {
+		<input type="hidden" name={ f.Param + "[" + field.Name + "]" } value={ f.Values[field.Name] }/>
+	} else {
+		<p>
+			<label for={ f.Param + "_" + field.Name }>{ field.Label }</label>
+			switch field.Type {
+				case "textarea":
+					<textarea id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }>{ f.Values[field.Name] }</textarea>
+				case "file":
+					if f.Photos[field.Name] != nil {
+						@f.Photos[field.Name]
+					}
+					<input type="file" id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" }/>
+				default:
+					<input type={ field.Type } id={ f.Param + "_" + field.Name } name={ f.Param + "[" + field.Name + "]" } value={ f.Values[field.Name] }/>
+			}
+		</p>
+	}
 }

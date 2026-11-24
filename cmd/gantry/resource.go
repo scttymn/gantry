@@ -108,6 +108,9 @@ func parseResource(root string, args []string) (Resource, error) {
 		if len(parts) < 2 || !columnName.MatchString(parts[0]) {
 			return r, fmt.Errorf("%q isn't column:type", spec)
 		}
+		if parts[0] == "lock_version" {
+			return r, errors.New("lock_version: the table has it already, and its edit form sends it")
+		}
 		f := Field{Column: parts[0], Type: parts[1], Go: goName(parts[0], renames), Label: Humanize(parts[0])}
 		switch f.Type {
 		case "string", "text", "int", "date", "photo":
@@ -332,8 +335,8 @@ func Humanize(s string) string {
 }
 
 var controllerNames = map[string]bool{
-	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strings": true, "db": true, "maps": true,
-	"path": true, "param": true, "title": true, "singular": true, "recordType": true, "fields": true,
+	"resource": true, "models": true, "web": true, "templ": true, "http": true, "strconv": true, "strings": true, "db": true, "maps": true,
+	"path": true, "param": true, "title": true, "singular": true, "recordType": true, "fields": true, "status": true, "version": true,
 }
 
 func funcs(r Resource) template.FuncMap {

@@ -39,8 +39,11 @@ var matrixApps = []struct {
 		{path: "/admin/events", create: map[string]string{"event[name]": "Open day", "event[starts_on]": "2026-12-01"}, update: map[string]string{"event[name]": "Open house"},
 			listed: []string{"Open day", "2026-12-01"}, editing: map[string]string{"event[position]": "1", "event[starts_on]": "2026-12-01"}, blank: map[string]string{"event[name]": " "}},`)},
 		{args: []string{"g", "resource", "admin/galleries", "caption:string", "photo:photo"}},
-		{args: []string{"g", "resource", "resources", "name:string", "position:position"}, then: routed(`
-		{path: "/resources", create: map[string]string{"resource[name]": "Guide"}, update: map[string]string{"resource[name]": "Handbook"}, listed: []string{"Guide"}, editing: map[string]string{"resource[position]": "1"}},`)},
+		{args: []string{"g", "resource", "resources", "name:string", "position:position"}, then: func(t *testing.T, dir, out string) {
+			routed(`
+		{path: "/resources", create: map[string]string{"resource[name]": "Guide"}, update: map[string]string{"resource[name]": "Handbook"}, listed: []string{"Guide"}, editing: map[string]string{"resource[position]": "1"}},`)(t, dir, out)
+			sharedFormPageFromBeforeHiddenFields(t, dir)
+		}},
 		{args: []string{"g", "migration", "create_notes", "body:text:required", "seen_at:datetime", "done:bool"}},
 		{args: []string{"g", "api-tokens", "--prefix", "shop_"}},
 		{args: []string{"g", "storage"}},
@@ -259,6 +262,11 @@ func edit(t *testing.T, path string, oldNew ...string) {
 	}
 }
 
+func sharedFormPageFromBeforeHiddenFields(t *testing.T, dir string) {
+	t.Helper()
+	edit(t, filepath.Join(dir, "app", "shared", "resource", "pages.templ"), `if field.Type == "hidden" {`, `if false {`)
+}
+
 func routed(testCase string) func(t *testing.T, dir, out string) {
 	return func(t *testing.T, dir, out string) {
 		t.Helper()
@@ -378,6 +386,10 @@ func TestResources(t *testing.T) {
 					t.Errorf("%s is %q on the edit form, want %q", name, got, want)
 				}
 			}
+			const version = "form:not(.delete) input[type=hidden][name$='[lock_version]']"
+			if got := edit.Find(version).AttrOr("value", ""); got != "0" {
+				t.Errorf("lock_version is %q on a new row's edit form, want 0\n%s", got, edit.Body)
+			}
 			updated := edit.Submit("form:not(.delete)", tc.update)
 			if updated.Code != http.StatusSeeOther {
 				t.Fatalf("update = %d\n%s", updated.Code, updated.Body)
@@ -390,6 +402,41 @@ func TestResources(t *testing.T) {
 				if !strings.Contains(list.Text("main"), want) {
 					t.Errorf("no %q in the list after updating\n%s", want, list.Body)
 				}
+			}
+			mine := map[string]string{}
+			for name, value := range tc.update {
+				mine[name] = "Stale " + value
+			}
+			stale := edit.Submit("form:not(.delete)", mine)
+			if stale.Code != http.StatusConflict || !strings.Contains(stale.Text("[role=alert]"), "Someone else changed this record while you were editing. Review the current values and submit again.") {
+				t.Fatalf("a form from before the update = %d\n%s", stale.Code, stale.Body)
+			}
+			for name, want := range mine {
+				if got := stale.Find("[name='" + name + "']").AttrOr("value", ""); got != want {
+					t.Errorf("%s is %q on the conflict's form, want what was sent, %q", name, got, want)
+				}
+			}
+			if got := stale.Find(version).AttrOr("value", ""); got != "1" {
+				t.Errorf("lock_version is %q on the conflict's form, want the row's, 1\n%s", got, stale.Body)
+			}
+			list = b.Get(tc.path)
+			for name, want := range tc.update {
+				if strings.Contains(list.Text("main"), mine[name]) || !strings.Contains(list.Text("main"), want) {
+					t.Errorf("the stale form overwrote %q with %q\n%s", want, mine[name], list.Body)
+				}
+			}
+			again := stale.Submit("form:not(.delete)", nil)
+			if again.Code != http.StatusSeeOther {
+				t.Fatalf("submitting the conflict's form again = %d\n%s", again.Code, again.Body)
+			}
+			list = again.Follow()
+			for _, want := range mine {
+				if !strings.Contains(list.Text("main"), want) {
+					t.Errorf("no %q in the list after submitting again\n%s", want, list.Body)
+				}
+			}
+			if got := b.Get(edit.URL.Path).Find(version).AttrOr("value", ""); got != "2" {
+				t.Errorf("lock_version is %q after two saves, want 2", got)
 			}
 			deleted := b.Get(edit.URL.Path).Submit("form.delete", nil)
 			if deleted.Code != http.StatusSeeOther {

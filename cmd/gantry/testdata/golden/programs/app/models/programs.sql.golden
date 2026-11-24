@@ -13,7 +13,7 @@ VALUES (sqlc.arg(name), sqlc.arg(blurb), sqlc.arg(cta), sqlc.arg(position), sqlc
 RETURNING id;
 
 -- name: UpdateProgram :exec
-UPDATE programs SET name = sqlc.arg(name), blurb = sqlc.arg(blurb), cta = sqlc.arg(cta), position = sqlc.arg(position), updated_at = sqlc.arg(now)
+UPDATE programs SET name = sqlc.arg(name), blurb = sqlc.arg(blurb), cta = sqlc.arg(cta), position = sqlc.arg(position), updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteProgram :exec

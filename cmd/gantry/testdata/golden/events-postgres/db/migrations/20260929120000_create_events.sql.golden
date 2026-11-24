@@ -5,7 +5,8 @@ CREATE TABLE "events" (
   "starts_on" date,
   "position" bigint,
   "created_at" timestamptz NOT NULL,
-  "updated_at" timestamptz NOT NULL
+  "updated_at" timestamptz NOT NULL,
+  "lock_version" integer NOT NULL DEFAULT 0
 );
 
 -- +goose Down

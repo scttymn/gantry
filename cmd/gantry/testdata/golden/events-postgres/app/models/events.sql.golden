@@ -13,7 +13,7 @@ VALUES (sqlc.arg(name), CAST(CAST(sqlc.narg(starts_on) AS TEXT) AS DATE), sqlc.a
 RETURNING id;
 
 -- name: UpdateEvent :exec
-UPDATE events SET name = sqlc.arg(name), starts_on = CAST(CAST(sqlc.narg(starts_on) AS TEXT) AS DATE), position = sqlc.arg(position), updated_at = sqlc.arg(now)
+UPDATE events SET name = sqlc.arg(name), starts_on = CAST(CAST(sqlc.narg(starts_on) AS TEXT) AS DATE), position = sqlc.arg(position), updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: DeleteEvent :exec

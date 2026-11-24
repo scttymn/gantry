@@ -3,6 +3,7 @@ package programs
 import (
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/a-h/templ"
@@ -26,8 +27,10 @@ type Controller struct{ resource.Controller }
 
 var fields = []resource.Field{resource.F("name"), resource.F("blurb", resource.Type("textarea")), resource.F("photo", resource.Type("file")), resource.F("cta"), resource.Position}
 
+var editFields = append(fields, resource.F("lock_version", resource.Type("hidden")))
+
 func formValues(program models.Program) map[string]string {
-	return map[string]string{"name": program.Name, "blurb": program.Blurb, "cta": program.CTA, "position": resource.IntText(program.Position)}
+	return map[string]string{"name": program.Name, "blurb": program.Blurb, "cta": program.CTA, "position": resource.IntText(program.Position), "lock_version": strconv.FormatInt(program.LockVersion, 10)}
 }
 
 func fromForm(v map[string]string) models.Program {
@@ -89,9 +92,10 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	sent := resource.Overlay(r, param, map[string]string{})
 	var (
-		id   int64
-		v    map[string]string
-		errs []string
+		id     int64
+		v      map[string]string
+		status int
+		errs   []string
 	)
 	err := c.DB.Tx(r.Context(), func(tx *db.Tx) error {
 		q := models.New(tx)
@@ -100,9 +104,16 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 			return err
 		}
 		id, v = was.ID, formValues(was)
+		version := v["lock_version"]
 		maps.Copy(v, sent)
+		v["lock_version"] = version
+		if sent["lock_version"] != version {
+			status, errs = http.StatusConflict, []string{"Someone else changed this record while you were editing. Review the current values and submit again."}
+			return nil
+		}
 		program := fromForm(v)
 		if errs = program.Errors(); len(errs) > 0 {
+			status = http.StatusUnprocessableEntity
 			return nil
 		}
 		return q.UpdateProgram(r.Context(), models.UpdateProgramParams{Name: program.Name, Blurb: program.Blurb, CTA: program.CTA, Position: program.Position, Now: c.Now(), ID: id})
@@ -111,7 +122,7 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	if len(errs) > 0 {
-		return c.form(w, r, http.StatusUnprocessableEntity, id, v, errs)
+		return c.form(w, r, status, id, v, errs)
 	}
 	if err := c.SavePhoto(r, param, "photo", recordType, id); err != nil {
 		return err
@@ -138,7 +149,7 @@ func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id 
 	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)
 	if id != 0 {
-		f.Action, f.Method, heading = path+"/"+web.IDText(id), "patch", "Edit "+strings.ToLower(singular)
+		f.Action, f.Method, f.Fields, heading = path+"/"+web.IDText(id), "patch", editFields, "Edit "+strings.ToLower(singular)
 		photos, err := c.PhotoPreviews(r.Context(), recordType, id, "photo")
 		if err != nil {
 			return err

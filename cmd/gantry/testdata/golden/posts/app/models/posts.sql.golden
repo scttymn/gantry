@@ -13,7 +13,7 @@ VALUES (sqlc.arg(title), sqlc.arg(body), CAST(sqlc.narg(published_on) AS TEXT), 
 RETURNING id;
 
 -- name: UpdatePost :exec
-UPDATE posts SET title = sqlc.arg(title), body = sqlc.arg(body), published_on = CAST(sqlc.narg(published_on) AS TEXT), updated_at = sqlc.arg(now)
+UPDATE posts SET title = sqlc.arg(title), body = sqlc.arg(body), published_on = CAST(sqlc.narg(published_on) AS TEXT), updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: DeletePost :exec

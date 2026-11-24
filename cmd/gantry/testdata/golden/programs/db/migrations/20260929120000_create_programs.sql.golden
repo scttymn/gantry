@@ -6,7 +6,8 @@ CREATE TABLE "programs" (
   "cta" text NOT NULL DEFAULT '',
   "position" integer,
   "created_at" datetime NOT NULL,
-  "updated_at" datetime NOT NULL
+  "updated_at" datetime NOT NULL,
+  "lock_version" integer NOT NULL DEFAULT 0
 );
 
 -- +goose Down

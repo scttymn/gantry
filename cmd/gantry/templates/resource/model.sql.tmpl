@@ -13,7 +13,7 @@ VALUES ({{range .Columns}}{{arg .}}, {{end}}sqlc.arg(now), sqlc.arg(now))
 RETURNING id;
 
 -- name: Update{{.Model}} :exec
-UPDATE {{.Table}} SET {{range .Columns}}{{.Column}} = {{arg .}}, {{end}}updated_at = sqlc.arg(now)
+UPDATE {{.Table}} SET {{range .Columns}}{{.Column}} = {{arg .}}, {{end}}updated_at = sqlc.arg(now), lock_version = lock_version + 1
 WHERE id = sqlc.arg(id);
 
 -- name: Delete{{.Model}} :exec
