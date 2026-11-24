@@ -23,6 +23,7 @@ func TestUsage(t *testing.T) {
 		"gantry g auth [--email-code] [--signup] [--social]",
 		"gantry check [--generated] [--json] [--rules] [--strict]",
 		"gantry routes [--json] [--local]",
+		"gantry g features [--local]",
 		"gantry secret ",
 		"gantry dev|",
 	} {
@@ -38,6 +39,7 @@ func TestUsage(t *testing.T) {
 		{[]string{"new", "shop", "--in-modules"}, []string{"-in-modules", "usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
 		{[]string{"routes", "posts"}, []string{"usage: gantry routes [--json] [--local]"}},
+		{[]string{"g", "features", "posts"}, []string{"usage: gantry g features [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"check", "--generated", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"check", "--generated", "--json"}, []string{"usage: gantry check"}},
@@ -108,6 +110,28 @@ func TestDocsCommands(t *testing.T) {
 	}
 	if checked < 40 {
 		t.Errorf("checked %d invocations: the docs moved, or the extraction broke", checked)
+	}
+}
+
+func TestDocsCodeSpansCloseOnTheirLine(t *testing.T) {
+	for _, pattern := range docsWithCommands {
+		files, _ := filepath.Glob(filepath.Join("..", "..", pattern))
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fenced := false
+			for n, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "```") {
+					fenced = !fenced
+					continue
+				}
+				if !fenced && strings.Count(line, "`")%2 == 1 {
+					t.Errorf("%s:%d: a code span runs onto the next line, where TestDocsCommands can't read it: %s", strings.TrimPrefix(file, "../../"), n+1, line)
+				}
+			}
+		}
 	}
 }
 

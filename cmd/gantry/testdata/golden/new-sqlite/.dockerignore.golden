@@ -4,5 +4,6 @@
 .houston
 .gantry
 compose.local.yml
+.gantry-verify-*.yml
 go.work
 go.work.sum

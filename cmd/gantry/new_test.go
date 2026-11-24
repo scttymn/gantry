@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"errors"
 	"go/format"
@@ -157,7 +158,7 @@ func TestNewCI(t *testing.T) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, action)
 			}
 		}
-		if want := []string{"check --strict", "check --generated", "test"}; !reflect.DeepEqual(runs, want) {
+		if want := []string{"check --strict", "check --generated", "test", "verify"}; !reflect.DeepEqual(runs, want) {
 			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
 		}
 		if strings.Contains(string(ci), "secrets.") || !strings.Contains(string(ci), "GH_TOKEN: ${{ github.token }}") {
@@ -478,11 +479,13 @@ func TestAppCommands(t *testing.T) {
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "cmd", "shop"), 0o755)
 	steps(t, "")
-	if code, _, stderr := gantry(t, root, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") {
+	if code, _, stderr := gantry(t, root, "verify"); code != 1 || !strings.Contains(stderr, "no test/features.yaml") || !strings.Contains(stderr, "bin/gantry g features") {
 		t.Errorf("verify without a feature map: exit %d: %s", code, stderr)
 	}
 	os.MkdirAll(filepath.Join(root, "test"), 0o755)
 	os.WriteFile(filepath.Join(root, "test", "features.yaml"), []byte("features: []\n"), 0o644)
+	os.MkdirAll(filepath.Join(root, "app"), 0o755)
+	os.WriteFile(filepath.Join(root, "app", "features_test.go"), []byte("package app_test\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"), 0o644)
 	for _, tc := range []struct {
 		args []string
 		want []string
@@ -494,8 +497,7 @@ func TestAppCommands(t *testing.T) {
 		{[]string{"db", "migrate", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "db", "migrate"}},
 		{[]string{"routes"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "routes"}},
 		{[]string{"routes", "--json", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "routes", "--json"}},
-		{[]string{"verify"}, []string{"houston", "exec", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
-		{[]string{"verify", "--local"}, []string{"go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
+		{[]string{"verify", "--local"}, []string{"env", "GANTRY_ENV=test", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
 		{[]string{"dev", "--as", "login"}, []string{"houston", "dev", "--as", "login"}},
 		{[]string{"test"}, []string{"houston", "test"}},
 		{[]string{"deploy", "--server"}, []string{"houston", "deploy", "--server"}},
@@ -508,6 +510,108 @@ func TestAppCommands(t *testing.T) {
 	steps(t, "houston test")
 	if code, _, _ := gantry(t, root, "test"); code != 3 {
 		t.Errorf("exit %d, want houston's 3", code)
+	}
+}
+
+func TestVerifyOnTheTestStack(t *testing.T) {
+	dir := shopApp(t, "postgres")
+	compose := filepath.Join(dir, "compose.yml")
+	before, _ := os.ReadFile(compose)
+	steps(t, "")
+	var ran []string
+	var copied map[string]any
+	runIn = func(root, name string, args ...string) error {
+		ran = append([]string{name}, args...)
+		if len(args) == 3 && args[0] == "-f" {
+			b, err := os.ReadFile(filepath.Join(root, args[1]))
+			if err != nil {
+				return err
+			}
+			if err := yaml.Unmarshal(b, &copied); err != nil {
+				return err
+			}
+		}
+		return errExit(4)
+	}
+	if code, _, stderr := gantry(t, dir, "verify"); code != 4 {
+		t.Fatalf("exit %d, want houston's 4: %s", code, stderr)
+	}
+	if len(ran) != 4 || ran[0] != "houston" || ran[1] != "-f" || !strings.HasPrefix(ran[2], ".gantry-verify-") || ran[3] != "test" {
+		t.Fatalf("ran %q, want houston -f <a copy of compose.yml> test", ran)
+	}
+	x, _ := copied["x-houston"].(map[string]any)
+	commands, _ := x["commands"].(map[string]any)
+	if got, want := commands["test"], "go test -count=1 -v -run '^TestFeatures$' ./app/"; got != want {
+		t.Errorf("the copy's commands.test is %q, want %q", got, want)
+	}
+	var original map[string]any
+	yaml.Unmarshal(before, &original)
+	delete(x, "commands")
+	delete(original["x-houston"].(map[string]any), "commands")
+	if !reflect.DeepEqual(copied, original) {
+		t.Errorf("the copy is more than compose.yml with its commands.test changed:\n%v\n%v", copied, original)
+	}
+	if after, _ := os.ReadFile(compose); !bytes.Equal(after, before) {
+		t.Error("compose.yml was changed")
+	}
+	if left, _ := filepath.Glob(filepath.Join(dir, ".gantry-verify-*")); len(left) > 0 {
+		t.Errorf("the copy was left behind: %q", left)
+	}
+	os.Remove(compose)
+	if code, _, stderr := gantry(t, dir, "verify"); code != 1 || !strings.Contains(stderr, "compose.yml") {
+		t.Errorf("no compose.yml: exit %d: %s", code, stderr)
+	}
+}
+
+func TestVerifyCopyIsIgnored(t *testing.T) {
+	copied := strings.Replace(verifyCopy, "*", "123456", 1)
+	ignores := func(t *testing.T, path string, nested bool) {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			pattern, deep := strings.CutPrefix(line, "**/")
+			if ok, _ := filepath.Match(pattern, copied); ok && (deep || !nested) {
+				return
+			}
+		}
+		t.Errorf("%s doesn't ignore verify's copy of compose.yml (%s): it would be in the test stage's COPY . . and in git status", path, verifyCopy)
+	}
+	dir := shopApp(t, "sqlite")
+	ignores(t, filepath.Join(dir, ".dockerignore"), false)
+	ignores(t, filepath.Join(dir, ".gitignore"), false)
+	root := big(t, "")
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatal(stderr)
+	}
+	ignores(t, filepath.Join(root, "apps", "control", "Dockerfile.dockerignore"), true)
+	ignores(t, filepath.Join(root, "apps", "control", ".gitignore"), false)
+}
+
+func TestVerifyWithoutTestFeatures(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"no test":       {},
+		"renamed":       {"app/features_test.go": "package app_test\n\nimport \"testing\"\n\nfunc TestFeatureMap(t *testing.T) {}\n"},
+		"not in a test": {"app/features.go": "package app\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"},
+		"a method":      {"app/features_test.go": "package app_test\n\nimport \"testing\"\n\ntype s struct{}\n\nfunc (s) TestFeatures(t *testing.T) {}\n"},
+		"a nested app/": {"app/home/features_test.go": "package home_test\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := shopRoot(t, "features: []\n")
+			for file, src := range files {
+				os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0o755)
+				os.WriteFile(filepath.Join(root, file), []byte(src), 0o644)
+			}
+			got := steps(t, "")
+			for _, args := range [][]string{{"verify"}, {"verify", "--local"}} {
+				code, _, stderr := gantry(t, root, args...)
+				if code != 1 || len(*got) != 0 || !strings.Contains(stderr, "no TestFeatures") || !strings.Contains(stderr, "app/features_test.go") {
+					t.Errorf("%q: exit %d, ran %q: %s", args, code, *got, stderr)
+				}
+			}
+		})
 	}
 }
 

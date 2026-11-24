@@ -19,7 +19,7 @@ bin/gantry routes --json   # every route, from the app's router
 bin/gantry verify          # each feature in test/features.yaml, visited as each role
 ```
 
-A route needs a feature in `test/features.yaml`, or `TestFeatures` fails.
+A route needs a feature in `test/features.yaml`, or `TestFeatures` fails. `bin/gantry g features` adds one for each route in none, for you to finish.
 
 ## Where things go
 - `app/routes.go`: every route, and the controllers behind them

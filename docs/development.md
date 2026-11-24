@@ -18,8 +18,8 @@ Upgrading: this release builds with templ v0.3.1118, so an app's go.mod gets
 it too. Code an older templ made doesn't compile against it (it calls
 `templ.JoinURLErrs` and `templ.ResolveAttributeValue`, which are gone). Change
 the app's Dockerfile to `go install github.com/a-h/templ/cmd/templ@v0.3.1118`,
-then run `templ generate` and commit what it rewrites; `bin/gantry check
---generated` names any file still made by the old one.
+then run `templ generate` and commit what it rewrites;
+`bin/gantry check --generated` names any file still made by the old one.
 
 The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
@@ -104,11 +104,12 @@ the request waits for. `http-client`, `raw-html`, `cross-origin-bypass` and
 SQL, YAML, shell, JavaScript, CSS, HTML, `.gitignore` and `.dockerignore`.
 Intent goes in a name, a type or a test, which the compiler and the tests
 check; a comment that explains a workaround is a sign to fix its cause. What
-stays are directives a tool reads: `//go:` lines, `//nolint:<linter> //
-<reason>`, sqlc's `-- name: Name :one` (`:many`, `:exec` and the rest), goose's
-`-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, a script's `#!`
-line and `go.mod`'s `// indirect`. Go that says it's generated (`// Code
-generated ... DO NOT EDIT.`, as sqlc's is) and the packages `importmap pin`
+stays are directives a tool reads: `//go:` lines,
+`//nolint:<linter> // <reason>`, sqlc's `-- name: Name :one` (`:many`, `:exec`
+and the rest), goose's `-- +goose Up`, `Down`, `StatementBegin` and
+`StatementEnd`, a script's `#!` line and `go.mod`'s `// indirect`. Go that says
+it's generated (`// Code generated ... DO NOT EDIT.`, as sqlc's is) and the
+packages `importmap pin`
 vendors into `assets/js/vendor/`, which keep their license notices, aren't
 read. Files without an extension, such as the `Dockerfile` and
 `bin/gantry`, aren't either: Strict picks files by extension, and gantry's own
@@ -204,8 +205,8 @@ would hide the next violation of that rule in that file. It is advice so that
 an upgrade doesn't fail CI.
 
 A reason should point at where the exception was decided: an issue (`#123`) or
-a link to an issue or decision record (`https://...`). With `"requireIssue":
-true`, as a new app has, the scan fails on a reason without one. Without it, as
+a link to an issue or decision record (`https://...`). With
+`"requireIssue": true`, as a new app has, the scan fails on a reason without one. Without it, as
 in a file from before the setting existed, each such reason is reported as
 `exception-reason` advice instead.
 
@@ -271,8 +272,18 @@ features:
   in a feature that isn't cacheable.
 - a feature's role has no way to sign in (below).
 
-`bin/gantry verify` runs that test alone, verbosely: in the app's container, or
-on this machine with `--local`. The app runs in the test's process, on a test
+`bin/gantry verify` runs that test alone, verbosely, as `GANTRY_ENV=test`. It
+runs on Houston's test stack, the one `bin/gantry test` uses: the Dockerfile's
+`test` stage, in a throwaway copy of the project. To get there, it runs
+`houston -f` with a copy of `compose.yml` whose `x-houston.commands.test` is
+the `TestFeatures` run, and it removes the copy afterwards. The copy,
+`.gantry-verify-*.yml`, sits beside `compose.yml`, and a new app's
+`.gitignore` and `.dockerignore` leave it out. With `--local`, it runs on this
+machine. Without a `TestFeatures` in `app/`, it fails rather than run no test
+and pass. A new app's `.github/workflows/ci.yml` runs it after
+`bin/gantry test`. `testkit.Verify` refuses `GANTRY_ENV=development`, where
+the reload script takes the page cache's headers off every page. The app runs
+in the test's process, on a test
 database, through testkit's browser. For each feature's visits, as each role
 it can sign in as:
 
@@ -292,6 +303,29 @@ it can sign in as:
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is
 whoever its scope's filter lets in, which the generator can't know.
+
+#### Adding the routes in no feature
+
+`bin/gantry g features` adds a feature to `test/features.yaml` for each route
+that is in none. It gets the routes as `bin/gantry routes --json` lists them,
+from the app's own router, in its container, or on this machine with
+`--local`. Mounted routes are left out, as `testkit.Verify` leaves them out.
+
+- Each feature it adds has one route and is named after it. It is public,
+  cacheable only when its route is `Cached`, and has a visit at the route's
+  path when the route is a `GET` with no wildcard in its path.
+- An unmapped home page, `/up` or `/live` gets the feature a new app's map has
+  for it instead.
+- It writes after the features already in the file and changes none of them.
+  With no `test/features.yaml`, it writes one.
+- It prints each route it adds, with the route's filters, so you can see which
+  ones aren't public.
+
+Then set each feature's role, give its visits a selector, and merge features
+as you like. `bin/gantry test` fails until each visit answers as its role says.
+To run it with `--local`, the app needs a database it can open on this
+machine: a SQLite app's is under `DATA_DIR`, which is `/data` unless you set
+it.
 
 #### Signing in as a role
 
@@ -318,13 +352,51 @@ user an admin.
 
 #### An app made before the feature map
 
-Copy a new app's `test/features.yaml` and `app/features_test.go`, then:
+An app without `test/features.yaml` works as it did. The map isn't read by
+`bin/gantry check --strict`, by `bin/gantry test` or by the app's CI. Only
+`bin/gantry verify` asks for it. To opt in:
 
-- split `App.Handler` in `app/routes.go` into `Router`, which returns the
-  `*web.Router`, and `Handler`, which returns `a.Router().Handler()`;
-- add the `routes` case and function from a new app's `cmd/<app>/main.go`.
+1. In `app/routes.go`, split `App.Handler` into `Router`, which returns the
+   `*web.Router`, and `Handler`, which returns `a.Router().Handler()`.
+2. Add the `routes` case and function from a new app's `cmd/<app>/main.go`.
+   `bin/gantry routes` then lists the app's routes.
+3. Run `bin/gantry g features`. It writes `test/features.yaml`, with a feature
+   for each route that isn't Mounted.
+4. Copy a new app's `app/features_test.go`. If the app has signed-in or admin
+   pages, give its `testkit.Roles` a `SignIn` for each role (above).
+5. Set each feature's role, cacheable and selectors, and merge features until
+   `bin/gantry test` passes. `bin/gantry verify` runs the same check verbosely.
+6. Add `.gantry-verify-*.yml` to `.gitignore` and `.dockerignore`, as a new
+   app has it. `bin/gantry verify` writes that copy of `compose.yml` while it
+   runs.
+7. To have CI check it as a new app's does, add `- run: bin/gantry verify`
+   after `- run: bin/gantry test` in `.github/workflows/ci.yml`.
 
-`bin/gantry test` then lists the routes the map is missing.
+Run `bin/gantry g features` again after adding routes, or paste the feature a
+generator prints.
+
+#### After a deploy
+
+`bin/gantry verify` checks a commit, not a server. It runs the commit's
+`TestFeatures` on Houston's test stack, or with `--local` in the test's own
+process, on a test database with test users. It sends no request to a deployed
+app, and it takes no URL.
+
+So in a pipeline it's the check on the commit the deploy ships. A new app's CI
+runs it on each pull request and each push to `main`. Houston's push to deploy
+runs `commands.test`, which includes `TestFeatures`, before it deploys. Houston
+moves traffic to the new version only once `/up` (the `health` path in
+`compose.yml`) answers 200.
+
+A pipeline that deploys to a staging server first, a non-production stack with
+its own data, can run `bin/gantry verify` between the staging deploy and the
+production one. Run it on the commit staging runs, and promote that commit
+only when it passes. Verify still runs on the test stack there, not against
+staging's URL.
+
+Don't point a crawl of your own at a production app. Verify signs in as two
+test users of each role and requests every feature's pages. Against
+production, those users and requests would be in real data.
 
 ## Edit forms and lock_version
 
