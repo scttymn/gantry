@@ -337,11 +337,11 @@ When they don't, someone saved the record after the form was drawn: `Update`
 writes nothing, and answers 409 with the form again. The fields are what was
 sent, the hidden `lock_version` is the row's, and the form's errors say:
 
-> Someone else changed this record while you were editing. Review the current
-> values and submit again.
+> Someone else changed this record while you were editing. Your values are
+> still in the form; submitting again will save them.
 
-Submitting that form again saves it. A form sent without `lock_version` gets
-the same answer.
+The form doesn't show the other person's values. Submitting it again saves the
+user's over them. A form sent without `lock_version` gets the same answer.
 
 Upgrading: tables made before this release have no `lock_version`, and their
 resources' code doesn't use one. They're unchanged, and an edit form still

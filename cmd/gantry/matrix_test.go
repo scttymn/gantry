@@ -408,7 +408,7 @@ func TestResources(t *testing.T) {
 				mine[name] = "Stale " + value
 			}
 			stale := edit.Submit("form:not(.delete)", mine)
-			if stale.Code != http.StatusConflict || !strings.Contains(stale.Text("[role=alert]"), "Someone else changed this record while you were editing. Review the current values and submit again.") {
+			if stale.Code != http.StatusConflict || !strings.Contains(stale.Text("[role=alert]"), "Someone else changed this record while you were editing. Your values are still in the form; submitting again will save them.") {
 				t.Fatalf("a form from before the update = %d\n%s", stale.Code, stale.Body)
 			}
 			for name, want := range mine {

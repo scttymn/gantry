@@ -103,7 +103,7 @@ func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 		maps.Copy(v, sent)
 		v["lock_version"] = version
 		if sent["lock_version"] != version {
-			status, errs = http.StatusConflict, []string{"Someone else changed this record while you were editing. Review the current values and submit again."}
+			status, errs = http.StatusConflict, []string{"Someone else changed this record while you were editing. Your values are still in the form; submitting again will save them."}
 			return nil
 		}
 		event := fromForm(v)

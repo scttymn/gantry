@@ -74,7 +74,7 @@ func TestResourceRules(t *testing.T) {
 		}
 	})
 	t.Run("an edit form sends its row's lock_version, and Update saves only that version", func(t *testing.T) {
-		const conflict = `"Someone else changed this record while you were editing. Review the current values and submit again."`
+		const conflict = `"Someone else changed this record while you were editing. Your values are still in the form; submitting again will save them."`
 		for _, engine := range []string{"sqlite", "postgresql"} {
 			root := app(t)
 			os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: "+engine+"\n"), 0o644)
