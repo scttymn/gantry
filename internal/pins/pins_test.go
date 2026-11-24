@@ -82,6 +82,9 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 		)},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
 		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?([\w,]+)`)},
+		{"Temurin's image", TemurinImage, "internal/pins/pins.go (TemurinImage)", []handCopy{{"bin/tlc", `\b(eclipse-temurin:\S+)`}}},
+		{"TLA+ version", TLAVersion, "internal/pins/pins.go (TLAVersion)", []handCopy{{"bin/tlc", `tla_version=(v[\d.]+)`}}},
+		{"TLA+ jar digest", TLASHA256, "internal/pins/pins.go (TLASHA256)", []handCopy{{"bin/tlc", `tla_sha256=([0-9a-f]{64})`}}},
 	}
 	for _, p := range pins {
 		for _, c := range p.copies {
@@ -102,7 +105,7 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 
 func TestImagesArePinned(t *testing.T) {
 	pinned := regexp.MustCompile(`\A[\w./-]+:([\w.-]+)@sha256:[0-9a-f]{64}\z`)
-	for name, image := range map[string]string{"GolangImage": GolangImage, "SqlcImage": SqlcImage, "PostgresImage": PostgresImage} {
+	for name, image := range map[string]string{"GolangImage": GolangImage, "SqlcImage": SqlcImage, "PostgresImage": PostgresImage, "TemurinImage": TemurinImage} {
 		if !pinned.MatchString(image) {
 			t.Errorf("%s %q isn't name:tag@sha256:<64 hex digits> (internal/pins/pins.go)", name, image)
 		}

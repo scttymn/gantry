@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/scttymn/gantry/internal/pins"
 )
 
 func TestBinCIRunsTheCIWorkflow(t *testing.T) {
@@ -55,6 +57,8 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"Houston's digests":      `houston-release --sha256`,
 		"vulnerabilities' check": `jq -rs ('[^']+')`,
 		"shellcheck's script":    `bin/shellcheck`,
+		"TLA+ script":            `bin/tlc`,
+		"fuzz target":            `-fuzz=(\^Fuzz\w+\$)`,
 	} {
 		found := regexp.MustCompile(re).FindAllStringSubmatch(workflow, -1)
 		if len(found) == 0 {
@@ -84,13 +88,15 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 	bin, home := t.TempDir(), t.TempDir()
 	log := filepath.Join(home, "docker.log")
 	stubs := map[string]string{
-		"docker": fakeDocker,
-		"df":     "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
-		"jq":     "#!/bin/sh\n",
-		"du":     "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
-		"git":    "#!/bin/sh\nprintf 'bin/ci\\0'\n",
+		"docker":    fakeDocker,
+		"df":        "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
+		"jq":        "#!/bin/sh\n",
+		"du":        "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
+		"git":       "#!/bin/sh\nprintf 'bin/ci\\0'\n",
+		"curl":      "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) : >\"$2\"; shift ;; esac; shift; done\n",
+		"sha256sum": "#!/bin/sh\nprintf '" + pins.TLASHA256 + "  %s\\n' \"$1\"\n",
 	}
-	for _, tool := range []string{"docker", "df", "git", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
+	for _, tool := range []string{"docker", "df", "git", "jq", "curl", "sha256sum", "bash", "sh", "awk", "basename", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "mv", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
 		if slices.Contains(without, tool) {
 			continue
 		}

@@ -24,8 +24,7 @@ step() { printf '\n=== %s\n' "$1"; }
 
 # Everything it needs, before it starts: a hook that fails half an hour in
 # helps no one.
-need=(docker git jq timeout)
-[ -n "$fast" ] || need+=(curl)
+need=(docker git jq timeout curl)
 for tool in "${need[@]}"; do
 	command -v "$tool" >/dev/null || { echo "bin/ci needs $tool, and it isn't on the PATH" >&2; exit 1; }
 done
@@ -159,6 +158,12 @@ unformatted=$(toolchain -- find . -name "*.go" -not -path "./.cache/*" -exec gof
 
 step "shellcheck"
 bin/shellcheck
+
+step "TLA+ specs"
+bin/tlc
+
+step "Fuzz smoke"
+toolchain -- sh -c 'go test -fuzz=^FuzzSignVerify$ -fuzztime=1s ./sign && go test -fuzz=^FuzzSent$ -fuzztime=1s ./web && go test -fuzz=^FuzzProxies$ -fuzztime=1s ./web && go test -fuzz=^FuzzPageCache$ -fuzztime=1s ./web && go test -fuzz=^FuzzDimensionsAndResize$ -fuzztime=1s ./images && go test -fuzz=^FuzzJSAndHTMLRules$ -fuzztime=1s ./devcheck && go test -fuzz=^FuzzCovers$ -fuzztime=1s ./internal/featuremap'
 
 step "golangci-lint"
 toolchain -- go run "$golangci" run ./...

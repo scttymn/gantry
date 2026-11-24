@@ -66,7 +66,9 @@ SQLite and Postgres, the cgo one again with `-race`, every module tidy, `go vet`
 golangci-lint and govulncheck (`go vet`, golangci-lint and govulncheck on the
 cgo build too, golangci-lint on the bench modules), shellcheck on every shell
 script git tracks (`bin/shellcheck`, which finds them by their `#!` line or
-name, an app's `bin/gantry` template and goldens among them), the bench
+name, an app's `bin/gantry` template and goldens among them), TLA+ model checking
+on every spec in `spec/` (`bin/tlc`), a short fuzz smoke pass over the framework's
+`testing.F` targets, the bench
 modules' tests (below), and the release's build and its probe on a made-up
 tag. Run
 golangci-lint and govulncheck with
@@ -129,6 +131,23 @@ request's `bench` job runs that against its base, and fails on a regression.
 challenge needs of its own (`TestBenchFeedIsANewApp`): `go test ./cmd/gantry
 -update` brings it along with a change to the generator.
 The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plans/performance.md).
+
+## Fuzzing and formal verification
+
+- **Go fuzz targets (`testing.F`):** `sign`, `web` (`Sent`, `Proxies`, `PageCache`),
+  `images`, `devcheck` and `internal/featuremap` carry fuzz targets. `bin/ci` runs
+  each for `-fuzztime=1s`; for a longer local run, pass e.g.
+  `bin/go go test -fuzz=^FuzzPageCache$ -fuzztime=30s ./web`.
+- **TLA+ specifications (`spec/`):** `spec/Jobs.tla` (fenced settles, lease expiry,
+  bounded retries, atomic recurring ticks), `spec/PageCache.tla` (no personalized
+  entries stored, no cross-visitor leak, no stale version served) and
+  `spec/Auth.tla` (single-use first-install setup, no unverified social takeover,
+  bounded concurrent reset sends, no revoked session active). Run `bin/tlc` to
+  model-check every `spec/*.tla` (with its paired `spec/*.cfg`) in the pinned
+  JRE container (`internal/pins.TemurinImage`) using the SHA-256-verified
+  `tla2tools.jar` (`internal/pins.TLAVersion` / `TLASHA256`). Adding a new
+  `spec/<Name>.tla` and `spec/<Name>.cfg` is picked up automatically by `bin/tlc`
+  and CI.
 
 ## Features and Gantry Strict
 
