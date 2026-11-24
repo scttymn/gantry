@@ -31,7 +31,6 @@ func (d *DB) Schema(ctx context.Context, skip ...string) (string, error) {
 		skipped[s] = true
 	}
 	var b strings.Builder
-	b.WriteString("-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations; don't edit it by hand.\n\n")
 	for rows.Next() {
 		var typ, name, table, sql string
 		if err := rows.Scan(&typ, &name, &table, &sql); err != nil {
@@ -58,7 +57,6 @@ func (d *DB) pgSchema(ctx context.Context, skip []string) (string, error) {
 		return "", fmt.Errorf("pg_dump: %w: %s", err, strings.TrimSpace(stderr.String()))
 	}
 	var b strings.Builder
-	b.WriteString("-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n")
 	blank := true
 	for _, line := range strings.Split(string(out), "\n") {
 		switch {
@@ -75,5 +73,9 @@ func (d *DB) pgSchema(ctx context.Context, skip []string) (string, error) {
 		}
 		b.WriteString(line + "\n")
 	}
-	return strings.TrimRight(b.String(), "\n") + "\n", nil
+	schema := strings.TrimRight(b.String(), "\n")
+	if schema == "" {
+		return "", nil
+	}
+	return schema + "\n", nil
 }

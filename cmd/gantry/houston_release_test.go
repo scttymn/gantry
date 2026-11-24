@@ -134,6 +134,15 @@ func TestRefreshBinstub(t *testing.T) {
 			t.Errorf("bin/gantry isn't executable: %v", info.Mode())
 		}
 	})
+	t.Run("one with the header comment it had before is rewritten", func(t *testing.T) {
+		dir := t.TempDir()
+		commented := strings.Replace(string(current), "#!/bin/sh\n", "#!/bin/sh\n# Downloads this app's gantry (the release go.mod requires) and the Houston\n", 1)
+		writeBinstub(t, dir, []byte(commented))
+		refreshBinstub(dir, &bytes.Buffer{})
+		if got := readBinstub(t, dir); !bytes.Equal(got, current) {
+			t.Fatalf("bin/gantry wasn't refreshed:\n%s", got)
+		}
+	})
 	t.Run("a current one is left alone, silently", func(t *testing.T) {
 		dir := t.TempDir()
 		writeBinstub(t, dir, current)

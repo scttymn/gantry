@@ -303,6 +303,7 @@ var (
 		".gitignore":    {untilLineEnd: []string{"#"}, onlyAtLineStart: true},
 	}
 	templateActionComment = regexp.MustCompile(`\{\{-?\s*/\*`)
+	templateAction        = regexp.MustCompile(`\{\{.*?\}\}`)
 )
 
 func (c commentSyntax) scan(text string, template bool, report func(int, string)) {
@@ -338,7 +339,7 @@ func (c commentSyntax) next(text string, from int, template bool) (int, int) {
 		}
 	}
 	for _, marker := range c.untilLineEnd {
-		if at := c.markerAt(text, from, marker); at >= 0 {
+		if at := c.markerAt(text, from, marker, template); at >= 0 {
 			lineEnd := strings.IndexByte(text[at:], '\n')
 			if lineEnd < 0 {
 				lineEnd = len(text) - at
@@ -347,7 +348,7 @@ func (c commentSyntax) next(text string, from int, template bool) (int, int) {
 		}
 	}
 	for _, d := range c.blocks {
-		at := c.markerAt(text, from, d.open)
+		at := c.markerAt(text, from, d.open, template)
 		if d.open == "<!--" {
 			if at = strings.Index(text[from:], d.open); at >= 0 {
 				at += from
@@ -372,7 +373,7 @@ func closing(text string, from int, close string) int {
 	return len(text)
 }
 
-func (c commentSyntax) markerAt(text string, from int, marker string) int {
+func (c commentSyntax) markerAt(text string, from int, marker string, template bool) int {
 	for at := from; ; at++ {
 		i := strings.Index(text[at:], marker)
 		if i < 0 {
@@ -381,6 +382,9 @@ func (c commentSyntax) markerAt(text string, from int, marker string) int {
 		at += i
 		lineStart := strings.LastIndexByte(text[:at], '\n') + 1
 		before := text[lineStart:at]
+		if template {
+			before = templateAction.ReplaceAllString(before, " ")
+		}
 		if strings.TrimSpace(before) == "" || !c.onlyAtLineStart && (before[len(before)-1] == ' ' || before[len(before)-1] == '\t') {
 			return at
 		}

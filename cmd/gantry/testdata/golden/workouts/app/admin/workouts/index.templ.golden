@@ -2,7 +2,6 @@ package workouts
 
 import "example.com/gym/app/shared/resource"
 
-// index is the list: each workout's date and name.
 templ index(p resource.Page, rows []resource.Row) {
 	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Date", "Name"}, Rows: rows})
 }

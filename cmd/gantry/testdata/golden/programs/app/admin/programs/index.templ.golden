@@ -2,7 +2,6 @@ package programs
 
 import "example.com/gym/app/shared/resource"
 
-// index is the list: each program's name and blurb.
 templ index(p resource.Page, rows []resource.Row) {
 	@resource.ListPage(p, resource.List{Path: path, Singular: singular, Columns: []string{"Name", "Blurb"}, Rows: rows})
 }

@@ -185,6 +185,7 @@ func TestTemplatesHaveNoComments(t *testing.T) {
 		"cmd/gantry/templates/new/test/features.yaml.tmpl":       "# {{.Title}}'s features\n#\n# more\nfeatures: []\n",
 		"cmd/gantry/templates/new/README.md.tmpl":                "# {{.Title}}\n\nA heading isn't a comment.\n",
 		"cmd/gantry/templates/new/assets/public/robots.txt.tmpl": "# Every page may be crawled.\n",
+		"cmd/gantry/templates/resource/model.sql.tmpl":           "{{if .Position}}-- by position\n{{- else}}-- newest first\n{{- end}}\n-- name: List{{.Plural}} :many\nSELECT 1;\n",
 	})
 	want := []string{
 		"cmd/gantry/templates/new/Dockerfile.tmpl:1 " + commentInApp,
@@ -196,6 +197,8 @@ func TestTemplatesHaveNoComments(t *testing.T) {
 		"cmd/gantry/templates/new/bin/gantry.tmpl:7 " + commentInApp,
 		"cmd/gantry/templates/new/go.mod.tmpl:4 " + commentInApp,
 		"cmd/gantry/templates/new/test/features.yaml.tmpl:1 " + commentInApp,
+		"cmd/gantry/templates/resource/model.sql.tmpl:1 " + commentInApp,
+		"cmd/gantry/templates/resource/model.sql.tmpl:2 " + commentInApp,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got\n%s\nwant\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

@@ -1,5 +1,3 @@
-// Package app is the app: every route, and the controllers behind them,
-// built from what they depend on.
 package app
 
 import (
@@ -22,30 +20,21 @@ import (
 	"feed/assets"
 )
 
-// App is what the controllers share.
 type App struct {
-	Mail   *mail.Mailer // shared by auth, controllers and jobs
+	Mail   *mail.Mailer
 	DB     *db.DB
 	Log    *slog.Logger
 	Signer sign.Signer
-	Jobs   *jobs.Queue // the background jobs, defined in app/jobs.go
-	// Live sends pages their changes as they happen: a page draws
-	// @a.Live.Source("post:" + id) to listen, and a controller or job calls
-	// a.Live.Broadcast(ctx, "post:"+id, turbo.Replace(...)), or
-	// a.Live.Refresh("post:"+id, turbo.RequestID(r)).
-	Live *live.Hub
+	Jobs   *jobs.Queue
+	Live   *live.Hub
 
-	Secret  []byte    // signs the API's bearer tokens
-	Started time.Time // for /health's uptime
+	Secret  []byte
+	Started time.Time
 }
 
-// Handler is every route, in gantry's middleware.
 func (a *App) Handler() http.Handler { return a.Router().Handler() }
 
-// Router is every route: `feed routes` lists them, and each is in a
-// feature of test/features.yaml (TestFeatures).
 func (a *App) Router() *web.Router {
-	// The app is an API: a path with no route is answered as JSON too.
 	rt := web.NewRouter(a.Log, func(w http.ResponseWriter, r *http.Request, status int) {
 		web.JSON(w, status, map[string]string{"error": strings.ToLower(http.StatusText(status))})
 	})
@@ -66,8 +55,6 @@ func (a *App) Router() *web.Router {
 		})
 	})
 
-	// The pages' live streams: put it behind the filters that decide who
-	// may listen, as the pages it serves are.
 	rt.Handle("GET /live", a.Live.Serve)
 
 	if a.Mail != nil && a.Mail.Inbox != nil {

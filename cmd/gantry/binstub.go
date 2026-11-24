@@ -10,7 +10,7 @@ import (
 	"text/template"
 )
 
-var binstubSignature = []byte("#!/bin/sh\n# Downloads this app's gantry")
+var binstubReleaseBase = []byte("\ngantry_base=${GANTRY_RELEASE_BASE:-https://github.com/scttymn/gantry/releases/download}\n")
 
 func binstub() ([]byte, error) {
 	raw, err := fs.ReadFile(templates, "templates/new/bin/gantry.tmpl")
@@ -31,7 +31,7 @@ func binstub() ([]byte, error) {
 func refreshBinstub(root string, errOut io.Writer) {
 	path := filepath.Join(root, "bin", "gantry")
 	have, err := os.ReadFile(path)
-	if err != nil || !bytes.HasPrefix(have, binstubSignature) {
+	if err != nil || !bytes.HasPrefix(have, []byte("#!/bin/sh\n")) || !bytes.Contains(have, binstubReleaseBase) {
 		return
 	}
 	want, err := binstub()

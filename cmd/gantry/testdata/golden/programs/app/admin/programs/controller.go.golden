@@ -1,4 +1,3 @@
-// Package programs is the admin's programs, at /admin/programs.
 package programs
 
 import (
@@ -16,25 +15,21 @@ import (
 )
 
 const (
-	path     = "/admin/programs"
-	param    = "program" // the form's fields are program[name], …
-	title    = "Programs"
-	singular = "Program"
-	// recordType is the program's photos' owner, as Active Storage names it.
+	path       = "/admin/programs"
+	param      = "program"
+	title      = "Programs"
+	singular   = "Program"
 	recordType = "Program"
 )
 
-// Controller is the programs' pages: the list, the forms, and deleting.
 type Controller struct{ resource.Controller }
 
 var fields = []resource.Field{resource.F("name"), resource.F("blurb", resource.Type("textarea")), resource.F("photo", resource.Type("file")), resource.F("cta"), resource.Position}
 
-// formValues are a program as its form holds them: text, as typed.
 func formValues(program models.Program) map[string]string {
 	return map[string]string{"name": program.Name, "blurb": program.Blurb, "cta": program.CTA, "position": resource.IntText(program.Position)}
 }
 
-// fromForm reads a form's values back into a program.
 func fromForm(v map[string]string) models.Program {
 	return models.Program{Name: v["name"], Blurb: v["blurb"], CTA: v["cta"], Position: resource.OptionalInt(v["position"])}
 }
@@ -64,8 +59,6 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	var id int64
 	err := c.DB.Tx(r.Context(), func(tx *db.Tx) (err error) {
 		q := models.New(tx)
-		// On Postgres two at once can still take the same position; the
-		// list orders by position, then id.
 		if !program.Position.Valid {
 			next, err := q.NextProgramPosition(r.Context())
 			if err != nil {
@@ -93,9 +86,6 @@ func (c Controller) Edit(w http.ResponseWriter, r *http.Request) error {
 	return c.form(w, r, http.StatusOK, program.ID, formValues(program), nil)
 }
 
-// Update reads, checks and writes the row in one transaction, so an edit
-// saved meanwhile isn't overwritten with what this one read. The form is
-// read first: a PATCH's body may still be arriving.
 func (c Controller) Update(w http.ResponseWriter, r *http.Request) error {
 	sent := resource.Overlay(r, param, map[string]string{})
 	var (
@@ -144,7 +134,6 @@ func (c Controller) Delete(w http.ResponseWriter, r *http.Request) error {
 	return c.Deleted(w, r, path, singular)
 }
 
-// form is the new or edit form, with what's wrong when it's sent back.
 func (c Controller) form(w http.ResponseWriter, r *http.Request, status int, id int64, v map[string]string, errs []string) error {
 	f := resource.Form{Param: param, Values: v, Errors: errs, Fields: fields, Cancel: path, Action: path, Method: "post"}
 	heading := "New " + strings.ToLower(singular)

@@ -1,6 +1,3 @@
-// {{.Name}}: it serves by default, and its other commands are `{{.Name}} db
-// ...`, `{{.Name}} jobs` and `{{.Name}} task NAME` (in development, `gantry db
-// migrate` runs them in the app's container).
 package main
 
 import (
@@ -35,7 +32,6 @@ import (
 )
 
 func main() {
-	// Started as a picture's resizing child, it makes the copy and exits.
 	if images.IsChild(os.Args) {
 		os.Exit(app.Pictures.RunChild(os.Args))
 	}
@@ -58,7 +54,6 @@ const usage = `usage:
   {{.Name}} routes [--json]        the app's routes (app/routes.go), or as JSON
 `
 
-// command runs the command args name, and is its exit code.
 func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, in io.Reader, out, errOut io.Writer) int {
 	name := "serve"
 	if len(args) > 0 {
@@ -71,9 +66,6 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 	case "jobs":
 		err = runJobs(ctx, cfg, logger)
 	case "assets":
-		// Rails' assets:precompile: the Dockerfile runs it before go build,
-		// which embeds what it makes (the scripts minified, the pictures'
-		// copies).
 		dir := filepath.Join("assets", "built")
 		if len(args) > 0 {
 			dir = args[0]
@@ -96,7 +88,6 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 	case "task":
 		err = task(ctx, cfg, logger, args, out)
 	case "routes":
-		// Its log on errOut: out is the list, which may be JSON.
 		err = routes(ctx, cfg, slog.New(slog.NewTextHandler(errOut, nil)), args, out)
 	default:
 		fmt.Fprint(errOut, usage)
@@ -109,8 +100,6 @@ func command(ctx context.Context, cfg config.Config, logger *slog.Logger, args [
 	return 0
 }
 
-// build opens the database, brings it up to date, and is the app on it,
-// its jobs defined. close closes the database.
 func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.App, close func(), err error) {
 	proxies, err := web.ParseProxies(cfg.TrustedProxies)
 	if err != nil {
@@ -148,7 +137,6 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 			mailer.Close()
 		}
 	}()
-	// Link previews are made from the site's address (meta.Site).
 	layout.Site.URL = cfg.SiteURL
 	signer := sign.Signer{Key: key}
 	a = &app.App{Mail: mailer, DB: database, Log: logger, Signer: signer, Jobs: queue, Live: live.New(signer, live.Options{Log: logger}),
@@ -162,23 +150,15 @@ func build(ctx context.Context, cfg config.Config, logger *slog.Logger) (a *app.
 	}, nil
 }
 
-// serve builds the app, then serves until ctx ends, running its jobs
-// alongside when cfg says to. Anything that fails before listening is
-// returned, so the process exits non-zero and its health check never
-// passes. listening, when set, gets the address.
 func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listening chan<- string) error {
 	a, closeDB, err := build(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
 	defer closeDB()
-	// A client that's slow to send or to read can't hold a connection open:
-	// a request has 30 s to arrive and 60 s to be answered, and an idle
-	// connection is closed after 2 minutes. Live streams, and uploads and
-	// downloads still moving, go on past them.
 	server := &http.Server{Handler: a.Handler(), ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 2 * time.Minute}
-	server.RegisterOnShutdown(a.Live.Close) // live streams end, so shutting down doesn't wait on them
+	server.RegisterOnShutdown(a.Live.Close)
 
 	ln, err := net.Listen("tcp", cfg.Addr)
 	if err != nil {
@@ -188,8 +168,6 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 	if listening != nil {
 		listening <- ln.Addr().String()
 	}
-	// The jobs stop with the server: running ones get their grace, then go
-	// back to the queue.
 	jobsCtx, stopJobs := context.WithCancel(ctx)
 	jobsDone := make(chan error, 1)
 	if cfg.JobsInServer {
@@ -213,8 +191,6 @@ func serve(ctx context.Context, cfg config.Config, logger *slog.Logger, listenin
 	return nil
 }
 
-// runJobs builds the app and runs its jobs until ctx ends: a process of
-// jobs alone, beside servers started with JOBS_IN_SERVER=false.
 func runJobs(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	a, closeDB, err := build(ctx, cfg, logger)
 	if err != nil {
@@ -225,8 +201,6 @@ func runJobs(ctx context.Context, cfg config.Config, logger *slog.Logger) error 
 	return a.Jobs.Run(ctx)
 }
 
-// routes prints the app's routes, as its router has them, one a line, or
-// with --json as a JSON array of web.Route: what `gantry routes` shows.
 func routes(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
 	if len(args) > 1 || len(args) == 1 && args[0] != "--json" {
 		return errors.New("usage: {{.Name}} routes [--json]")
@@ -246,7 +220,6 @@ func routes(ctx context.Context, cfg config.Config, logger *slog.Logger, args []
 	return nil
 }
 
-// task runs one of app.Tasks, on the migrated database.
 func task(ctx context.Context, cfg config.Config, logger *slog.Logger, args []string, out io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("which task? `{{.Name}} tasks` lists them")

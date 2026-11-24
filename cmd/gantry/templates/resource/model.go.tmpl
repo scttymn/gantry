@@ -4,7 +4,6 @@ package models
 import "strings"
 {{- break}}{{end}}{{end}}
 
-// Errors are the Rails model's validations, as its full messages.
 func ({{recv}} {{.Model}}) Errors() []string {
 	var errs []string
 {{- range .Columns}}{{if .Required}}

@@ -1,6 +1,3 @@
-# Houston's project: gantry dev (houston dev) serves it at
-# http://shop.localhost, gantry test runs its tests, and houston deploy
-# puts it on the server.
 name: shop
 
 services:
@@ -8,25 +5,24 @@ services:
     build: { context: ., target: dev }
     expose: ["8080"]
     environment:
-      GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true} # development panel; false hides it
-      GANTRY_DEV_RELOAD: ${GANTRY_DEV_RELOAD:-true} # pages reload on save; false turns it off
-      MAIL_DRIVER: ${MAIL_DRIVER:-} # blank: local inbox in development, configured SMTP elsewhere
+      GANTRY_DEV_WARNINGS: ${GANTRY_DEV_WARNINGS:-true}
+      GANTRY_DEV_RELOAD: ${GANTRY_DEV_RELOAD:-true}
+      MAIL_DRIVER: ${MAIL_DRIVER:-}
       MAIL_FROM: ${MAIL_FROM:-}
       SMTP_HOST: ${SMTP_HOST:-}
       SMTP_PORT: ${SMTP_PORT:-587}
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
-      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (bin/gantry secret, a Houston secret); development's is in .env
-      SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
+      SMTP_TLS: ${SMTP_TLS:-}
+      SECRET_KEY: ${SECRET_KEY:-}
+      SITE_URL: ${SITE_URL:-}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-}
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/shop?sslmode=disable
-      # The server gantry test gives each test a database of its own on.
       TEST_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@${DB_HOST:-db}:5432/postgres?sslmode=disable
     depends_on: [db]
     volumes:
-      - .:/app                     # the code, rebuilt on change
-      - data:/data                 # uploads
+      - .:/app
+      - data:/data
 
   db:
     image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf

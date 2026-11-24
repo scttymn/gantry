@@ -260,11 +260,7 @@ func writeApp(dir string, a NewApp) error {
 	if err != nil {
 		return err
 	}
-	schema := emptySQLiteSchema
-	if a.Postgres {
-		schema = emptyPostgresSchema
-	}
-	if err := write(filepath.Join(dir, "db", "schema.sql"), []byte(schema)); err != nil {
+	if err := write(filepath.Join(dir, "db", "schema.sql"), nil); err != nil {
 		return err
 	}
 	if a.GantryPath != "" {
@@ -299,11 +295,6 @@ func printSecret(_ string, args []string, out, _ io.Writer) error {
 	fmt.Fprintln(out, secretKey())
 	return nil
 }
-
-const (
-	emptySQLiteSchema   = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations; don't edit it by hand.\n\n"
-	emptyPostgresSchema = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n"
-)
 
 func enclosingModule(dir string) (root, path string, err error) {
 	root, path, err = gomod.Enclosing(dir)

@@ -2,7 +2,6 @@ package workouts
 
 import "example.com/gym/app/shared/resource"
 
-// form is a workout's new or edit page.
 templ form(p resource.Page, f resource.Form) {
 	@resource.FormPage(p, f)
 }

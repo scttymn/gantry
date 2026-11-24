@@ -1,5 +1,3 @@
-// Package posts is the feed's API: the newest posts, one post, writing one
-// and liking one.
 package posts
 
 import (
@@ -16,7 +14,6 @@ import (
 	"feed/app/shared/bearer"
 )
 
-// Controller serves posts.
 type Controller struct {
 	DB *db.DB
 }
@@ -29,7 +26,6 @@ var (
 	errTooLong   = web.Status(http.StatusBadRequest, errors.New("body must be at most 500 characters"))
 )
 
-// Index is GET /feed: the 20 newest posts.
 func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
 	posts, err := models.New(c.DB.Read).Feed(r.Context())
 	if err != nil {
@@ -40,7 +36,6 @@ func (c Controller) Index(w http.ResponseWriter, r *http.Request) error {
 	}{posts})
 }
 
-// Show is GET /posts/{id}.
 func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
 	id, ok := bearer.ID(r.PathValue("id"))
 	if !ok {
@@ -58,7 +53,6 @@ func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
 	}{post})
 }
 
-// Create is POST /posts, from its token's user.
 func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	user, _ := web.Get(r, bearer.Current)
 	var in struct {
@@ -89,7 +83,6 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	}{post})
 }
 
-// Like is POST /posts/{id}/like: 201 the first time, 200 after.
 func (c Controller) Like(w http.ResponseWriter, r *http.Request) error {
 	user, _ := web.Get(r, bearer.Current)
 	id, ok := bearer.ID(r.PathValue("id"))
@@ -101,7 +94,6 @@ func (c Controller) Like(w http.ResponseWriter, r *http.Request) error {
 		liked, err = models.New(tx).LikePost(r.Context(), models.LikePostParams{UserID: user.ID, PostID: id})
 		return err
 	})
-	// The foreign key says the post isn't there: gantry turns them on.
 	if db.IsForeignKey(err) {
 		return errNotFound
 	}

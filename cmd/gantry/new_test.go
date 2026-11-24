@@ -76,7 +76,7 @@ func TestNewInModule(t *testing.T) {
 	read := func(name string) string { b, _ := os.ReadFile(filepath.Join(dir, name)); return string(b) }
 	for file, wants := range map[string][]string{
 		"cmd/control/main.go":     {`"example.com/big/apps/control/app"`},
-		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app "},
+		"compose.yml":             {"build: { context: ../.., dockerfile: apps/control/Dockerfile, target: dev }", "- ../..:/app\n"},
 		"Dockerfile":              {"WORKDIR /app/apps/control", `"-path", "/app/apps/control"`, "GOMODCACHE=/app/apps/control/.cache/go/mod", "templ generate -path /app/apps/control && go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/"},
 		"Dockerfile.dockerignore": {"**/.git", "**/.cache", "**/.gantry"},
 	} {
@@ -153,7 +153,7 @@ func TestNewCI(t *testing.T) {
 					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
 				}
 			}
-			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40} # v`).MatchString(action) {
+			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(action) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, action)
 			}
 		}
