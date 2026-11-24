@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# Runs shellcheck on every shell script git tracks, as the ci workflow's step runs
+# it: each file whose first line runs sh, bash, dash or ksh, or that's named
+# .sh or .bash, a generator's template (.tmpl) or golden (.golden) of one too.
+# A script added anywhere is checked, with no list to add it to
+# (TestEveryScriptIsShellchecked).
+#
+#   bin/shellcheck          check them
+#   bin/shellcheck --list   name them, one a line
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+list=
+case "${1:-}" in
+	"") ;;
+	--list) list=1 ;;
+	*) echo "usage: bin/shellcheck [--list]" >&2; exit 2 ;;
+esac
+
+shell='^#!.*[/[:space:]](ba|da|k)?sh([[:space:]]|$)'
+scripts=()
+while IFS= read -r -d '' file; do
+	[ -f "$file" ] || continue
+	name=${file%.golden}
+	name=${name%.tmpl}
+	first=
+	IFS= read -r first <"$file" || true
+	if [[ $name == *.sh || $name == *.bash || $first =~ $shell ]]; then
+		scripts+=("$file")
+	fi
+done < <(git ls-files -z)
+[ "${#scripts[@]}" -gt 0 ] || { echo "bin/shellcheck: git tracks no shell scripts here (git ls-files)" >&2; exit 1; }
+
+if [ -n "$list" ]; then
+	printf '%s\n' "${scripts[@]}"
+	exit
+fi
+timeout 300 docker run --rm -v "$PWD:/mnt" koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d "${scripts[@]}"

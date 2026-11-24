@@ -76,6 +76,83 @@ func TestFilesAreTracked(t *testing.T) {
 	}
 }
 
+// shellchecked is what bin/shellcheck --list names in root, a checkout with
+// the script.
+func shellchecked(t *testing.T, root string) []string {
+	t.Helper()
+	cmd := exec.Command(filepath.Join(root, "bin/shellcheck"), "--list")
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_COUNT=1", "GIT_CONFIG_KEY_0=safe.directory", "GIT_CONFIG_VALUE_0=*")
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("bin/shellcheck --list: %v", err)
+	}
+	return strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+}
+
+// bin/shellcheck finds the scripts itself: every file git tracks whose first
+// line runs sh, bash, dash or ksh, or that's named as a shell script, a
+// generator's template or golden of one too.
+func TestShellcheckListsScripts(t *testing.T) {
+	root := t.TempDir()
+	git(t, root, "init", "-q")
+	script, err := os.ReadFile(filepath.Join(checkout, "bin/shellcheck"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, body := range map[string]string{
+		"bin/shellcheck":                     string(script),
+		"bin/tool":                           "#!/usr/bin/env bash\necho tool\n",
+		"hooks/pre-commit":                   "#!/bin/sh -e\necho hook\n",
+		"scripts/env-s":                      "#!/usr/bin/env -S bash -eu\necho env\n",
+		"scripts/ksh":                        "#!/bin/ksh\necho ksh\n",
+		"setup.sh":                           "echo no shebang\n",
+		"cmd/gantry/templates/x/run.sh.tmpl": "#!/bin/sh\necho {{.Name}}\n",
+		"testdata/golden/x/bin/run.golden":   "#!/bin/sh\necho x\n",
+		"tools/gen.py":                       "#!/usr/bin/env python3\nprint('py')\n",
+		"tools/fish":                         "#!/usr/bin/fish\necho fish\n",
+		"README.md":                          "# Not a script\n#!/bin/sh, on its second line\n",
+		"untracked.sh":                       "#!/bin/sh\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(root, name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git(t, root, "add", ".", ":!untracked.sh")
+	want := []string{"bin/shellcheck", "bin/tool", "cmd/gantry/templates/x/run.sh.tmpl", "hooks/pre-commit", "scripts/env-s", "scripts/ksh", "setup.sh", "testdata/golden/x/bin/run.golden"}
+	if got := shellchecked(t, root); !slices.Equal(got, want) {
+		t.Errorf("bin/shellcheck --list: %q, want %q", got, want)
+	}
+}
+
+// CI's shellcheck step (bin/shellcheck) reads every script here, each one
+// executable or starting with #!: one added anywhere is checked, with no list
+// to add it to. Every script here is a shell script; one that isn't fails
+// here until this test knows it.
+func TestEveryScriptIsShellchecked(t *testing.T) {
+	executable := map[string]bool{}
+	for _, entry := range strings.Split(strings.TrimSuffix(string(git(t, checkout, "ls-files", "-s", "-z")), "\x00"), "\x00") {
+		mode, name, _ := strings.Cut(entry, "\t")
+		executable[name] = strings.HasPrefix(mode, "100755")
+	}
+	listed := shellchecked(t, checkout)
+	n := 0
+	files(t, checkout, func(name, text string) {
+		if !executable[name] && !strings.HasPrefix(text, "#!") {
+			return
+		}
+		n++
+		if !slices.Contains(listed, name) {
+			t.Errorf("%s is a script bin/shellcheck doesn't read: make its first line a sh or bash #!, or name it .sh", name)
+		}
+	})
+	if n == 0 {
+		t.Fatal("found no scripts")
+	}
+}
+
 var (
 	gooseUp   = regexp.MustCompile(`(?m)^-- \+goose Up[ \t\r]*$`)
 	gooseDown = regexp.MustCompile(`(?m)^-- \+goose Down[ \t\r]*$`)

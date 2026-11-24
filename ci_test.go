@@ -51,7 +51,6 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 	// (the first group, or the whole match) must be in bin/ci as it is there.
 	for what, re := range map[string]string{
 		"tool version":           `go run ([\w.-]+(?:/[\w.-]+)+@v[\d.]+)`,
-		"docker image":           `docker run [^\n]*?(\S+@sha256:[0-9a-f]{64})`,
 		"linker flags":           `-ldflags "[^"]+"`,
 		"race detector":          `go test -race`,
 		"bench module":           `GANTRY_DIR=\S+`,
@@ -61,7 +60,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"new app probe":          `new probe --skip-houston`,
 		"Houston's digests":      `houston-release --sha256`,
 		"vulnerabilities' check": `jq -rs ('[^']+')`,
-		"shellcheck and files":   `(koalaman/shellcheck:\S+(?: [\w./-]+)+)`,
+		"shellcheck's script":    `bin/shellcheck`,
 	} {
 		found := regexp.MustCompile(re).FindAllStringSubmatch(workflow, -1)
 		if len(found) == 0 {
@@ -78,20 +77,23 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 
 // fakeDocker logs each call to $FAKE_DOCKER_LOG and succeeds, but for docker
 // ps under FAKE_DOCKER_PS, a network (the throwaway Postgres's) unless
-// FAKE_POSTGRES=0, and a call with $FAKE_FAIL in it.
+// FAKE_POSTGRES=0, and a call with $FAKE_FAIL in it. A build prints an image
+// ID of its own, as Docker's does, and logs it as "built ID".
 const fakeDocker = `#!/bin/sh
 echo "$*" >>"$FAKE_DOCKER_LOG"
 case "$*" in *"${FAKE_FAIL:-no such call}"*) exit 1 ;; esac
 case "$1 $2" in
 "ps "*) exit "${FAKE_DOCKER_PS:-0}" ;;
 "network create") exit "${FAKE_POSTGRES:-1}" ;;
+"build "*) echo "built sha256:fake$$" >>"$FAKE_DOCKER_LOG"; echo "sha256:fake$$" ;;
 esac
 `
 
 // binCI runs bin/ci --fast on fakeDocker, a df with FAKE_FREE_KB free (100 GB
-// unless set) and a jq that finds nothing, with env and nothing of the test's
-// own environment. Of the rest of PATH it has the tools bin/ci uses, less
-// without. It returns bin/ci's output, docker's calls, and its error.
+// unless set), a jq that finds nothing and a git that tracks bin/ci alone
+// (for bin/shellcheck), with env and nothing of the test's own environment. Of
+// the rest of PATH it has the tools bin/ci uses, less without. It returns
+// bin/ci's output, docker's calls, and its error.
 func binCI(t *testing.T, env []string, without ...string) (string, []string, error) {
 	t.Helper()
 	bin, home := t.TempDir(), t.TempDir()
@@ -101,8 +103,9 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 		"df":     "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
 		"jq":     "#!/bin/sh\n",
 		"du":     "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
+		"git":    "#!/bin/sh\nprintf 'bin/ci\\0'\n",
 	}
-	for _, tool := range []string{"docker", "df", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
+	for _, tool := range []string{"docker", "df", "git", "jq", "bash", "sh", "awk", "cat", "cut", "dirname", "du", "mkdir", "mktemp", "rm", "seq", "sleep", "timeout", "tr", "uname"} {
 		if slices.Contains(without, tool) {
 			continue
 		}
@@ -250,6 +253,69 @@ func TestBinCIStopsFirst(t *testing.T) {
 			if b := called(calls, "build"); len(b) > 0 {
 				t.Errorf("bin/ci built anyway: %q", b)
 			}
+		})
+	}
+}
+
+// Each script runs the toolchain's image by the ID its own build printed, or
+// an image by its digest: never by a tag, which is every checkout's. Three
+// bin/ci runs at once failed when one's build moved gantry-toolchain under
+// the others, whose tests then built its templ's views on their runtime.
+func TestScriptsRunTheirOwnBuild(t *testing.T) {
+	ownBuild := func(t *testing.T, out string, calls []string) {
+		t.Helper()
+		var built []string
+		for _, c := range calls {
+			if id, ok := strings.CutPrefix(c, "built "); ok {
+				built = append(built, id)
+			}
+		}
+		runs := 0
+		for _, c := range calls {
+			if !strings.HasPrefix(c, "run ") {
+				continue
+			}
+			runs++
+			if !slices.ContainsFunc(strings.Fields(c), func(w string) bool { return slices.Contains(built, w) || strings.Contains(w, "@sha256:") }) {
+				t.Errorf("docker %s\nruns neither an image its build made (%q) nor one by its digest", c, built)
+			}
+		}
+		if len(built) == 0 || runs == 0 {
+			t.Fatalf("%d builds and %d runs, want both:\n%s", len(built), runs, out)
+		}
+	}
+	t.Run("bin/ci", func(t *testing.T) {
+		out, calls, err := binCI(t, []string{"FAKE_POSTGRES=0"})
+		if err != nil {
+			t.Fatalf("bin/ci: %v\n%s", err, out)
+		}
+		ownBuild(t, out, calls)
+	})
+	for script, args := range map[string][]string{"bin/go": {"go", "version"}, "bin/bench": {"-quick"}} {
+		t.Run(script, func(t *testing.T) {
+			// A copy, on fakeDocker: each writes its .cache in its checkout.
+			root, bin := t.TempDir(), t.TempDir()
+			body, err := os.ReadFile(script)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for path, text := range map[string]string{filepath.Join(root, script): string(body), filepath.Join(bin, "docker"): fakeDocker} {
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			log := filepath.Join(bin, "docker.log")
+			cmd := exec.Command(filepath.Join(root, script), args...)
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FAKE_DOCKER_LOG="+log, "FAKE_POSTGRES=0")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: %v\n%s", script, err, out)
+			}
+			calls, _ := os.ReadFile(log)
+			ownBuild(t, string(out), strings.Split(strings.TrimSpace(string(calls)), "\n"))
 		})
 	}
 }
