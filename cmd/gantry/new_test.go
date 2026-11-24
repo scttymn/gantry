@@ -484,6 +484,8 @@ func TestAppCommands(t *testing.T) {
 	}
 	os.MkdirAll(filepath.Join(root, "test"), 0o755)
 	os.WriteFile(filepath.Join(root, "test", "features.yaml"), []byte("features: []\n"), 0o644)
+	os.MkdirAll(filepath.Join(root, "app"), 0o755)
+	os.WriteFile(filepath.Join(root, "app", "features_test.go"), []byte("package app_test\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"), 0o644)
 	for _, tc := range []struct {
 		args []string
 		want []string
@@ -558,6 +560,58 @@ func TestVerifyOnTheTestStack(t *testing.T) {
 	os.Remove(compose)
 	if code, _, stderr := gantry(t, dir, "verify"); code != 1 || !strings.Contains(stderr, "compose.yml") {
 		t.Errorf("no compose.yml: exit %d: %s", code, stderr)
+	}
+}
+
+func TestVerifyCopyIsIgnored(t *testing.T) {
+	copied := strings.Replace(verifyCopy, "*", "123456", 1)
+	ignores := func(t *testing.T, path string, nested bool) {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			pattern, deep := strings.CutPrefix(line, "**/")
+			if ok, _ := filepath.Match(pattern, copied); ok && (deep || !nested) {
+				return
+			}
+		}
+		t.Errorf("%s doesn't ignore verify's copy of compose.yml (%s): it would be in the test stage's COPY . . and in git status", path, verifyCopy)
+	}
+	dir := shopApp(t, "sqlite")
+	ignores(t, filepath.Join(dir, ".dockerignore"), false)
+	ignores(t, filepath.Join(dir, ".gitignore"), false)
+	root := big(t, "")
+	if code, _, stderr := gantry(t, filepath.Join(root, "apps"), "new", "control", "--in-module", "--skip-houston"); code != 0 {
+		t.Fatal(stderr)
+	}
+	ignores(t, filepath.Join(root, "apps", "control", "Dockerfile.dockerignore"), true)
+	ignores(t, filepath.Join(root, "apps", "control", ".gitignore"), false)
+}
+
+func TestVerifyWithoutTestFeatures(t *testing.T) {
+	for name, files := range map[string]map[string]string{
+		"no test":       {},
+		"renamed":       {"app/features_test.go": "package app_test\n\nimport \"testing\"\n\nfunc TestFeatureMap(t *testing.T) {}\n"},
+		"not in a test": {"app/features.go": "package app\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"},
+		"a method":      {"app/features_test.go": "package app_test\n\nimport \"testing\"\n\ntype s struct{}\n\nfunc (s) TestFeatures(t *testing.T) {}\n"},
+		"a nested app/": {"app/home/features_test.go": "package home_test\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := shopRoot(t, "features: []\n")
+			for file, src := range files {
+				os.MkdirAll(filepath.Dir(filepath.Join(root, file)), 0o755)
+				os.WriteFile(filepath.Join(root, file), []byte(src), 0o644)
+			}
+			got := steps(t, "")
+			for _, args := range [][]string{{"verify"}, {"verify", "--local"}} {
+				code, _, stderr := gantry(t, root, args...)
+				if code != 1 || len(*got) != 0 || !strings.Contains(stderr, "no TestFeatures") || !strings.Contains(stderr, "app/features_test.go") {
+					t.Errorf("%q: exit %d, ran %q: %s", args, code, *got, stderr)
+				}
+			}
+		})
 	}
 }
 

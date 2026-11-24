@@ -3,6 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"os/signal"
@@ -15,6 +18,8 @@ var featuresTest = []string{"go", "test", "-count=1", "-v", "-run", "^TestFeatur
 
 const featuresTestCommand = "go test -count=1 -v -run '^TestFeatures$' ./app/"
 
+const verifyCopy = ".gantry-verify-*.yml"
+
 func verify(root string, args []string, _, errOut io.Writer) error {
 	fs, local := appFlags()
 	if err := parseFlags(fs, args); err != nil {
@@ -25,6 +30,9 @@ func verify(root string, args []string, _, errOut io.Writer) error {
 	}
 	if _, err := os.Stat(filepath.Join(root, "test", "features.yaml")); err != nil {
 		return errors.New("no test/features.yaml here: run gantry at the app's root; an app made before gantry verify writes one with bin/gantry g features, and adds its test (docs/development.md#an-app-made-before-the-feature-map)")
+	}
+	if !hasTestFeatures(filepath.Join(root, "app")) {
+		return errors.New("app/ has no TestFeatures, so go test would run nothing and pass: copy a new app's app/features_test.go (docs/development.md#an-app-made-before-the-feature-map)")
 	}
 	if *local {
 		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=test"}, featuresTest...)...))
@@ -37,7 +45,7 @@ func verify(root string, args []string, _, errOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.CreateTemp(root, ".gantry-verify-*.yml")
+	f, err := os.CreateTemp(root, verifyCopy)
 	if err != nil {
 		return err
 	}
@@ -53,6 +61,22 @@ func verify(root string, args []string, _, errOut io.Writer) error {
 	signal.Notify(interrupted, os.Interrupt)
 	defer signal.Stop(interrupted)
 	return houston(root, []string{"-f", filepath.Base(f.Name()), "test"}, errOut)
+}
+
+func hasTestFeatures(dir string) bool {
+	tests, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	for _, path := range tests {
+		f, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.SkipObjectResolution)
+		if err != nil {
+			continue
+		}
+		for _, d := range f.Decls {
+			if fn, ok := d.(*ast.FuncDecl); ok && fn.Recv == nil && fn.Name.Name == "TestFeatures" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func featuresCompose(compose []byte) ([]byte, error) {

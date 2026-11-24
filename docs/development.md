@@ -276,8 +276,11 @@ features:
 runs on Houston's test stack, the one `bin/gantry test` uses: the Dockerfile's
 `test` stage, in a throwaway copy of the project. To get there, it runs
 `houston -f` with a copy of `compose.yml` whose `x-houston.commands.test` is
-the `TestFeatures` run, and it removes the copy afterwards. With `--local`, it runs
-on this machine. A new app's `.github/workflows/ci.yml` runs it after
+the `TestFeatures` run, and it removes the copy afterwards. The copy,
+`.gantry-verify-*.yml`, sits beside `compose.yml`, and a new app's
+`.gitignore` and `.dockerignore` leave it out. With `--local`, it runs on this
+machine. Without a `TestFeatures` in `app/`, it fails rather than run no test
+and pass. A new app's `.github/workflows/ci.yml` runs it after
 `bin/gantry test`. `testkit.Verify` refuses `GANTRY_ENV=development`, where
 the reload script takes the page cache's headers off every page. The app runs
 in the test's process, on a test
@@ -363,7 +366,10 @@ An app without `test/features.yaml` works as it did. The map isn't read by
    pages, give its `testkit.Roles` a `SignIn` for each role (above).
 5. Set each feature's role, cacheable and selectors, and merge features until
    `bin/gantry test` passes. `bin/gantry verify` runs the same check verbosely.
-6. To have CI check it as a new app's does, add `- run: bin/gantry verify`
+6. Add `.gantry-verify-*.yml` to `.gitignore` and `.dockerignore`, as a new
+   app has it. `bin/gantry verify` writes that copy of `compose.yml` while it
+   runs.
+7. To have CI check it as a new app's does, add `- run: bin/gantry verify`
    after `- run: bin/gantry test` in `.github/workflows/ci.yml`.
 
 Run `bin/gantry g features` again after adding routes, or paste the feature a
