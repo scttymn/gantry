@@ -147,8 +147,9 @@ gantry and its apps to that:
 - `TODO`, `FIXME`, `HACK` and `XXX` are reported anywhere, doc comments
   included: a plan is an issue, linked from the pull request. Commented-out
   code is reported too: git keeps the old version.
-- What stays is what a tool reads: `//go:` directives, `//nolint:<linter> //
-  <reason>` (a bare `//nolint` is reported), sqlc's `-- name:` and goose's
+- What stays is what a tool reads: `//go:` directives,
+  `//nolint:<linter> // <reason>` (a bare `//nolint` is reported), sqlc's
+  `-- name:` and goose's
   `-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, cgo's preamble,
   a script's `#!` line and `go.mod`'s `// indirect`. A license header is the
   one other exception the policy allows, when gantry adopts one (#37); the

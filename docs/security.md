@@ -142,9 +142,9 @@ For existing apps, gantry's own changes:
 - **`X-Forwarded-Proto` and `X-Forwarded-Host` take the last value.** Before,
   `X-Forwarded-Proto` took the first, which behind a proxy that appends is
   the visitor's own. Nothing changes behind a proxy that replaces the header
-  rather than appending to it, as nginx's `proxy_set_header
-  X-Forwarded-Proto $scheme` and Go's `httputil.ProxyRequest.SetXForwarded`
-  do.
+  rather than appending to it, as nginx's
+  `proxy_set_header X-Forwarded-Proto $scheme` and Go's
+  `httputil.ProxyRequest.SetXForwarded` do.
 - **`rt.Security` is new**, zero by default: no HSTS and no policy until the
   app sets them. `web.Headers(h)` is unchanged; an app with its own
   middleware stack uses `web.Security{…}.Headers(h)` for them.

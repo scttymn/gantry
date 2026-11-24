@@ -113,6 +113,28 @@ func TestDocsCommands(t *testing.T) {
 	}
 }
 
+func TestDocsCodeSpansCloseOnTheirLine(t *testing.T) {
+	for _, pattern := range docsWithCommands {
+		files, _ := filepath.Glob(filepath.Join("..", "..", pattern))
+		for _, file := range files {
+			b, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fenced := false
+			for n, line := range strings.Split(string(b), "\n") {
+				if strings.HasPrefix(strings.TrimSpace(line), "```") {
+					fenced = !fenced
+					continue
+				}
+				if !fenced && strings.Count(line, "`")%2 == 1 {
+					t.Errorf("%s:%d: a code span runs onto the next line, where TestDocsCommands can't read it: %s", strings.TrimPrefix(file, "../../"), n+1, line)
+				}
+			}
+		}
+	}
+}
+
 type docInvocation struct {
 	line int
 	text string

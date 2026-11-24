@@ -18,8 +18,8 @@ Upgrading: this release builds with templ v0.3.1118, so an app's go.mod gets
 it too. Code an older templ made doesn't compile against it (it calls
 `templ.JoinURLErrs` and `templ.ResolveAttributeValue`, which are gone). Change
 the app's Dockerfile to `go install github.com/a-h/templ/cmd/templ@v0.3.1118`,
-then run `templ generate` and commit what it rewrites; `bin/gantry check
---generated` names any file still made by the old one.
+then run `templ generate` and commit what it rewrites;
+`bin/gantry check --generated` names any file still made by the old one.
 
 The checks read local `.html`, `.templ`, `.js`, Go source and `.sql` files, without starting a
 server, executing JavaScript, or making network requests. They skip dependencies,
@@ -104,11 +104,12 @@ the request waits for. `http-client`, `raw-html`, `cross-origin-bypass` and
 SQL, YAML, shell, JavaScript, CSS, HTML, `.gitignore` and `.dockerignore`.
 Intent goes in a name, a type or a test, which the compiler and the tests
 check; a comment that explains a workaround is a sign to fix its cause. What
-stays are directives a tool reads: `//go:` lines, `//nolint:<linter> //
-<reason>`, sqlc's `-- name: Name :one` (`:many`, `:exec` and the rest), goose's
-`-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, a script's `#!`
-line and `go.mod`'s `// indirect`. Go that says it's generated (`// Code
-generated ... DO NOT EDIT.`, as sqlc's is) and the packages `importmap pin`
+stays are directives a tool reads: `//go:` lines,
+`//nolint:<linter> // <reason>`, sqlc's `-- name: Name :one` (`:many`, `:exec`
+and the rest), goose's `-- +goose Up`, `Down`, `StatementBegin` and
+`StatementEnd`, a script's `#!` line and `go.mod`'s `// indirect`. Go that says
+it's generated (`// Code generated ... DO NOT EDIT.`, as sqlc's is) and the
+packages `importmap pin`
 vendors into `assets/js/vendor/`, which keep their license notices, aren't
 read. Files without an extension, such as the `Dockerfile` and
 `bin/gantry`, aren't either: Strict picks files by extension, and gantry's own
@@ -204,8 +205,8 @@ would hide the next violation of that rule in that file. It is advice so that
 an upgrade doesn't fail CI.
 
 A reason should point at where the exception was decided: an issue (`#123`) or
-a link to an issue or decision record (`https://...`). With `"requireIssue":
-true`, as a new app has, the scan fails on a reason without one. Without it, as
+a link to an issue or decision record (`https://...`). With
+`"requireIssue": true`, as a new app has, the scan fails on a reason without one. Without it, as
 in a file from before the setting existed, each such reason is reported as
 `exception-reason` advice instead.
 
