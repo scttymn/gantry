@@ -205,6 +205,26 @@ func TestSQLiteCCompileOptions(t *testing.T) {
 	}
 }
 
+// The two builds are one SQLite release: modernc.org/sqlite translates it
+// and github.com/mattn/go-sqlite3 bundles its C, so the two modules are
+// bumped together, to the versions that carry the same one.
+func TestSQLiteCVersionMatchesTranslated(t *testing.T) {
+	tc, err := sqlite.NewConnector(sqliteDSN(filepath.Join(t.TempDir(), "translated.sqlite3"), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	version := func(d *sql.DB) (v string) {
+		defer d.Close()
+		if err := d.QueryRow(`SELECT sqlite_version()`).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if translated, compiled := version(sql.OpenDB(tc)), version(sqliteOne(t)); translated != compiled {
+		t.Errorf("modernc.org/sqlite has SQLite %s and github.com/mattn/go-sqlite3 has %s: bump them together, to versions with the same SQLite", translated, compiled)
+	}
+}
+
 // conn is one of the C build's connections, without database/sql between:
 // what database/sql keeps an app from doing, the driver must still survive.
 func cConnFor(t *testing.T) *cConn {
