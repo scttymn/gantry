@@ -157,7 +157,7 @@ func TestNewCI(t *testing.T) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, action)
 			}
 		}
-		if want := []string{"check --strict", "check --generated", "test"}; !reflect.DeepEqual(runs, want) {
+		if want := []string{"check --strict", "check --generated", "test", "verify"}; !reflect.DeepEqual(runs, want) {
 			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
 		}
 		if strings.Contains(string(ci), "secrets.") || !strings.Contains(string(ci), "GH_TOKEN: ${{ github.token }}") {

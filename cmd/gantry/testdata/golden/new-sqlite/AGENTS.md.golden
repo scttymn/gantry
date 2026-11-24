@@ -19,7 +19,7 @@ bin/gantry routes --json   # every route, from the app's router
 bin/gantry verify          # each feature in test/features.yaml, visited as each role
 ```
 
-`.github/workflows/ci.yml` runs `check --strict`, `check --generated` and `test` on every pull request.
+`.github/workflows/ci.yml` runs `check --strict`, `check --generated`, `test` and `verify` on every pull request.
 
 A route needs a feature in `test/features.yaml`, or `TestFeatures` fails. `bin/gantry g features` adds one for each route in none, for you to finish.
 

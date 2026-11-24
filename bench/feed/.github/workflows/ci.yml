@@ -30,3 +30,4 @@ jobs:
       - run: bin/gantry check --strict
       - run: bin/gantry check --generated
       - run: bin/gantry test
+      - run: bin/gantry verify
