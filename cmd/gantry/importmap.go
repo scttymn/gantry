@@ -71,6 +71,10 @@ var (
 	version   = regexp.MustCompile(`@(\d+\.\d+\.\d+[^/\s"]*)`)
 )
 
+// licenseFiles are the names npm packs a package's license under, in the
+// order pin asks the CDN for them, beside the package's package.json.
+var licenseFiles = []string{"LICENSE", "LICENSE.md", "LICENSE.txt", "license", "license.md", "LICENCE"}
+
 func pinPackages(root string, specs []string, out io.Writer) error {
 	body, _ := json.Marshal(map[string]any{"install": specs, "flattenScope": true, "env": []string{"browser", "module", "production"}})
 	resp, err := httpClient.Post(jspmAPI, "application/json", bytes.NewReader(body))
@@ -99,17 +103,31 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 	// Everything is fetched before anything is written, so a failure
 	// leaves the folder as it was.
 	files := map[string][]byte{}
+	notes := map[string]string{} // what pin says of a package it found no license file for
 	for _, name := range names {
 		url := got.Map.Imports[name]
+		path := filepath.Join(root, vendorDir, vendorFile(name))
 		src, err := fetch(url)
 		if err != nil {
 			return err
 		}
-		v := ""
-		if m := version.FindStringSubmatch(url); m != nil {
-			v = "@" + m[1]
+		v, at, notice, named := "", "", "", ""
+		if m := version.FindStringSubmatchIndex(url); m != nil {
+			v = url[m[2]:m[3]]
+			at = "@" + v
+			notice, named = license(name+" "+v, url[:m[1]]+"/")
 		}
-		files[name] = append([]byte("// "+name+v+" downloaded from "+url+"\n\n"), sourceMap.ReplaceAll(src, nil)...)
+		if notice == "" {
+			if notice = keptNotice(path, v); notice != "" {
+				notes[name] = "kept " + name + "'s license notice from the file it replaced (no license file found)"
+			} else {
+				if named != "" {
+					named = " (package.json says " + named + ")"
+				}
+				notes[name] = "no license file found for " + name + named + ": add its notice to " + relTo(root, path) + " by hand"
+			}
+		}
+		files[name] = append([]byte("// "+name+at+" downloaded from "+url+"\n\n"+notice), sourceMap.ReplaceAll(src, nil)...)
 	}
 	for _, name := range names {
 		path := filepath.Join(root, vendorDir, vendorFile(name))
@@ -117,8 +135,62 @@ func pinPackages(root string, specs []string, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "  pinned %s (%s)\n", name, relTo(root, path))
+		if note, ok := notes[name]; ok {
+			fmt.Fprintln(out, "  "+note)
+		}
 	}
 	return nil
+}
+
+// titleVersion is the version a license comment's title line ends in.
+var titleVersion = regexp.MustCompile(`\d+\.\d+\.\d+\S*$`)
+
+// keptNotice is the license comment under the first line of path, the file
+// pin replaces, as gantry new's Turbo and Stimulus and earlier pins have it,
+// with v for the version its title line ends in; "" with none. Turbo's
+// package has no license file, so its notice lives on only this way.
+func keptNotice(path, v string) string {
+	src, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	_, rest, _ := strings.Cut(string(src), "\n")
+	rest, opened := strings.CutPrefix(rest, "\n/*!\n")
+	body, _, closed := strings.Cut(rest, "\n*/\n")
+	if !opened || !closed {
+		return ""
+	}
+	title, text, _ := strings.Cut(body, "\n")
+	if v != "" {
+		title = titleVersion.ReplaceAllLiteralString(title, v)
+	}
+	return "/*!\n" + title + "\n" + text + "\n*/\n\n"
+}
+
+// license is the comment pin puts under a pinned file's first line, as
+// gantry new's Turbo and Stimulus have it: a /*! */ comment, which
+// minifiers keep, with the package and its version (title), its homepage,
+// and its license file, from the CDN folder pkg, where its package.json is.
+// With no license file there it's "", and named, the license the
+// package.json names, if it names one, is what pin can say instead.
+func license(title, pkg string) (comment, named string) {
+	var meta struct{ Homepage, License string }
+	if src, err := fetch(pkg + "package.json"); err == nil {
+		// What won't parse (an old package's {"type": "MIT"} license, say)
+		// is left out of the comment and the warning, which do without it.
+		_ = json.Unmarshal(src, &meta)
+	}
+	for _, file := range licenseFiles {
+		text, err := fetch(pkg + file)
+		if err != nil {
+			continue
+		}
+		if meta.Homepage != "" {
+			title += "\n" + meta.Homepage
+		}
+		return "/*!\n" + title + "\n\n" + strings.TrimSpace(string(text)) + "\n*/\n\n", meta.License
+	}
+	return "", meta.License
 }
 
 func fetch(url string) ([]byte, error) {
