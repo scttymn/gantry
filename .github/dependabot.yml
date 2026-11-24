@@ -1,27 +1,47 @@
-# Weekly bumps for every Go module here, the workflows' actions and the
-# Docker images. A version that's also copied by hand (internal/pins and
-# the copies its test checks) fails that test on the bump's pull request,
-# which says where else to change it. bench/feed's Dockerfile is gantry new's,
-# so go test ./cmd/gantry -update brings it along; it isn't listed.
+# Weekly bumps for every Go module here and the workflows' actions, each pull
+# request whole: what it bumps in one module it bumps in every module that has
+# it, so none arrives failing for want of a change elsewhere. ci.yml checks
+# every module listed here is tidy (TestModulesAreAllChecked).
+#
+# Not bumped here: what's also copied by hand, where Dependabot can't change
+# every copy. That's templ, Go's, sqlc's and Postgres's images (internal/pins,
+# and the copies its test checks), and modernc.org/libc. CONTRIBUTING.md says
+# how to bump them, each in one pull request.
 version: 2
 updates:
   - package-ecosystem: gomod
     directories: ["/", "/bench", "/bench/sqlite3way", "/bench/feed"]
     schedule:
       interval: weekly
+    # Indirect requirements too: bench/feed builds against the gantry it's in
+    # (replace => ../..), so gantry's requirements are its indirect ones, and
+    # move with gantry's.
+    allow:
+      - dependency-type: all
     ignore:
-      # bench/feed builds against the gantry it's in (replace => ../..).
+      # bench/feed builds against the gantry it's in.
       - dependency-name: github.com/scttymn/gantry
+      # internal/pins.Templ, the Dockerfiles and every generated _templ.go
+      # say which templ.
+      - dependency-name: github.com/a-h/templ
+      # modernc.org/sqlite runs on the libc its go.mod requires and no other,
+      # and brings it (TestModulesHaveGantrysSQLite).
+      - dependency-name: modernc.org/libc
+    groups:
+      # The translated SQLite and the C one are one SQLite release, so they
+      # move together (TestSQLiteCVersionMatchesTranslated).
+      sqlite:
+        patterns: ["modernc.org/sqlite", "github.com/mattn/go-sqlite3"]
+      # Any other: a pull request each, in every module that has it.
+      each:
+        patterns: ["*"]
+        group-by: dependency-name
+      # group-by is for version updates only: the week's security updates,
+      # in every module, are one pull request.
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-  - package-ecosystem: docker
-    # internal/pins/Dockerfile isn't built: it carries Postgres's image.
-    directories: ["/", "/internal/pins"]
-    schedule:
-      interval: weekly
-    ignore:
-      # A new major needs an app's data upgraded, and psql's client with it.
-      - dependency-name: postgres
-        update-types: ["version-update:semver-major"]

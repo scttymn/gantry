@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/scttymn/gantry/internal/pins"
 )
 
@@ -297,4 +299,133 @@ func TestEmailAddressesAreExamples(t *testing.T) {
 			t.Errorf("%s: %s isn't at an example domain (example.com, *.test, *.localhost, ...)", name, bad)
 		}
 	})
+}
+
+// modules is the directory, from the checkout's root, of each module git
+// tracks.
+func modules(t *testing.T) (dirs []string) {
+	t.Helper()
+	files(t, checkout, func(name, _ string) {
+		if path.Base(name) == "go.mod" {
+			dirs = append(dirs, path.Dir(name))
+		}
+	})
+	return dirs
+}
+
+// A dependabotUpdate is one of .github/dependabot.yml's updates, the part
+// of it these tests read.
+type dependabotUpdate struct {
+	Ecosystem   string                    `yaml:"package-ecosystem"`
+	Directories []string                  `yaml:"directories"`
+	Groups      map[string]map[string]any `yaml:"groups"`
+}
+
+func dependabotUpdates(t *testing.T) []dependabotUpdate {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(checkout, ".github/dependabot.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Updates []dependabotUpdate `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal(b, &config); err != nil {
+		t.Fatalf(".github/dependabot.yml: %v", err)
+	}
+	return config.Updates
+}
+
+// Each group says by its patterns which dependencies are in it: Dependabot
+// takes a group without them for all, and its configuration check may not.
+func TestDependabotGroupsHavePatterns(t *testing.T) {
+	for _, u := range dependabotUpdates(t) {
+		for name, group := range u.Groups {
+			if patterns, _ := group["patterns"].([]any); len(patterns) == 0 {
+				t.Errorf(`.github/dependabot.yml: %s's group %s has no patterns: give it patterns: ["*"] for all`, u.Ecosystem, name)
+			}
+		}
+	}
+}
+
+// What's in more than one module is one version in each: each module that
+// has modernc.org/sqlite or github.com/mattn/go-sqlite3 has the root's
+// (a bump of one module alone leaves the others behind), and modernc.org/sqlite
+// has the modernc.org/libc its go.mod requires, which it runs on and no
+// other ("Fragile modernc.org/libc dependency", its docs say). go get
+// modernc.org/sqlite brings that one, and Dependabot leaves libc alone.
+func TestModulesHaveGantrysSQLite(t *testing.T) {
+	gomod := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("go", args...)
+		cmd.Dir = filepath.Join(checkout, dir)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("%s: go %s: %v", dir, strings.Join(args, " "), err)
+		}
+		return string(out)
+	}
+	// selected is each module's build list: a module's path and version.
+	selected := func(dir string) map[string]string {
+		versions := map[string]string{}
+		for line := range strings.Lines(gomod(dir, "list", "-m", "-f", "{{.Path}} {{.Version}}", "all")) {
+			if p, v, ok := strings.Cut(strings.TrimSpace(line), " "); ok {
+				versions[p] = v
+			}
+		}
+		return versions
+	}
+	root := selected(".")
+	for _, dir := range modules(t) {
+		versions := selected(dir)
+		for _, driver := range []string{"modernc.org/sqlite", "github.com/mattn/go-sqlite3"} {
+			if v, ok := versions[driver]; ok && v != root[driver] {
+				t.Errorf("%s has %s %s, and gantry's go.mod %s: bump them together", dir, driver, v, root[driver])
+			}
+		}
+		sqlite, ok := versions["modernc.org/sqlite"]
+		if !ok {
+			continue
+		}
+		edge := "modernc.org/sqlite@" + sqlite + " modernc.org/libc@"
+		var required string
+		for line := range strings.Lines(gomod(dir, "mod", "graph")) {
+			if v, ok := strings.CutPrefix(strings.TrimSpace(line), edge); ok {
+				required = v
+			}
+		}
+		if libc := versions["modernc.org/libc"]; libc != required {
+			t.Errorf("%s builds modernc.org/sqlite %s with modernc.org/libc %s, and it requires %q: go get modernc.org/libc@%s there", dir, sqlite, libc, required, required)
+		}
+	}
+}
+
+// Every module here is checked tidy by ci.yml (bin/ci runs the same list:
+// TestBinCIRunsTheCIWorkflow) and bumped by Dependabot in the pull request
+// that bumps it at the root, so a new module isn't left out of either.
+func TestModulesAreAllChecked(t *testing.T) {
+	workflow, err := os.ReadFile(filepath.Join(checkout, ".github/workflows/ci.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tidied := regexp.MustCompile(`for module in ([^;]+); do`).FindStringSubmatch(string(workflow))
+	if tidied == nil {
+		t.Fatal("ci.yml's Modules tidy step has no for module in ...; do")
+	}
+	var dirs []string
+	for _, u := range dependabotUpdates(t) {
+		if u.Ecosystem == "gomod" {
+			for _, d := range u.Directories {
+				dirs = append(dirs, path.Clean("./"+strings.TrimPrefix(d, "/")))
+			}
+		}
+	}
+	for _, m := range modules(t) {
+		if !slices.Contains(strings.Fields(tidied[1]), m) {
+			t.Errorf("%s/go.mod's module isn't in ci.yml's Modules tidy step (and bin/ci's): add %s to its list", m, m)
+		}
+		if !slices.Contains(dirs, m) {
+			t.Errorf("%s/go.mod's module isn't in .github/dependabot.yml's gomod directories: add it there", m)
+		}
+	}
 }

@@ -29,10 +29,32 @@ The versions gantry and its apps build with (Go, templ, the toolchain's and
 Postgres's images, SQLite's C flags and build tags) are in
 [`internal/pins`](internal/pins/pins.go), and `gantry new` writes them into an
 app. The copies kept by hand (the Dockerfile, the workflows, `bin/bench`, this
-page) are held to them by its test, which says where to change one. A new
-templ means new views too: bench/feed's `_templ.go` are made by the pinned
-templ (`TestTemplCodeIsPinned`), so bump bench/feed's go.mod with gantry's and
-run `templ generate` and `go mod tidy` there.
+page) are held to them by its test, which says where to change one.
+
+Dependabot ([`.github/dependabot.yml`](.github/dependabot.yml)) bumps the Go
+modules and the workflows' actions weekly. A dependency comes in one pull
+request for every module that has it (`bench/feed` has gantry's, as indirect
+requirements), and `modernc.org/sqlite` and `github.com/mattn/go-sqlite3` come
+together: the two are one SQLite release (`TestSQLiteCVersionMatchesTranslated`),
+at one version in every module (`TestModulesHaveGantrysSQLite`).
+`ci.yml`'s first check, `Modules tidy`, names any module whose `go.mod` or
+`go.sum` `go mod tidy` would change, and the command that fixes it.
+
+What it leaves alone has copies it can't change, and is bumped by hand, each in
+one pull request with all its copies:
+
+- templ, Go's, sqlc's and Postgres's images: change the pin in
+  `internal/pins/pins.go` (templ's is `go.mod`'s: `go get` it at the root and
+  in `bench/feed`), then `bin/go go test ./internal/pins` names each copy to
+  match, and `bin/go go test ./cmd/gantry -update` brings the generated apps,
+  `bench/feed` among them, along. A new templ makes new views too:
+  `GANTRY_DIR=bench/feed bin/go sh -c 'templ generate && go mod tidy'`
+  regenerates `bench/feed`'s `_templ.go`, which must be the pinned templ's
+  (`TestTemplCodeIsPinned`). Postgres stays on its major: a new one needs
+  an app's data upgraded, and psql's client with it.
+- `modernc.org/libc`: `modernc.org/sqlite` runs on the one its `go.mod`
+  requires, and `go get modernc.org/sqlite@<version>` brings it, in each
+  module that has it (`TestModulesHaveGantrysSQLite`).
 
 Tests on Postgres take a server from `GANTRY_TEST_POSTGRES_URL`, which `bin/go`
 passes in (`internal/testenv`), e.g.
@@ -40,7 +62,7 @@ passes in (`internal/testenv`), e.g.
 Without it they skip, except under `CI=true`, where they fail.
 
 Every pull request and push to `main` runs the `ci` workflow: both passes on
-SQLite and Postgres, the cgo one again with `-race`, `go vet`, gofmt,
+SQLite and Postgres, the cgo one again with `-race`, every module tidy, `go vet`, gofmt,
 golangci-lint and govulncheck (`go vet`, golangci-lint and govulncheck on the
 cgo build too, golangci-lint on the bench modules), shellcheck on `bin/go`,
 `bin/bench`, `bin/ci`, the pre-push hook and an app's `bin/gantry`, the bench

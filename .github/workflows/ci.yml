@@ -1,10 +1,10 @@
 # Every pull request and every push to main: gantry's tests as the release runs
 # them (pure Go, then as an app builds: with cgo, linked statically) on SQLite
-# and Postgres, that build again under the race detector, then vet, gofmt,
-# golangci-lint (staticcheck among its linters) and govulncheck (each on the
-# app's build too, and golangci-lint on the bench modules), shellcheck on the
-# shell scripts, the bench modules' tests, and the release's build and probe. A
-# broken main shows here, not once the tag exists. CI reaches the tests, so a
+# and Postgres, that build again under the race detector, then every module
+# tidy, vet, gofmt, golangci-lint (staticcheck among its linters) and
+# govulncheck (each on the app's build too, and golangci-lint on the bench
+# modules), shellcheck on the shell scripts, the bench modules' tests, and the
+# release's build and probe. A broken main shows here, not once the tag exists. CI reaches the tests, so a
 # missing Postgres fails them rather than skipping (internal/testenv).
 # No path is ignored: a required check has to report on every pull request.
 # Actions are pinned by commit, and no checkout keeps the token in .git/config.
@@ -70,6 +70,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Modules tidy
+        # First, and by name: a module go mod tidy would change fails the
+        # steps after it as "updates to go.mod needed", or golangci-lint's
+        # "no go files to analyze". A bump at the root changes bench/feed's
+        # (replace => ../..) too.
+        run: |
+          for module in . bench bench/feed bench/sqlite3way; do
+            GANTRY_DIR=$module bin/go go mod tidy -diff ||
+              { echo "$module isn't tidy: run go mod tidy there (GANTRY_DIR=$module bin/go go mod tidy) and commit its go.mod and go.sum"; exit 1; }
+          done
       - name: go vet
         run: bin/go go vet ./...
       - name: gofmt
