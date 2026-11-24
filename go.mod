@@ -10,7 +10,7 @@ require (
 	github.com/gen2brain/avif v0.6.0
 	github.com/gen2brain/heic v0.7.2
 	github.com/gen2brain/webp v0.6.4
-	github.com/go-jose/go-jose/v4 v4.1.4
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.20.5
 	github.com/mattn/go-sqlite3 v1.14.53
