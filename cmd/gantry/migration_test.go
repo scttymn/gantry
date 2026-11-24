@@ -65,7 +65,7 @@ DROP TABLE "posts";
 	migration(t, root, "add_email_to_posts", "email:string", "age:int")
 	testkit.Migrations(t, testkit.DB(t, nil), os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 	at(t, "2026-09-29T12:10:00Z")
-	migration(t, root, "backfill_titles")
+	printed := migration(t, root, "backfill_titles")
 	d := testkit.DB(t, func(ctx context.Context, d *db.DB) error {
 		return d.Migrate(ctx, os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 	})
@@ -78,8 +78,8 @@ DROP TABLE "posts";
 		t.Errorf("a string column's default: %q", title)
 	}
 	other, _ := os.ReadFile(filepath.Join(root, "db", "migrations", "20260929121000_backfill_titles.sql"))
-	if !strings.Contains(string(other), "can't be rolled back") {
-		t.Errorf("a migration of no known shape:\n%s", other)
+	if string(other) != "-- +goose Up\n\n-- +goose Down\n" || !strings.Contains(printed, "can't be rolled back") {
+		t.Errorf("a migration of no known shape:\n%s\nprinted:\n%s", other, printed)
 	}
 }
 

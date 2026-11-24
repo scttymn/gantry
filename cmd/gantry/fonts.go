@@ -89,13 +89,11 @@ func (f fontFamily) query() string {
 }
 
 var (
-	fontBlock  = regexp.MustCompile(`(?s)/\* ([a-z0-9-]+) \*/\s*(@font-face \{.*?\})`)
-	fontURL    = regexp.MustCompile(`url\((https://[^)]+\.woff2)\)`)
-	ttfURL     = regexp.MustCompile(`url\((https://[^)]+\.ttf)\)`)
-	localFont  = regexp.MustCompile(`url\("([^"]+\.woff2)"\)`)
-	fontFamRe  = regexp.MustCompile(`font-family: '([^']+)'`)
-	fontStyRe  = regexp.MustCompile(`font-style: (\w+)`)
-	fontWghtRe = regexp.MustCompile(`font-weight: (\d+)`)
+	fontBlock = regexp.MustCompile(`(?s)/\* ([a-z0-9-]+) \*/\s*(@font-face \{.*?\})`)
+	fontURL   = regexp.MustCompile(`url\((https://[^)]+\.woff2)\)`)
+	ttfURL    = regexp.MustCompile(`url\((https://[^)]+\.ttf)\)`)
+	localFont = regexp.MustCompile(`url\("([^"]+\.woff2)"\)`)
+	fontFamRe = regexp.MustCompile(`font-family: '([^']+)'`)
 )
 
 func fontsFlags() (fs *flag.FlagSet, subsets *string, force *bool) {
@@ -185,12 +183,7 @@ func generateFonts(root string, args []string, out io.Writer) error {
 			name = fmt.Sprintf("%s-%s-%s.woff2", strings.ReplaceAll(strings.ToLower(family), " ", "-"), subset, hex.EncodeToString(sum[:])[:6])
 			names[u[1]], files[name] = name, data
 		}
-		label := fontFamRe.FindStringSubmatch(rule)[1]
-		if fontStyRe.FindStringSubmatch(rule)[1] == "italic" {
-			label += " italic"
-		}
-		label += " " + fontWghtRe.FindStringSubmatch(rule)[1]
-		rules = append(rules, fmt.Sprintf("/* %s, %s */\n%s\n", label, subset, strings.Replace(rule, u[0], `url("`+name+`")`, 1)))
+		rules = append(rules, strings.Replace(rule, u[0], `url("`+name+`")`, 1)+"\n")
 	}
 	if len(rules) == 0 {
 		return fmt.Errorf("Google Fonts had no %s faces for those", *subsets)
@@ -199,19 +192,7 @@ func generateFonts(root string, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	css := fmt.Sprintf(`/* The app's fonts, served from the app itself rather than Google Fonts, so
-   no stylesheet on another host holds up the first paint. Written by:
-     gantry g fonts %s --force
-   font-display: swap: the text paints at once, in each family's fallback
-   (the faces at the end: a system font sized to the family's measure), and
-   keeps its place when the family arrives (preloaded; see assets.go). Name
-   the fallback after the family: font-family: 'Oswald', 'Oswald Fallback'.
-   Each face carries its unicode-range, so a browser downloads only the
-   files a page uses. Google's fonts are under the SIL Open Font License (or
-   Apache 2.0): see fonts.google.com. */
-
-%s
-%s`, quoteSpecs(specs, *subsets), strings.Join(rules, "\n"), strings.Join(fallbacks, "\n"))
+	css := strings.Join(rules, "\n") + "\n" + strings.Join(fallbacks, "\n")
 
 	fontsDir := filepath.Join(root, "assets", "fonts")
 	for name, data := range files {
@@ -227,7 +208,9 @@ func generateFonts(root string, args []string, out io.Writer) error {
 			os.Remove(filepath.Join(fontsDir, m[1]))
 		}
 	}
-	fmt.Fprintf(out, "  wrote assets/css/fonts.css and %d fonts in assets/fonts\n", len(files))
+	fmt.Fprintf(out, "  wrote assets/css/fonts.css and %d fonts in assets/fonts, served from the app rather than Google Fonts\n", len(files))
+	fmt.Fprintf(out, "  Google's fonts are under the SIL Open Font License (or Apache 2.0): see fonts.google.com\n")
+	fmt.Fprintf(out, "  to fetch them again: gantry g fonts %s --force\n", quoteSpecs(specs, *subsets))
 	fmt.Fprintf(out, `
 Next:
   1. In assets/assets.go, embed fonts (//go:embed ... fonts ...), put

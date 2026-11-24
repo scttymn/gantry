@@ -213,10 +213,11 @@ Next:
   2. Give App a Storage, on the data volume, and serve it. Its pictures'
      copies are app.Pictures', which main has made in a child process, out of
      the server's way (an app made before gantry had app/pictures.go: copy
-     that file and the start of main() from a new app's):
+     that file and the start of main() from a new app's), and have it make
+     the copies not made yet (WarmLater):
        a.Storage = &storage.Storage{DB: a.DB, Root: filepath.Join(dataDir, "storage"),
            Images: app.Pictures, Log: a.Log}
-       a.Storage.WarmLater()  // the copies not made yet
+       a.Storage.WarmLater()
        rt.Mount("GET /storage/", a.Storage)
   3. Attach a form's file to a record, and draw it:
        f, ok := storage.FileFrom(r, "clip[thumbnail]")

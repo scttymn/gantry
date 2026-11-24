@@ -76,9 +76,6 @@ func generateMigration(root string, args []string, out io.Writer) error {
 			drops = append([]string{fmt.Sprintf("ALTER TABLE %q DROP COLUMN %q;", table, names[i])}, drops...)
 		}
 		up, down = strings.Join(adds, "\n"), strings.Join(drops, "\n")
-	default:
-		up = "-- The change: SQL for this app's engine (" + engine + ")."
-		down = "-- What undoes it. Left empty, the migration can't be rolled back."
 	}
 
 	dir := filepath.Join(root, "db", "migrations")
@@ -86,11 +83,17 @@ func generateMigration(root string, args []string, out io.Writer) error {
 		return err
 	}
 	file := now().UTC().Format("20060102150405") + "_" + name + ".sql"
-	body := "-- +goose Up\n" + up + "\n\n-- +goose Down\n" + down + "\n"
+	body := "-- +goose Up\n\n-- +goose Down\n"
+	if up != "" {
+		body = "-- +goose Up\n" + up + "\n\n-- +goose Down\n" + down + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "  wrote", filepath.Join("db", "migrations", file))
+	if up == "" {
+		fmt.Fprintf(out, "  write the change in it under -- +goose Up, in SQL for this app's engine (%s), and what undoes it under -- +goose Down: left empty, the migration can't be rolled back\n", engine)
+	}
 	return nil
 }
 

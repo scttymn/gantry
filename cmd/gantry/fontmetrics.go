@@ -79,9 +79,7 @@ func fallbackFace(family string, m fontMeasure, fb fallback) string {
 	for _, s := range fb.standIns {
 		src = append(src, "local('"+s+"')")
 	}
-	return fmt.Sprintf(`/* %s Fallback: %s (or a font drawn to its widths), sized to %s's
-   measure, so text painted in it keeps its place when %s swaps in. */
-@font-face {
+	return fmt.Sprintf(`@font-face {
   font-family: '%s Fallback';
   src: %s;
   size-adjust: %s;
@@ -89,6 +87,6 @@ func fallbackFace(family string, m fontMeasure, fb fallback) string {
   descent-override: %s;
   line-gap-override: %s;
 }
-`, family, fb.name, family, family, family, strings.Join(src, ", "), pct(size),
+`, family, strings.Join(src, ", "), pct(size),
 		pct(m.ascent/m.unitsPerEm/size), pct(m.descent/m.unitsPerEm/size), pct(m.lineGap/m.unitsPerEm/size))
 }

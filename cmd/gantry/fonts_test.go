@@ -134,12 +134,13 @@ func TestGenerateFonts(t *testing.T) {
 	if strings.Contains(s, "gstatic") || strings.Contains(s, "cyr") || strings.Count(s, "@font-face") != 4+2 || strings.Count(s, `url("`+names[1]+`")`) != 2 {
 		t.Errorf("fonts.css:\n%s", s)
 	}
-	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || !strings.Contains(s, `gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`) || !strings.Contains(s, "/* Work Sans 600, latin */") ||
+	if !strings.Contains(s, "font-display: swap") || strings.Contains(s, "font-display: block") || strings.Contains(s, "/*") ||
 		!strings.Contains(s, "font-family: 'Work Sans Fallback';\n  src: local('Arial'), local('Liberation Sans'), local('Roboto');") || !strings.Contains(s, "font-family: 'Instrument Serif Fallback';\n  src: local('Times New Roman'), local('Liberation Serif');") {
 		t.Errorf("fonts.css:\n%s", s)
 	}
 	for _, want := range []string{`gantry.Face{Family: "Work Sans"},`, `gantry.Face{Family: "Work Sans", Weight: 600},`, `gantry.Face{Family: "Instrument Serif", Italic: true},`,
-		`font-family: 'Work Sans', 'Work Sans Fallback', sans-serif;`, `font-family: 'Instrument Serif', 'Instrument Serif Fallback', serif;`} {
+		`font-family: 'Work Sans', 'Work Sans Fallback', sans-serif;`, `font-family: 'Instrument Serif', 'Instrument Serif Fallback', serif;`,
+		`gantry g fonts "Work Sans:600,400" "Instrument Serif:400i,400" --force`, "SIL Open Font License"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("no %s in\n%s", want, out.String())
 		}
@@ -162,8 +163,8 @@ func TestGenerateFonts(t *testing.T) {
 		t.Errorf("after --force: %v", names)
 	}
 	css, _ = os.ReadFile(filepath.Join(root, "assets", "css", "fonts.css"))
-	if !strings.Contains(string(css), `gantry g fonts "Work Sans" --subsets latin --force`) {
-		t.Errorf("header: %s", css[:300])
+	if strings.Contains(string(css), "/*") || !strings.Contains(out.String(), `gantry g fonts "Work Sans" --subsets latin --force`) {
+		t.Errorf("fonts.css:\n%s\nprinted:\n%s", css, out.String())
 	}
 }
 
