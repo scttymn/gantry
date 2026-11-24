@@ -94,8 +94,12 @@ sets a cookie or says `Cache-Control: private` or `no-store` is never kept. An
 app that renames its session cookie sets
 `rt.Cache.Skip = a.Auth.HasSessionCookie`; `Skip` replaces the default check.
 Use `db.DB.Version` for database-driven invalidation where appropriate, and
-account for other data sources and time-dependent content. A clean Strict scan
-does not check this for you yet.
+account for other data sources and time-dependent content. Strict fails on a
+cached route whose handler reads who's signed in or a cookie (`cached-scope`),
+or sets a cookie, the flash or a session (`cache-set-cookie`), as far as it
+can follow the handler through the app's code. A clean scan doesn't prove the
+page is the same for everyone. Data, time and anything else per-visitor are
+still yours to check.
 
 For editors, load the initial data in the GET controller and render it with the
 page. Avoid an unnecessary HTML → JavaScript → data-fetch chain before the user

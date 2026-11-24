@@ -44,6 +44,7 @@ type Rule struct {
 // rule can tell the app's own packages by import path.
 type Source struct {
 	Path, Text, Module string
+	prog               *program // the scan's packages, for a rule that follows a name out of the file
 	parsed             bool
 	set                *token.FileSet
 	file               *ast.File
@@ -105,6 +106,7 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 		}
 	}
 	module, _ := gomod.ImportPath(root)
+	prog := newProgram(root, module)
 	var warnings []Warning
 	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -126,7 +128,7 @@ func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
 			return err
 		}
 		name, _ := filepath.Rel(root, path)
-		source := &Source{Path: filepath.ToSlash(name), Text: string(data), Module: module}
+		source := &Source{Path: filepath.ToSlash(name), Text: string(data), Module: module, prog: prog}
 		for _, rule := range selected {
 			var reportErr error
 			report := func(offset int, message string) {

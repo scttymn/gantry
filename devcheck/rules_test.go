@@ -3,6 +3,7 @@ package devcheck
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -438,6 +439,160 @@ func (c Controller) Export(w http.ResponseWriter, r *http.Request) error {
 	return web.Download(w, r, "posts.csv", "text/csv", csv(r))
 }
 `}, nil},
+
+		{"a cached page reads who's visiting", "cached-scope", withCachedApp(map[string]string{"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/auth"
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/home"
+	"example.com/shop/app/posts"
+)
+
+type App struct{ Auth *auth.Auth }
+
+func (a *App) Router() *web.Router {
+	rt := web.NewRouter(nil, nil)
+	homePage := home.Controller{}
+	rt.Cached("GET /{$}", homePage.Show)
+	rt.Cached("GET /about", func(w http.ResponseWriter, r *http.Request) error {
+		theme, _ := r.Cookie("theme")
+		return render(w, theme.Value)
+	})
+	rt.Scope("/docs", nil, func(s *web.Scope) {
+		s.Cached("GET /{$}", a.docs)
+	})
+	rt.Resources("/posts", posts.Controller{}, rt.Cache.Handler)
+	feeds := &web.PageCache{}
+	rt.Mount("GET /feed", feeds.Handler(http.HandlerFunc(feed)))
+	return rt
+}
+
+func (a *App) docs(w http.ResponseWriter, r *http.Request) error {
+	if a.Auth.SignedIn(r) {
+		return render(w, "Welcome back")
+	}
+	return render(w, "Docs")
+}
+
+func feed(w http.ResponseWriter, r *http.Request) {
+	seen, _ := web.SignedCookie(r, signer, "seen")
+	render(w, seen)
+}
+`}), []string{"app/routes.go:18", "app/routes.go:19", "app/routes.go:24", "app/routes.go:26", "app/routes.go:28"}},
+		{"a cached page the same for everyone", "cached-scope", withCachedApp(map[string]string{"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/auth"
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/home"
+	"example.com/shop/app/posts"
+)
+
+func (a *App) Router() *web.Router {
+	rt := web.NewRouter(nil, nil)
+	homePage := home.Controller{}
+	rt.Cached("GET /about", homePage.About)
+	rt.Handle("GET /{$}", homePage.Show)
+	rt.Resources("/posts", posts.Controller{}, nil)
+	rt.Cached("GET /live", a.Live.Serve)
+	rt.Cached("GET /page", a.page())
+	rt.Cached("GET /ping", ping)
+	shelf.Cached("GET /me", func(w http.ResponseWriter, r *http.Request) error {
+		_, _ = auth.Current(r)
+		return nil
+	})
+	rt.Handle("GET /me", func(w http.ResponseWriter, r *http.Request) error {
+		u, _ := auth.Current(r)
+		return render(w, u.Email)
+	})
+	return rt
+}
+
+func ping(w http.ResponseWriter, r *http.Request) error { return pong(w, r) }
+
+func pong(w http.ResponseWriter, r *http.Request) error { return ping(w, r) }
+`}), nil},
+		{"a cached page sets a cookie", "cache-set-cookie", withCachedApp(map[string]string{"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/auth"
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/posts"
+	prefs "example.com/shop/app/shared/preferences"
+)
+
+type App struct{ Auth *auth.Auth }
+
+func (a *App) Router(rt *web.Router) {
+	rt.Cached("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+		web.SetCookie(w, r, "visited", "1", time.Hour)
+		return nil
+	})
+	rt.Cached("GET /theme", prefs.Theme)
+	rt.Cached("GET /hello", a.hello)
+	rt.Cached("GET /guest", a.guest)
+	rt.Resources("/posts", posts.Controller{}, rt.Cache.Handler)
+}
+
+func (a *App) hello(w http.ResponseWriter, r *http.Request) error {
+	w.Header().Add("Set-Cookie", "hello=1")
+	return nil
+}
+
+func (a *App) guest(w http.ResponseWriter, r *http.Request) error {
+	_, err := a.Auth.StartSession(w, r, guest)
+	return err
+}
+`}), []string{"app/routes.go:16", "app/routes.go:20", "app/routes.go:21", "app/routes.go:22", "app/routes.go:23"}},
+		{"cookies set where the page isn't cached", "cache-set-cookie", withCachedApp(map[string]string{"app/routes.go": `package app
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/notes"
+	"example.com/shop/app/posts"
+	prefs "example.com/shop/app/shared/preferences"
+)
+
+func (a *App) Router(rt *web.Router) {
+	rt.Cached("GET /{$}", func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Cache-Control", "no-cache")
+		return nil
+	})
+	rt.Handle("POST /theme", prefs.Theme)
+	rt.Resources("/posts", posts.Controller{}, nil)
+	rt.Resources("/drafts", posts.Controller{}, a.Auth.Require)
+	rt.Resources("/notes", notes.Controller{}, rt.Cache.Handler)
+}
+`, "app/notes/controller.go": `package notes
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+)
+
+type Controller struct{}
+
+func (c Controller) Index(w http.ResponseWriter, r *http.Request) error { return render(w) }
+
+func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
+	web.SetCookie(w, r, "draft", "", 0)
+	return nil
+}
+`}), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -499,19 +654,115 @@ func (c Controller) Export(w http.ResponseWriter, r *http.Request) error {
 	}
 }
 
+// withCachedApp is files with the controllers the cache rules' cases route
+// to, in their own packages: home's Show reads who's signed in through a
+// method of its own, posts' Index takes the flash through the shared
+// resource controller it embeds, and preferences' Theme sets a cookie.
+func withCachedApp(files map[string]string) map[string]string {
+	app := map[string]string{
+		"app/home/controller.go": `package home
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/auth"
+)
+
+type Controller struct{}
+
+func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
+	return render(w, c.greeting(r))
+}
+
+func (c Controller) greeting(r *http.Request) string {
+	if u, ok := auth.Current(r); ok {
+		return "Hello, " + u.Email
+	}
+	return "Hello"
+}
+
+func (c Controller) About(w http.ResponseWriter, r *http.Request) error { return render(w, "About") }
+`,
+		"app/posts/controller.go": `package posts
+
+import (
+	"net/http"
+
+	"example.com/shop/app/shared/resource"
+)
+
+type Controller struct{ resource.Controller }
+
+func (c Controller) Index(w http.ResponseWriter, r *http.Request) error { return c.Render(w, r) }
+`,
+		"app/shared/resource/resource.go": `package resource
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/web"
+)
+
+type Controller struct {
+	Flash web.Flash
+}
+
+func (c Controller) Render(w http.ResponseWriter, r *http.Request) error {
+	if _, message, ok := c.Flash.Take(w, r); ok {
+		return render(w, message)
+	}
+	return render(w, "")
+}
+`,
+		"app/shared/preferences/preferences.go": `package preferences
+
+import "net/http"
+
+func Theme(w http.ResponseWriter, r *http.Request) error {
+	remember(w, r.FormValue("theme"))
+	return nil
+}
+
+func remember(w http.ResponseWriter, theme string) {
+	http.SetCookie(w, &http.Cookie{Name: "theme", Value: theme})
+}
+`,
+	}
+	maps.Copy(app, files)
+	return app
+}
+
 // The rule's message names what was found and the pattern to use instead.
 func TestRuleMessages(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "go.mod", "module example.com/shop\n")
 	put(t, root, "app/models/posts.go", "package models\n\nimport \"github.com/scttymn/gantry/web\"\n")
 	put(t, root, "app/routes.go", "package app\n\nimport \"example.com/shop/app/models\"\n\nfunc (a *App) Router() {\n\trt.Handle(\"GET /logout\", func(w http.ResponseWriter, r *http.Request) error {\n\t\treturn models.New(a.DB.Write).EndSession(r.Context())\n\t})\n}\n")
+	for name, body := range withCachedApp(map[string]string{"app/pages.go": `package app
+
+import (
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/home"
+	"example.com/shop/app/posts"
+)
+
+func (a *App) pages(rt *web.Router) {
+	rt.Cached("GET /{$}", home.Controller{}.Show)
+	rt.Cached("GET /posts", posts.Controller{}.Index)
+}
+`}) {
+		put(t, root, name, body)
+	}
 	got, err := Scan(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := map[string][]string{
-		"import-boundary": {"app/models imports github.com/scttymn/gantry/web", "controller"},
-		"get-mutates":     {"GET /logout", "POST", "button"},
+		"import-boundary":  {"app/models imports github.com/scttymn/gantry/web", "controller"},
+		"get-mutates":      {"GET /logout", "POST", "button"},
+		"cached-scope":     {"GET /{$}", "home.Controller.Show → home.Controller.greeting → auth.Current at app/home/controller.go:16", "every visitor", "Handle"},
+		"cache-set-cookie": {"GET /posts", "posts.Controller.Index → resource.Controller.Render → web.Flash.Take at app/shared/resource/resource.go:14", "Handle"},
 	}
 	for _, w := range got {
 		for _, part := range want[w.Rule] {
