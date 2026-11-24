@@ -223,6 +223,11 @@ helpers where relevant: `Links`/`Crawl` for page assets and navigation,
 `Migrations` for schema changes, and test databases for persistence.
 
 Exercise the affected browser flows at the relevant desktop/mobile sizes.
+`bin/gantry verify --browser --local` renders each feature in `test/features.yaml`
+at desktop and mobile viewports in headless Chrome, failing on JavaScript
+exceptions, `console.error` calls, failed assets or missing selectors and saving
+PNG screenshots and `manifest.json` under `.gantry/verify-artifacts` (or
+`--artifacts DIR`) for review.
 For navigation or form changes, check sign-out and validation on each affected
 page. For asset changes, verify referenced files load and changed content has a
 new fingerprinted URL. For performance work, compare a first visit with a warm

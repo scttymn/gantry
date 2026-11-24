@@ -25,22 +25,25 @@ var featuresTest = []string{"go", "test", "-count=1", "-v", "-run", "^TestFeatur
 const (
 	featuresTestCommand     = "go test -count=1 -v -run '^TestFeatures$' ./app/"
 	featuresJSONTestCommand = "GANTRY_VERIFY_JSON=1 " + featuresTestCommand
+	defaultVerifyArtifacts  = ".gantry/verify-artifacts"
 )
 
 const verifyCopy = ".gantry-verify-*.yml"
 
-func verifyFlags() (fs *flag.FlagSet, local, asJSON *bool) {
+func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser *bool, artifacts *string) {
 	fs, local = appFlags()
 	asJSON = fs.Bool("json", false, "a JSON report of features, visits, cache and leak checks")
-	return fs, local, asJSON
+	browser = fs.Bool("browser", false, "also render each feature in headless Chrome via CDP and capture screenshots")
+	artifacts = fs.String("artifacts", "", "output `DIR` for --browser screenshots and manifest.json (default "+defaultVerifyArtifacts+")")
+	return fs, local, asJSON, browser, artifacts
 }
 
 func verify(root string, args []string, out, errOut io.Writer) error {
-	fs, local, asJSON := verifyFlags()
+	fs, local, asJSON, browser, artifacts := verifyFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 {
+	if fs.NArg() > 0 || *artifacts != "" && !*browser {
 		return usageError{}
 	}
 	if _, err := os.Stat(filepath.Join(root, "test", "features.yaml")); err != nil {
@@ -49,10 +52,26 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	if !hasTestFeatures(filepath.Join(root, "app")) {
 		return errors.New("app/ has no TestFeatures, so go test would run nothing and pass: copy a new app's app/features_test.go (docs/development.md#an-app-made-before-the-feature-map)")
 	}
+	artifactsDir := *artifacts
+	if *browser && artifactsDir == "" {
+		artifactsDir = defaultVerifyArtifacts
+	}
 	if *local {
-		cmdArgs := append([]string{"GANTRY_ENV=test"}, featuresTest...)
+		envVars := []string{"GANTRY_ENV=test"}
 		if *asJSON {
-			cmdArgs = append([]string{"GANTRY_ENV=test", "GANTRY_VERIFY_JSON=1"}, featuresTest...)
+			envVars = append(envVars, "GANTRY_VERIFY_JSON=1")
+		}
+		if *browser {
+			absArtifacts := artifactsDir
+			if !filepath.IsAbs(absArtifacts) {
+				if abs, err := filepath.Abs(filepath.Join(root, artifactsDir)); err == nil {
+					absArtifacts = abs
+				}
+			}
+			envVars = append(envVars, "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS="+absArtifacts)
+		}
+		cmdArgs := append(envVars, featuresTest...)
+		if *asJSON {
 			return runVerifyJSON(root, "env", cmdArgs, out, errOut)
 		}
 		return exitError(runIn(root, "env", cmdArgs...))
@@ -61,10 +80,7 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("no compose.yml here, for Houston's test stack: %w (or run it on this machine, with --local)", err)
 	}
-	command := featuresTestCommand
-	if *asJSON {
-		command = featuresJSONTestCommand
-	}
+	command := verifyTestCommand(*asJSON, *browser, artifactsDir)
 	copied, err := featuresCompose(compose, command)
 	if err != nil {
 		return err
@@ -92,6 +108,27 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 		return runVerifyJSON(root, "houston", houstonArgs, out, errOut)
 	}
 	return houston(root, houstonArgs, errOut)
+}
+
+func verifyTestCommand(asJSON, browser bool, artifactsDir string) string {
+	var envPrefix []string
+	if asJSON {
+		envPrefix = append(envPrefix, "GANTRY_VERIFY_JSON=1")
+	}
+	if browser {
+		envPrefix = append(envPrefix, "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS="+shellQuote(artifactsDir))
+		if cdpURL := strings.TrimSpace(os.Getenv("GANTRY_CDP_URL")); cdpURL != "" {
+			envPrefix = append(envPrefix, "GANTRY_CDP_URL="+shellQuote(cdpURL))
+		}
+	}
+	if len(envPrefix) == 0 {
+		return featuresTestCommand
+	}
+	return strings.Join(envPrefix, " ") + " " + featuresTestCommand
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func runVerifyJSON(root, name string, args []string, out, errOut io.Writer) error {
