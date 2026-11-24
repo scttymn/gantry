@@ -3,7 +3,7 @@ module github.com/scttymn/gantry
 go 1.27.4
 
 require (
-	github.com/PuerkitoBio/goquery v1.13.0
+	github.com/PuerkitoBio/goquery v1.14.0
 	github.com/a-h/templ v0.3.1118
 	github.com/adhocore/gronx v1.20.5
 	github.com/coreos/go-oidc/v3 v3.21.0
@@ -28,7 +28,7 @@ require (
 )
 
 require (
-	github.com/andybalholm/cascadia v1.3.4 // indirect
+	github.com/andybalholm/cascadia v1.3.5 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
