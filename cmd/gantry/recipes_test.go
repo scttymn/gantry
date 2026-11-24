@@ -5,19 +5,15 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/scttymn/gantry/db"
-	"github.com/scttymn/gantry/devcheck"
 	"github.com/scttymn/gantry/internal/testenv"
 	"github.com/scttymn/gantry/storage"
-	"github.com/scttymn/gantry/testkit"
 )
 
 // shopApp is a new app, written without Houston, on engine.
@@ -28,78 +24,6 @@ func shopApp(t *testing.T, engine string) string {
 		t.Fatalf("gantry new: %s", stderr)
 	}
 	return filepath.Join(root, "shop")
-}
-
-// What each recipe writes is pinned, on each engine.
-func TestRecipesGolden(t *testing.T) {
-	for _, tc := range []struct {
-		recipe string
-		args   []string
-		files  int
-	}{
-		{"api-tokens", []string{"--prefix", "shop_"}, 4},
-		{"auth", nil, 7},
-		{"auth", []string{"--email-code"}, 5},
-		{"auth", []string{"--email-code", "--signup"}, 5},
-		{"storage", nil, 1},
-	} {
-		for _, engine := range []string{"sqlite", "postgres"} {
-			t.Run(tc.recipe+strings.Join(tc.args, "")+"/"+engine, func(t *testing.T) {
-				recipeGolden(t, tc.recipe, tc.args, tc.files, engine)
-			})
-		}
-	}
-}
-
-func recipeGolden(t *testing.T, recipe string, args []string, files int, engine string) {
-	t.Helper()
-	dir := shopApp(t, engine)
-	at(t, "2026-09-29T12:00:00Z")
-	before := map[string]bool{}
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		before[p] = true
-		return err
-	})
-	code, out, stderr := gantry(t, dir, append([]string{"g", recipe}, args...)...)
-	if code != 0 {
-		t.Fatalf("exit %d: %s", code, stderr)
-	}
-	if !strings.Contains(out, "rt.Scope(") && !strings.Contains(out, "rt.Mount(") {
-		t.Errorf("no route to add:\n%s", out)
-	}
-	label := recipe
-	if recipe == "auth" && len(args) > 0 {
-		label += "-email-code"
-		if len(args) > 1 {
-			label += "-signup"
-		}
-	}
-	golden := filepath.Join("testdata", "golden", label+"-"+engine)
-	if *update {
-		os.RemoveAll(golden)
-	}
-	written := 0
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() || before[p] {
-			return err
-		}
-		written++
-		rel, _ := filepath.Rel(dir, p)
-		got, _ := os.ReadFile(p)
-		gofmted(t, rel, got)
-		want := filepath.Join(golden, rel+".golden")
-		if *update {
-			os.MkdirAll(filepath.Dir(want), 0o755)
-			return os.WriteFile(want, got, 0o644)
-		}
-		if w, err := os.ReadFile(want); err != nil || string(w) != string(got) {
-			t.Errorf("%s differs from %s (go test ./cmd/gantry -update rewrites it)", rel, want)
-		}
-		return nil
-	})
-	if written != files {
-		t.Errorf("wrote %d files, want %d", written, files)
-	}
 }
 
 func TestAPITokensRules(t *testing.T) {
@@ -129,76 +53,6 @@ func TestAPITokensInModule(t *testing.T) {
 	b, _ := os.ReadFile(filepath.Join(dir, "app", "apitokens", "apitokens.go"))
 	if !strings.Contains(string(b), `"example.com/big/apps/control/app/models"`) {
 		t.Errorf("imports:\n%s", b)
-	}
-}
-
-// A new app with the recipe applied migrates, generates its queries,
-// builds, and passes the recipe's own tests, against this checkout.
-func TestAPITokensBuilds(t *testing.T) {
-	if testing.Short() {
-		t.Skip("-short")
-	}
-	for _, tool := range []string{"templ", "sqlc"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " isn't installed: run it in the toolchain (bin/go)")
-		}
-	}
-	repo, _ := filepath.Abs("../..")
-	dir := shopApp(t, "sqlite")
-	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-	if code, _, stderr := gantry(t, dir, "g", "api-tokens", "--prefix", "shop_"); code != 0 {
-		t.Fatal(stderr)
-	}
-	env := append(os.Environ(), "GANTRY_ENV=development", "DATABASE_URL=sqlite://"+filepath.Join(t.TempDir(), "dev.sqlite3"))
-	for _, step := range [][]string{
-		{"templ", "generate"}, // as gantry new does: its code first, then tidy
-		{"go", "mod", "tidy"},
-		{"go", "run", "./cmd/shop", "db", "migrate"}, // writes db/schema.sql, which sqlc reads
-		{"sqlc", "generate"},
-		{"go", "vet", "./..."},
-		{"go", "test", "./..."},
-	} {
-		cmd := exec.Command(step[0], step[1:]...)
-		cmd.Dir, cmd.Env = dir, env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
-		}
-	}
-}
-
-// A new app with the auth recipe applied builds, and the recipe's own tests
-// pass there, against this checkout.
-func TestAuthBuilds(t *testing.T) {
-	if testing.Short() {
-		t.Skip("-short")
-	}
-	for _, tool := range []string{"templ", "sqlc"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " isn't installed: run it in the toolchain (bin/go)")
-		}
-	}
-	repo, _ := filepath.Abs("../..")
-	dir := shopApp(t, "sqlite")
-	mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-	os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-	if code, _, stderr := gantry(t, dir, "g", "auth"); code != 0 {
-		t.Fatal(stderr)
-	}
-	env := append(os.Environ(), "GANTRY_ENV=development", "DATABASE_URL=sqlite://"+filepath.Join(t.TempDir(), "dev.sqlite3"))
-	for _, step := range [][]string{
-		{"templ", "generate"},
-		{"go", "mod", "tidy"},
-		{"go", "run", "./cmd/shop", "db", "migrate"},
-		{"sqlc", "generate"},
-		{"go", "vet", "./..."},
-		{"go", "test", "./..."},
-	} {
-		cmd := exec.Command(step[0], step[1:]...)
-		cmd.Dir, cmd.Env = dir, env
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("%s: %v\n%s", strings.Join(step, " "), err, out)
-		}
 	}
 }
 
@@ -292,93 +146,16 @@ func TestStorageRules(t *testing.T) {
 	}
 }
 
-// Email-code recipes use the shared Auth implementation and preserve password
-// recipes. Build the real generated apps, including their authentication tests.
+// Each auth recipe is applied once: an app has one user and session system.
+// That it builds and passes Strict is TestGeneratorMatrix's.
 func TestEmailCodeRecipe(t *testing.T) {
-	for _, engine := range []string{"sqlite", "postgres"} {
-		for _, mode := range []string{"password", "email-code", "signup"} {
-			signup := mode == "signup"
-			name := engine + "-" + mode
-			if signup {
-				name += "-signup"
-			}
-			t.Run(name, func(t *testing.T) {
-				dir := shopApp(t, engine)
-				args := []string{"g", "auth"}
-				if mode != "password" {
-					args = append(args, "--email-code")
-				}
-				if signup {
-					args = append(args, "--signup")
-				}
-				code, out, stderr := gantry(t, dir, args...)
-				if code != 0 {
-					t.Fatal(stderr)
-				}
-				if mode == "password" {
-					feature(t, dir, out)
-					path := filepath.Join(dir, "app", "routes.go")
-					source, _ := os.ReadFile(path)
-					wired := strings.Replace(string(source), `"net/http"`, `"net/http"
- "path/filepath"
- "example.com/shop/config"
- "example.com/shop/app/auth"`, 1)
-					wired = strings.Replace(wired, "homePage :=", `login := auth.New(a.DB,a.Signer,a.Mail,a.Mail.From,filepath.Join(config.FromEnv().DataDir,"initial-account-code"))
-                    login.Routes(rt)
-                    homePage :=`, 1)
-					if err := os.WriteFile(path, []byte(wired), 0644); err != nil {
-						t.Fatal(err)
-					}
-				}
-				warnings, err := devcheck.Scan(dir)
-				if err != nil || len(warnings) != 0 {
-					t.Fatalf("Strict: %+v %v", warnings, err)
-				}
-				for _, name := range []string{"auth.go", "auth_test.go"} {
-					b, _ := os.ReadFile(filepath.Join(dir, "app", "auth", name))
-					gofmted(t, name, b)
-				}
-				if code, _, stderr := gantry(t, dir, args...); code != 1 || !strings.Contains(stderr, "recipe was applied") {
-					t.Fatalf("reapplied: %s", stderr)
-				}
-				if testing.Short() {
-					return
-				}
-				for _, tool := range []string{"templ", "sqlc"} {
-					if _, err := exec.LookPath(tool); err != nil {
-						t.Skip("run in the toolchain")
-					}
-				}
-				if engine == "postgres" {
-					t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
-				}
-				repo, _ := filepath.Abs("../..")
-				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-				os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0o644)
-				migrate := func(ctx context.Context, d *db.DB) error {
-					return d.Migrate(ctx, os.DirFS(filepath.Join(dir, "db", "migrations")), "app_migrations")
-				}
-				var baseline *db.DB
-				if engine == "postgres" {
-					baseline = testkit.Postgres(t, migrate)
-				} else {
-					baseline = testkit.DB(t, migrate)
-				}
-				schema, err := baseline.Schema(t.Context(), "app_migrations")
-				if err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0o644); err != nil {
-					t.Fatal(err)
-				}
-				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
-					cmd := exec.Command(step[0], step[1:]...)
-					cmd.Dir = dir
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("%v: %v\n%s", step, err, out)
-					}
-				}
-			})
+	for _, args := range [][]string{{"g", "auth"}, {"g", "auth", "--email-code"}, {"g", "auth", "--email-code", "--signup"}} {
+		dir := shopApp(t, "sqlite")
+		if code, _, stderr := gantry(t, dir, args...); code != 0 {
+			t.Fatal(stderr)
+		}
+		if code, _, stderr := gantry(t, dir, args...); code != 1 || !strings.Contains(stderr, "recipe was applied") {
+			t.Errorf("%q reapplied: %s", args, stderr)
 		}
 	}
 	dir := shopApp(t, "sqlite")
@@ -387,6 +164,8 @@ func TestEmailCodeRecipe(t *testing.T) {
 	}
 }
 
+// The social recipe adds to existing auth, of either kind, without writing
+// over it, once, with its migration after auth's.
 func TestSocialRecipe(t *testing.T) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		for _, mode := range []string{"password", "email-code"} {
@@ -421,61 +200,6 @@ func TestSocialRecipe(t *testing.T) {
 				}
 				if !strings.HasPrefix(filepath.Base(files[0]), stamp) {
 					t.Fatal("migration does not follow auth", files)
-				}
-				for _, rel := range []string{"app/auth/social.go", "app/auth/social_pages.templ", "app/auth/social_test.go", "db/migrations/" + filepath.Base(files[0])} {
-					got, err := os.ReadFile(filepath.Join(dir, rel))
-					if err != nil {
-						t.Fatal(err)
-					}
-					gofmted(t, rel, got)
-					want := filepath.Join("testdata", "golden", "auth-social-"+mode+"-"+engine, rel+".golden")
-					if *update {
-						if err := os.MkdirAll(filepath.Dir(want), 0755); err != nil {
-							t.Fatal(err)
-						}
-						if err := os.WriteFile(want, got, 0644); err != nil {
-							t.Fatal(err)
-						}
-					} else if expected, err := os.ReadFile(want); err != nil || string(expected) != string(got) {
-						t.Errorf("%s differs from %s (run with -update)", rel, want)
-					}
-				}
-				warnings, err := devcheck.Scan(dir)
-				if err != nil || len(warnings) != 0 {
-					t.Fatalf("Strict: %+v %v", warnings, err)
-				}
-				if testing.Short() {
-					return
-				}
-				if _, err := exec.LookPath("templ"); err != nil {
-					t.Skip("toolchain required")
-				}
-				if engine == "postgres" {
-					t.Setenv("TEST_DATABASE_URL", testenv.Postgres(t))
-				}
-				repo, _ := filepath.Abs("../..")
-				mod, _ := os.ReadFile(filepath.Join(dir, "go.mod"))
-				os.WriteFile(filepath.Join(dir, "go.mod"), append(mod, "\nreplace github.com/scttymn/gantry => "+repo+"\n"...), 0644)
-				migrate := func(ctx context.Context, d *db.DB) error {
-					return d.Migrate(ctx, os.DirFS(filepath.Join(dir, "db", "migrations")), "app_migrations")
-				}
-				var baseline *db.DB
-				if engine == "postgres" {
-					baseline = testkit.Postgres(t, migrate)
-				} else {
-					baseline = testkit.DB(t, migrate)
-				}
-				schema, err := baseline.Schema(t.Context(), "app_migrations")
-				if err != nil {
-					t.Fatal(err)
-				}
-				os.WriteFile(filepath.Join(dir, "db", "schema.sql"), []byte(schema), 0644)
-				for _, step := range [][]string{{"templ", "generate"}, {"go", "mod", "tidy"}, {"go", "vet", "./..."}, {"go", "test", "./..."}} {
-					cmd := exec.Command(step[0], step[1:]...)
-					cmd.Dir = dir
-					if out, err := cmd.CombinedOutput(); err != nil {
-						t.Fatalf("%v: %v\n%s", step, err, out)
-					}
 				}
 			})
 		}

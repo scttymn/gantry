@@ -95,7 +95,16 @@ the current rules, generated from `DefaultRules()`, with their limits and
 exception syntax. Page-cache eligibility, image-pipeline adoption and
 render-blocking data fetches are future coverage areas, not checks that exist
 today. Some will need runtime measurement or richer analysis instead of static
-source matching.
+source matching. A cached page that reads who's signed in is one: telling
+needs the handler a route names, which is often in another package. The page
+cache guards it at runtime instead (it keeps no response that sets a cookie,
+and serves no request with a session), and `bin/gantry verify` tests it.
+
+Strict reads gantry too: `TestGantryPassesStrict` scans the framework, where
+the rules that aren't about an app's layout apply, and `bench/feed`, an app
+`gantry new` wrote, with no findings but the exceptions in each one's
+`.gantry-check.json`. Checks only the framework needs are tests in their own
+package, as `jobs`' `TestJobUpdatesAreFenced` is.
 
 The [feature map](development.md#the-feature-map) is one such check. A route
 with no feature fails an app's tests, not `check --strict`. Routes are what the

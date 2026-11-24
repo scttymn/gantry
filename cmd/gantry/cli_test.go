@@ -23,8 +23,9 @@ func TestUsage(t *testing.T) {
 		"gantry new NAME [--db sqlite|postgres] [--gantry PATH] [--in-module] [--module PATH] [--skip-houston]",
 		"gantry g resource [NAMESPACE/]TABLE FIELD:TYPE[:required]...",
 		"gantry g auth [--email-code] [--signup] [--social]",
-		"gantry check [--json] [--rules] [--strict]",
+		"gantry check [--generated] [--json] [--rules] [--strict]",
 		"gantry routes [--json] [--local]",
+		"gantry secret ",
 		"gantry dev|",
 	} {
 		if !strings.Contains(help, want) {
@@ -37,13 +38,16 @@ func TestUsage(t *testing.T) {
 	}{
 		{[]string{"new"}, []string{"usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"new", "shop", "--in-modules"}, []string{"-in-modules", "usage: gantry new NAME", "[--in-module]"}},
-		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--json] [--rules] [--strict]"}},
+		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
 		{[]string{"routes", "posts"}, []string{"usage: gantry routes [--json] [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
+		{[]string{"check", "--generated", "--strict"}, []string{"usage: gantry check"}},
+		{[]string{"check", "--generated", "--json"}, []string{"usage: gantry check"}},
 		{[]string{"g", "auth", "--email-codes"}, []string{"-email-codes", "usage: gantry g auth [--email-code] [--signup] [--social]"}},
 		{[]string{"g", "error-pages", "--forced"}, []string{"usage: gantry g error-pages [--force]"}},
 		{[]string{"g", "api-tokens", "--prefixes", "x_"}, []string{"usage: gantry g api-tokens [--prefix PREFIX_]"}},
 		{[]string{"importmap", "pin"}, []string{"usage: gantry importmap pin|unpin PACKAGE[@VERSION]..."}},
+		{[]string{"secret", "32"}, []string{"takes no arguments", "usage: gantry secret"}},
 	} {
 		var out, errOut strings.Builder
 		code := run(tc.args, t.TempDir(), &out, &errOut)

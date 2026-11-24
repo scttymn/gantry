@@ -1,0 +1,39 @@
+# The app's checks, on every pull request and push to main: Gantry Strict,
+# generated Go that's what its .templ and .sql make, and the tests, as
+# gantry test runs them. templ and sqlc are the Dockerfile's, copied out of
+# its toolchain, so they're the versions the app builds with. Actions are
+# pinned by commit, and the checkout doesn't keep the token in .git/config.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      # bin/gantry checks the gantry it downloads against its build
+      # provenance with gh, which needs a token: this job's own, read-only.
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: templ and sqlc, from the Dockerfile's toolchain
+        run: |
+          docker build -q --target toolchain -t shop-toolchain .
+          mkdir -p "$RUNNER_TEMP/bin"
+          id=$(docker create shop-toolchain)
+          docker cp "$id:/go/bin/templ" "$RUNNER_TEMP/bin/templ"
+          docker cp "$id:/usr/local/bin/sqlc" "$RUNNER_TEMP/bin/sqlc"
+          docker rm "$id" >/dev/null
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: bin/gantry check --strict
+      - run: bin/gantry check --generated
+      - run: bin/gantry test

@@ -4,16 +4,19 @@ import (
 	"go/ast"
 	"go/token"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 )
 
-func visitCalls(s *Source, visit func(*ast.CallExpr, []ast.Node, map[string]string, int)) error {
-	set, file, err := s.GoAST()
-	if err != nil {
-		return err
-	}
+const (
+	gantryWeb = "github.com/scttymn/gantry/web"
+	gantryDB  = "github.com/scttymn/gantry/db"
+	templPkg  = "github.com/a-h/templ"
+)
+
+func importAliases(file *ast.File) map[string]string {
 	aliases := map[string]string{}
 	for _, imp := range file.Imports {
 		path, _ := strconv.Unquote(imp.Path.Value)
@@ -23,6 +26,18 @@ func visitCalls(s *Source, visit func(*ast.CallExpr, []ast.Node, map[string]stri
 		}
 		aliases[alias] = path
 	}
+	return aliases
+}
+
+// visitNodes walks a Go file's syntax tree in source order, with each node's
+// ancestors (the node last) and the file's import aliases.
+func visitNodes(s *Source, visit func(n ast.Node, stack []ast.Node, aliases map[string]string, offset func(token.Pos) int)) error {
+	set, file, err := s.GoAST()
+	if err != nil {
+		return err
+	}
+	aliases := importAliases(file)
+	offset := func(p token.Pos) int { return set.Position(p).Offset }
 	var stack []ast.Node
 	ast.Inspect(file, func(n ast.Node) bool {
 		if n == nil {
@@ -30,21 +45,192 @@ func visitCalls(s *Source, visit func(*ast.CallExpr, []ast.Node, map[string]stri
 			return true
 		}
 		stack = append(stack, n)
-		if call, ok := n.(*ast.CallExpr); ok {
-			visit(call, stack, aliases, set.Position(call.Pos()).Offset)
-		}
+		visit(n, stack, aliases, offset)
 		return true
 	})
 	return nil
 }
+
+func visitCalls(s *Source, visit func(*ast.CallExpr, []ast.Node, map[string]string, int)) error {
+	return visitNodes(s, func(n ast.Node, stack []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
+		if call, ok := n.(*ast.CallExpr); ok {
+			visit(call, stack, aliases, offset(call.Pos()))
+		}
+	})
+}
+
 func packageCall(call *ast.CallExpr, aliases map[string]string) (string, string) {
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-		if pkg, ok := sel.X.(*ast.Ident); ok {
-			return aliases[pkg.Name], sel.Sel.Name
+		return packageSelector(sel, aliases)
+	}
+	return "", ""
+}
+
+// packageSelector is pkg.Name's import path and name: ("net/http", "Get")
+// for http.Get, whatever the import's alias.
+func packageSelector(sel *ast.SelectorExpr, aliases map[string]string) (string, string) {
+	if pkg, ok := sel.X.(*ast.Ident); ok {
+		return aliases[pkg.Name], sel.Sel.Name
+	}
+	return "", ""
+}
+
+func checkRawHTML(s *Source, report func(int, string)) error {
+	unescaped := func(name string) string {
+		return "templ." + name + " puts its argument in the page unescaped, so text a visitor wrote runs as the page's own HTML or script (stored XSS); write { value } and let templ escape it, attributes and URLs included (templ.URL), or document the escaping with an exception"
+	}
+	if strings.HasSuffix(s.Path, ".templ") {
+		_, file, err := goHeader(s)
+		if file == nil {
+			return err
+		}
+		names := []string{"templ"} // templ generate imports it unaliased in every file
+		for alias, imp := range importAliases(file) {
+			if imp == templPkg && alias != "_" && alias != "." {
+				names = append(names, regexp.QuoteMeta(alias))
+			}
+		}
+		raw := regexp.MustCompile(`\b(?:` + strings.Join(names, "|") + `)\s*\.\s*(Raw|JSUnsafeFuncCall)\s*\(`)
+		offset, body, err := templBody(s)
+		if err != nil {
+			return err
+		}
+		for _, m := range raw.FindAllStringSubmatchIndex(body, -1) {
+			report(offset+m[0], unescaped(body[m[2]:m[3]]))
+		}
+		return nil
+	}
+	return visitCalls(s, func(call *ast.CallExpr, _ []ast.Node, aliases map[string]string, offset int) {
+		if pkg, name := packageCall(call, aliases); pkg == templPkg && (name == "Raw" || name == "JSUnsafeFuncCall") {
+			report(offset, unescaped(name))
+		}
+	})
+}
+
+// goHeader is GoAST's, but no file and no error for a .templ file whose Go
+// header doesn't parse: templ generate refuses it, and the HTML rules still
+// read it.
+func goHeader(s *Source) (*token.FileSet, *ast.File, error) {
+	set, file, err := s.GoAST()
+	if err != nil && strings.HasSuffix(s.Path, ".templ") {
+		return nil, nil, nil
+	}
+	return set, file, err
+}
+
+// templBody is a .templ file after its Go header, with its // comment lines
+// blanked, and where that starts: the components, which aren't Go.
+func templBody(s *Source) (int, string, error) {
+	set, file, err := goHeader(s)
+	if file == nil {
+		return 0, "", err
+	}
+	end := file.Name.End()
+	if len(file.Decls) > 0 {
+		end = file.Decls[len(file.Decls)-1].End()
+	}
+	offset := set.Position(end).Offset
+	lines := strings.SplitAfter(s.Text[offset:], "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			lines[i] = strings.Repeat(" ", len(line)-1) + "\n"
+		}
+	}
+	return offset, strings.Join(lines, ""), nil
+}
+
+func checkHTTPClient(s *Source, report func(int, string)) error {
+	const why = " has no timeout: a server that never answers holds the request, or the job, and its goroutine forever; make an &http.Client{Timeout: ...} of your own and send with it"
+	return visitNodes(s, func(n ast.Node, _ []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return
+		}
+		pkg, name := packageSelector(sel, aliases)
+		if pkg != "net/http" {
+			return
+		}
+		switch name {
+		case "DefaultClient":
+			report(offset(sel.Pos()), "http.DefaultClient"+why)
+		case "Get", "Head", "Post", "PostForm":
+			report(offset(sel.Pos()), "http."+name+" uses http.DefaultClient, which"+why)
+		}
+	})
+}
+
+func checkCrossOriginBypass(s *Source, report func(int, string)) error {
+	return visitCalls(s, func(call *ast.CallExpr, _ []ast.Node, aliases map[string]string, offset int) {
+		if pkg, name := packageCall(call, aliases); pkg == gantryWeb && name == "CrossOrigin" && (len(call.Args) > 2 || call.Ellipsis.IsValid()) {
+			report(offset, "")
+		}
+	})
+}
+
+// checkTxDefer finds a transaction begun and committed in one function with
+// no deferred Rollback: an early return or a panic between them leaves it open.
+func checkTxDefer(s *Source, report func(int, string)) error {
+	return visitNodes(s, func(n ast.Node, _ []ast.Node, _ map[string]string, offset func(token.Pos) int) {
+		var body *ast.BlockStmt
+		switch f := n.(type) {
+		case *ast.FuncDecl:
+			body = f.Body
+		case *ast.FuncLit:
+			body = f.Body
+		}
+		if body == nil {
+			return
+		}
+		begun := map[string]*ast.CallExpr{}
+		committed, deferred := map[string]bool{}, map[string]bool{}
+		ast.Inspect(body, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.FuncLit:
+				return false
+			case *ast.DeferStmt:
+				ast.Inspect(n.Call, func(n ast.Node) bool {
+					if tx, method := methodCall(n); method == "Rollback" {
+						deferred[tx] = true
+					}
+					return true
+				})
+				return false
+			case *ast.AssignStmt:
+				if tx, ok := n.Lhs[0].(*ast.Ident); ok && len(n.Rhs) == 1 {
+					if call, ok := n.Rhs[0].(*ast.CallExpr); ok {
+						if _, method := methodCall(call); method == "Begin" || method == "BeginTx" {
+							begun[tx.Name] = call
+						}
+					}
+				}
+			case *ast.CallExpr:
+				if tx, method := methodCall(n); method == "Commit" {
+					committed[tx] = true
+				}
+			}
+			return true
+		})
+		for tx, call := range begun {
+			if committed[tx] && !deferred[tx] {
+				report(offset(call.Pos()), "")
+			}
+		}
+	})
+}
+
+// methodCall is x.Method()'s x and Method, for a call on a plain name.
+func methodCall(n ast.Node) (string, string) {
+	if call, ok := n.(*ast.CallExpr); ok {
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if x, ok := sel.X.(*ast.Ident); ok {
+				return x.Name, sel.Sel.Name
+			}
+			return "", sel.Sel.Name
 		}
 	}
 	return "", ""
 }
+
 func checkRawAssets(s *Source, report func(int, string)) error {
 	return visitCalls(s, func(call *ast.CallExpr, _ []ast.Node, aliases map[string]string, offset int) {
 		pkg, name := packageCall(call, aliases)

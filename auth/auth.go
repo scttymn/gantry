@@ -300,7 +300,7 @@ func (a *Auth) Find(ctx context.Context, id int64) (User, error) {
 func (a *Auth) Authenticate(ctx context.Context, email, password string) (User, bool) {
 	u, err := a.FindByEmail(ctx, email)
 	if err != nil {
-		bcrypt.CompareHashAndPassword(dummy(), []byte(password))
+		_ = bcrypt.CompareHashAndPassword(dummy(), []byte(password)) // for its time, not its answer: a miss takes as long as a hit
 		return User{}, false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordDigest), []byte(password)) != nil {

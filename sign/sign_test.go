@@ -104,7 +104,7 @@ func TestKey(t *testing.T) {
 		if set, err := Key(ctx, d, secret); err != nil || string(set) != secret {
 			t.Errorf("GANTRY_ENV=%q: SECRET_KEY didn't win: %v", env, err)
 		}
-		if _, err := Key(ctx, d, secret[1:]); err == nil || !strings.Contains(err.Error(), "openssl rand -hex 32") {
+		if _, err := Key(ctx, d, secret[1:]); err == nil || !strings.Contains(err.Error(), "bin/gantry secret") {
 			t.Errorf("GANTRY_ENV=%q: a 31-byte SECRET_KEY: %v", env, err)
 		}
 	}
@@ -120,7 +120,7 @@ func TestKeyInProduction(t *testing.T) {
 		if err == nil {
 			t.Fatalf("GANTRY_ENV=%q: a blank SECRET_KEY gave a key of %d bytes", env, len(k))
 		}
-		for _, says := range []string{"SECRET_KEY", "openssl rand -hex 32", "Houston"} {
+		for _, says := range []string{"SECRET_KEY", "bin/gantry secret", "Houston secret", "houston secrets set SECRET_KEY"} {
 			if !strings.Contains(err.Error(), says) {
 				t.Errorf("GANTRY_ENV=%q: %q doesn't say %q", env, err, says)
 			}

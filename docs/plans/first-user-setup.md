@@ -18,7 +18,7 @@ apps keep old code until deliberately migrated. Email-code mode is unaffected.
 | Competing processes/DB connections create one account | TestFirstUserConcurrency |
 | Failed app hook rolls back account and completion | TestFirstUserFailureAndExistingInstall |
 | Seeded users, existing-install migration, missing state fail closed | TestFirstUserFailureAndExistingInstall |
-| Generated app views, sign-in/out, setup and Strict | TestEmailCodeRecipe password cases, TestAuthBuilds |
+| Generated app views, sign-in/out, setup and Strict | TestGeneratorMatrix's `g auth` rows |
 
 Strict cannot establish whether arbitrary custom setup code is intentional or
 safe. Adoption is through the shared default generator, migration guidance and

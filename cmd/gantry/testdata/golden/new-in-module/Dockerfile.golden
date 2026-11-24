@@ -1,0 +1,75 @@
+# Stages: toolchain (Go, templ, sqlc, sqlite3), dev (the mounted code,
+# rebuilt on change), test, and production (a static binary without the
+# development checks, on an empty image). Houston builds dev for gantry dev,
+# test for gantry test, and production to deploy.
+
+FROM golang:1.27-bookworm@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS toolchain
+COPY --from=sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537 /workspace/sqlc /usr/local/bin/sqlc
+# sqlite3, for db console.
+RUN apt-get update && apt-get install -y --no-install-recommends sqlite3 && rm -rf /var/lib/apt/lists/*
+# cgo: gantry's db has SQLite compiled from C (the production build links
+# it statically, so the binary still runs on an empty image). The sqlite_
+# tags and CGO_CFLAGS are what that C is compiled with: full-text search,
+# math functions and the rest SQLite translated to Go has, so an app's SQL
+# means the same either way (gantry's db won't start without them).
+# nodynamic: gantry's image codecs run as WASM. netgo, osusergo and
+# timetzdata: Go's own name lookups and time zones, not the C library's, as
+# a static binary on an empty image needs.
+ENV CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" \
+    GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4"
+RUN go install github.com/a-h/templ/cmd/templ@v0.3.1020
+WORKDIR /app
+
+# templ regenerates on change and restarts the server. Caches live in the
+# mounted folder's .cache/ (ignored, and skipped by the watcher), so
+# restarts reuse them.
+FROM toolchain AS dev
+# The app is apps/control/ in its module, which is mounted at /app.
+WORKDIR /app/apps/control
+ENV GANTRY_ENV=development ADDR=:8080 DATA_DIR=/data GOMODCACHE=/app/apps/control/.cache/go/mod GOCACHE=/app/apps/control/.cache/go/cache
+CMD ["templ", "generate", "--watch", "-path", "/app/apps/control", "--watch-pattern=(.+\\.go$)|(.+\\.templ$)|(.+\\.js$)|(.+\\.css$)|(.+\\.sql$)", "--cmd=go run ./cmd/control"]
+
+FROM toolchain AS test
+ENV GANTRY_ENV=test
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+WORKDIR /app/apps/control
+RUN templ generate -path /app/apps/control
+# The assets precompiled as the build does them, so the tests see what
+# production serves and no picture is resized on request.
+RUN --mount=type=cache,id=control-assets,target=/cache/assets,sharing=locked \
+    go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/
+# The build as production compiles it too (nodevcheck, below), so code that
+# only the dev stage has, such as web.DevelopmentWithRules, fails here and
+# not at deploy.
+CMD ["sh", "-c", "go vet ./... && GOFLAGS=\"$GOFLAGS,nodevcheck\" go build ./... && go test ./..."]
+
+FROM toolchain AS build
+# nodevcheck: the production binary leaves out the development checks
+# (web.Development's source scanner); dev keeps them. It extends -tags, so
+# -tags must stay the last flag in the toolchain's GOFLAGS.
+ENV GOFLAGS="${GOFLAGS},nodevcheck"
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+WORKDIR /app/apps/control
+# The assets precompiled first (Rails' assets:precompile: the scripts
+# minified, the pictures' copies), for go build to embed. They're kept in a
+# build cache between deploys, so only a new or changed picture is resized;
+# and so is Go's, so SQLite's C is compiled once, not on every deploy. The
+# binary is linked statically, for the empty image it runs on.
+RUN --mount=type=cache,id=control-assets,target=/cache/assets,sharing=locked \
+    --mount=type=cache,id=control-go,target=/root/.cache/go-build \
+    templ generate -path /app/apps/control && go run ./cmd/control assets /cache/assets && cp -a /cache/assets/. assets/built/ \
+ && go build -trimpath -ldflags "-s -w -linkmode external -extldflags -static" -o /out/app ./cmd/control
+RUN mkdir -p /out/data
+
+FROM scratch AS production
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+COPY --from=build /out/app /app
+COPY --from=build --chown=65532:65532 /out/data /data
+USER 65532:65532
+ENV ADDR=:8080 DATA_DIR=/data
+EXPOSE 8080
+ENTRYPOINT ["/app"]

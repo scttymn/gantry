@@ -133,7 +133,12 @@ bin/gantry exec templ generate
 ```
 
 Follow the app's existing generation workflow and do not edit generated Go
-instead of its `.sql` or `.templ` source. Keep the Dockerfile's asset precompile
+instead of its `.sql` or `.templ` source: `bin/gantry check --generated`
+generates it again in a copy of the app and fails on a difference, naming the
+source to edit, and on a generated file whose source is gone, which no generate
+deletes. It runs the `templ` and `sqlc` on the machine; run it with the versions
+the app's Dockerfile installs (the app's CI does), since a file another version
+made is reported as made by that version, not as an edit. Keep the Dockerfile's asset precompile
 step so tests and production use the optimized assets. Preserve the app's
 SQLite/upload volumes and apply schema changes through migrations. Development
 fixtures belong to the app; do not introduce a shared default production login.
@@ -184,16 +189,19 @@ Before handing over or deploying the change:
 
 ```sh
 bin/gantry check --strict
+bin/gantry check --generated
 bin/gantry test
 bin/gantry verify
 ```
 
-`check --strict` and the test suite are separate checks; run both in CI as well.
-`check --json` gives the findings to a tool with stable field names. A route
-you add needs a feature in `test/features.yaml`, or the tests fail. `verify`
-visits every feature's pages as each role the app can sign in as. It checks
-statuses and selectors, the page cache's headers, and that no signed-in user's
-cached page is shown to anyone else.
+`check --strict`, `check --generated` and the test suite are separate checks;
+an app's `.github/workflows/ci.yml`, which `gantry new` writes, runs all three
+on every pull request. `check --json` gives the findings to a tool with stable
+field names. A route you add needs a feature in `test/features.yaml`, or the
+tests fail. `verify` visits every feature's pages as each role the app can sign
+in as. It checks statuses and selectors, the page cache's headers, and that no
+signed-in user's cached page is shown to anyone else. It is the app's
+`TestFeatures`, which `bin/gantry test`, and so CI, runs with the rest.
 Report remaining advice and justified exceptions rather than equating a zero
 exit status with no findings. Use the app's existing tests and Gantry's `testkit`
 helpers where relevant: `Links`/`Crawl` for page assets and navigation,
@@ -228,9 +236,17 @@ a local development app does not itself require creating a production project.
 `SECRET_KEY` signs password-reset links, flash and return-to cookies, email-code
 challenges and live-stream tokens. Outside development and test (`GANTRY_ENV`,
 which defaults to production) the app refuses to start without one of at least
-32 bytes. Generate it once with `openssl rand -hex 32` and store it as a Houston
-secret; never commit it or print it. Development and test keep a generated key
-in the database instead, so they need no setting.
+32 bytes. `bin/gantry secret` prints a new one (32 random bytes, in hex); pipe it
+straight into Houston as a secret env var, so it is never committed or shown:
+
+```sh
+bin/gantry secret | houston secrets set SECRET_KEY --project NAME
+```
+
+`gantry new` writes development's own key to the app's `.env`, which git
+ignores and Houston never deploys. Each new app gets a different one; don't
+reuse it in production. Development and test with a blank `SECRET_KEY` keep a
+generated key in the database instead.
 
 Upgrading: a production app deployed with a blank or short `SECRET_KEY` must set
 one before it upgrades, or it won't start. Changing the key invalidates

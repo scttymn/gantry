@@ -70,7 +70,7 @@ DROP TABLE "posts";
 	d := testkit.DB(t, func(ctx context.Context, d *db.DB) error {
 		return d.Migrate(ctx, os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 	})
-	if _, err := d.Write.Exec(`INSERT INTO posts (views, email, created_at, updated_at) VALUES (1, 'a@b.c', '2026-01-01', '2026-01-01')`); err != nil {
+	if _, err := d.Write.Exec(`INSERT INTO posts (views, email, created_at, updated_at) VALUES (1, 'a@example.com', '2026-01-01', '2026-01-01')`); err != nil {
 		t.Fatal(err)
 	}
 	var title string

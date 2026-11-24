@@ -22,7 +22,7 @@ services:
       SMTP_USERNAME: ${SMTP_USERNAME:-}
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_TLS: ${SMTP_TLS:-}       # blank: TLS required; opportunistic or none for a relay without it
-      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (openssl rand -hex 32, a Houston secret); blank in development
+      SECRET_KEY: ${SECRET_KEY:-}   # signs cookies and forms: production needs one (bin/gantry secret, a Houston secret); development's is in .env
       SITE_URL: ${SITE_URL:-}       # the site's address, for link previews: https://www.example.com
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-} # the proxies in front: addresses, CIDR ranges or none; blank: private networks
 {{- if .Postgres}}
@@ -35,11 +35,13 @@ services:
 {{- if .InModule}}
       - {{.Up}}:/app                    # the module, this app at /app/{{.Dir}}; rebuilt on change
 {{- else}}
-      - .:/app                     # the code, rebuilt on change
+      - .:{{.DevWork}}                     # the code, rebuilt on change
 {{- end}}
 {{- if .GantryMount}}
       # gantry beside it, for go.work (ignored by git): changes to both at once.
-      # Dev only; tests and deploys build against the gantry go.mod pins.
+      # Both are under /app, as far apart as on the host, so go.work's path is
+      # the same in the container. Dev only; tests and deploys build against
+      # the gantry go.mod pins.
       - {{.GantryPath}}:{{.GantryMount}}
 {{- end}}
       - data:/data                 # {{if .Postgres}}uploads{{else}}the SQLite database and uploads{{end}}

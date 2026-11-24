@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/scttymn/gantry/text"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -16,7 +17,12 @@ import (
 )
 
 //go:embed templates
-var templates embed.FS
+var embedded embed.FS
+
+// templates is what the generators render. Each reads only the templates it
+// renders, so TestGolden, which records what's read, knows a template no
+// golden case renders.
+var templates fs.FS = embedded
 
 // Field is one of a resource's columns, as its form edits it.
 type Field struct {
@@ -140,8 +146,8 @@ func parseResource(root string, args []string) (Resource, error) {
 // app's app/shared/resource: written by the first resource and the app's
 // from then on, so they're never written over.
 var sharedFiles = map[string]string{
-	"app/shared/resource/resource.go": "resource.go.tmpl",
-	"app/shared/resource/pages.templ": "pages.templ.tmpl",
+	"app/shared/resource/resource.go": "shared/resource.go.tmpl",
+	"app/shared/resource/pages.templ": "shared/pages.templ.tmpl",
 }
 
 func generateResource(root string, args []string, out io.Writer) error {
@@ -161,31 +167,27 @@ func generateResource(root string, args []string, out io.Writer) error {
 			return fmt.Errorf("%s is there already: move it aside to generate it again", path)
 		}
 	}
-	t := template.Must(template.New("").Funcs(funcs(r)).ParseFS(templates, "templates/resource/*.tmpl", "templates/resource/shared/*.tmpl"))
-	render := func(path, name string) error {
+	for path, name := range sharedFiles {
+		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
+			fmt.Fprintln(out, "  kept", path)
+			continue
+		}
+		files[path] = name
+	}
+	var names []string
+	for _, name := range files {
+		names = append(names, "templates/resource/"+name)
+	}
+	t := template.Must(template.New("").Funcs(funcs(r)).ParseFS(templates, names...))
+	for path, name := range files {
 		var b bytes.Buffer
-		if err := t.ExecuteTemplate(&b, name, r); err != nil {
+		if err := t.ExecuteTemplate(&b, filepath.Base(name), r); err != nil {
 			return err
 		}
 		if err := write(filepath.Join(root, path), b.Bytes()); err != nil {
 			return err
 		}
 		fmt.Fprintln(out, "  wrote", path)
-		return nil
-	}
-	for path, name := range files {
-		if err := render(path, name); err != nil {
-			return err
-		}
-	}
-	for path, name := range sharedFiles {
-		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
-			fmt.Fprintln(out, "  kept", path)
-			continue
-		}
-		if err := render(path, name); err != nil {
-			return err
-		}
 	}
 	// Its table, as a migration: every field but photos, which aren't
 	// columns. Required is the form's rule (the model's Errors), not NOT

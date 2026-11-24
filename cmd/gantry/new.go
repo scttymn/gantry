@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime/debug"
@@ -19,6 +20,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/scttymn/gantry/internal/gomod"
 	"github.com/scttymn/gantry/internal/pins"
 )
 
@@ -41,6 +43,9 @@ type NewApp struct {
 	InModule bool
 	Dir, Up  string
 	Work     string // "/app", or "/app/<Dir>"
+	// Where the dev container has the app: Work, or with --gantry, under /app
+	// beside the checkout (gantryMounts).
+	DevWork string
 }
 
 // latestRelease is what a new app requires when this gantry isn't a release
@@ -151,6 +156,7 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		a.Work = "/app/" + a.Dir
 		a.Module = path + "/" + a.Dir
 	}
+	a.DevWork = a.Work
 	if a.Postgres {
 		a.Engine = "postgresql"
 	}
@@ -173,7 +179,8 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		if err != nil || !strings.HasPrefix(rel, "..") {
 			return fmt.Errorf("--gantry %s: the checkout must be outside the app", o.gantry)
 		}
-		a.GantryPath, a.GantryMount = filepath.ToSlash(rel), filepath.ToSlash(filepath.Join("/app", rel))
+		a.GantryPath = filepath.ToSlash(rel)
+		a.DevWork, a.GantryMount = gantryMounts(appAbs, abs)
 	} else if release == "" {
 		fmt.Fprintf(errOut, "note: this gantry isn't a release, so the app requires %s, the newest before it; --gantry PATH builds it against this checkout instead\n", latestRelease)
 	}
@@ -233,27 +240,18 @@ func writeApp(dir string, a NewApp) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
-		body, err := fs.ReadFile(sub, path)
-		if err != nil {
-			return err
-		}
-		if !strings.HasSuffix(path, ".tmpl") {
-			return write(filepath.Join(dir, path), body)
-		}
-		t, err := template.New(path).Parse(string(body))
-		if err != nil {
-			return err
-		}
-		var b bytes.Buffer
-		if err := t.Execute(&b, a); err != nil {
-			return err
-		}
 		out := strings.Replace(strings.TrimSuffix(path, ".tmpl"), "cmd/NAME/", "cmd/"+a.Name+"/", 1)
 		switch out {
 		case "gitignore":
 			out = ".gitignore"
 		case "gantry-check.json":
 			out = ".gantry-check.json"
+		case "github/workflows/ci.yml":
+			// A module's CI is its repository's, at the module's root.
+			if a.InModule {
+				return nil
+			}
+			out = ".github/workflows/ci.yml"
 		case "assets/built/gitkeep":
 			// Kept so the folder is there for go:embed before a build.
 			out = "assets/built/.gitkeep"
@@ -268,6 +266,21 @@ func writeApp(dir string, a NewApp) error {
 			if a.InModule != (out == "Dockerfile.dockerignore") {
 				return nil
 			}
+		}
+		body, err := fs.ReadFile(sub, path)
+		if err != nil {
+			return err
+		}
+		if !strings.HasSuffix(path, ".tmpl") {
+			return write(filepath.Join(dir, out), body)
+		}
+		t, err := template.New(path).Parse(string(body))
+		if err != nil {
+			return err
+		}
+		var b bytes.Buffer
+		if err := t.Execute(&b, a); err != nil {
+			return err
 		}
 		return write(filepath.Join(dir, out), b.Bytes())
 	})
@@ -287,14 +300,35 @@ func writeApp(dir string, a NewApp) error {
 			return err
 		}
 	}
+	// Local only (.env is ignored by git): development's signing key, and the
+	// dev database's password. Production's key is a Houston secret.
+	env := "SECRET_KEY=" + secretKey() + "\n"
 	if a.Postgres {
 		raw := make([]byte, 16)
 		rand.Read(raw)
-		// Local only (.env is ignored by git): the dev database's password.
-		if err := write(filepath.Join(dir, ".env"), []byte("POSTGRES_PASSWORD="+hex.EncodeToString(raw)+"\n")); err != nil {
-			return err
-		}
+		env += "POSTGRES_PASSWORD=" + hex.EncodeToString(raw) + "\n"
 	}
+	return write(filepath.Join(dir, ".env"), []byte(env))
+}
+
+// secretKey is a new SECRET_KEY: 32 random bytes, the least sign.Key takes,
+// in hex.
+func secretKey() string {
+	raw := make([]byte, 32)
+	rand.Read(raw)
+	return hex.EncodeToString(raw)
+}
+
+// printSecret is gantry secret: a key for production's SECRET_KEY.
+func printSecret(_ string, args []string, out, _ io.Writer) error {
+	fs := flagSet("secret")
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 {
+		return usageError{fmt.Errorf("secret takes no arguments (%q)", fs.Arg(0))}
+	}
+	fmt.Fprintln(out, secretKey())
 	return nil
 }
 
@@ -305,26 +339,35 @@ const (
 	emptyPostgresSchema = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n"
 )
 
-// enclosingModule is the module dir is in: its root and its path, from the
-// nearest go.mod at or above dir.
+// enclosingModule is gomod.Enclosing, its missing go.mod said for --in-module.
 func enclosingModule(dir string) (root, path string, err error) {
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return "", "", err
+	root, path, err = gomod.Enclosing(dir)
+	if errors.Is(err, gomod.ErrNoModule) {
+		err = errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
 	}
-	for d := abs; ; d = filepath.Dir(d) {
-		if data, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
-			for _, line := range strings.Split(string(data), "\n") {
-				if m, ok := strings.CutPrefix(strings.TrimSpace(line), "module "); ok {
-					return d, strings.TrimSpace(m), nil
-				}
-			}
-			return "", "", fmt.Errorf("%s names no module", filepath.Join(d, "go.mod"))
+	return root, path, err
+}
+
+// gantryMounts is where the dev container has an app made with --gantry and
+// the checkout it builds against: each at its path below the folder they
+// share on the host, under /app. They're as far apart as on the host, so
+// go.work's use finds the checkout there too, and however far up the
+// checkout is, nothing is mounted over the container's own folders: with
+// --gantry ../.. the checkout is /app, and the app /app/<its folder>/<app>.
+func gantryMounts(app, checkout string) (appAt, checkoutAt string) {
+	shared := app
+	rel, _ := filepath.Rel(app, checkout)
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part != ".." {
+			break
 		}
-		if filepath.Dir(d) == d {
-			return "", "", errors.New("--in-module: there's no go.mod here or above; run it in the module the app goes in")
-		}
+		shared = filepath.Dir(shared)
 	}
+	below := func(dir string) string {
+		rel, _ := filepath.Rel(shared, dir)
+		return path.Join("/app", filepath.ToSlash(rel))
+	}
+	return below(app), below(checkout)
 }
 
 // write writes a generated file, a Go one as gofmt would (a template that

@@ -70,7 +70,7 @@ func TestUp(t *testing.T) {
 }
 
 // A path with no route is the API's 404, as JSON.
-func TestNotFound(t *testing.T) {
+func TestErrorPages(t *testing.T) {
 	w := get(t, handler(t), "/no-such-page")
 	if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != `{"error":"not found"}` {
 		t.Fatalf("a missing path = %d\n%s", w.Code, w.Body)

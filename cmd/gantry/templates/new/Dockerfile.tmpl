@@ -36,9 +36,12 @@ FROM toolchain AS dev
 {{- if .InModule}}
 # The app is {{.Dir}}/ in its module, which is mounted at /app.
 WORKDIR {{.Work}}
+{{- else if .GantryMount}}
+# The app is mounted at {{.DevWork}}, and the gantry checkout at {{.GantryMount}}.
+WORKDIR {{.DevWork}}
 {{- end}}
-ENV GANTRY_ENV=development ADDR=:8080 DATA_DIR=/data GOMODCACHE={{.Work}}/.cache/go/mod GOCACHE={{.Work}}/.cache/go/cache
-CMD ["templ", "generate", "--watch", "-path", "{{.Work}}", "--watch-pattern=(.+\\.go$)|(.+\\.templ$)|(.+\\.js$)|(.+\\.css$)|(.+\\.sql$)", "--cmd=go run ./cmd/{{.Name}}"]
+ENV GANTRY_ENV=development ADDR=:8080 DATA_DIR=/data GOMODCACHE={{.DevWork}}/.cache/go/mod GOCACHE={{.DevWork}}/.cache/go/cache
+CMD ["templ", "generate", "--watch", "-path", "{{.DevWork}}", "--watch-pattern=(.+\\.go$)|(.+\\.templ$)|(.+\\.js$)|(.+\\.css$)|(.+\\.sql$)", "--cmd=go run ./cmd/{{.Name}}"]
 
 FROM toolchain AS test
 ENV GANTRY_ENV=test
