@@ -55,6 +55,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 		"linker flags":           `-ldflags "[^"]+"`,
 		"race detector":          `go test -race`,
 		"bench module":           `GANTRY_DIR=\S+`,
+		"modules tidied":         `for module in [^;]+; do`,
 		"release tag":            `(?m)^\s+VERSION: (\S+)$`,
 		"release target":         `--target release\b`,
 		"new app probe":          `new probe --skip-houston`,

@@ -132,6 +132,12 @@ static=(-ldflags "-linkmode external -extldflags -static")
 golangci=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
+step "Modules tidy"
+for module in . bench bench/feed bench/sqlite3way; do
+	GANTRY_DIR=$module toolchain -- go mod tidy -diff ||
+		{ echo "$module isn't tidy: run go mod tidy there (GANTRY_DIR=$module bin/go go mod tidy) and commit its go.mod and go.sum"; exit 1; }
+done
+
 step "Go tests"
 toolchain "${db[@]}" -- go test ./...
 echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
