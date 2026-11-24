@@ -360,6 +360,18 @@ statuses or missing selectors, and writes deterministic PNG screenshots plus
 an existing headless Chrome endpoint (for example, a container in CI) or
 `GANTRY_CHROME_BIN` to pick a specific local Chrome/Chromium binary.
 
+`bin/gantry verify --feature posts` (comma-separated for multiple features, e.g.
+`--feature posts,comments`) or `bin/gantry verify --changed` (optionally with
+`--base REF`, defaulting to `origin/main` or `main`) narrows visits, cache/leak
+checks, and `--browser` screenshots to only the selected or git-affected
+features while still validating route-map coverage. Shared files (`app/routes.go`,
+`app/shared/`, `assets/`, `config/`, `db/`, `test/features.yaml`) fall back to
+all features so changes with app-wide blast radius are never skipped. Similarly,
+`bin/gantry check --changed` (or `bin/gantry check PATH...`) scans only touched
+files while preserving cross-file call-graph analysis, and `bin/gantry test --changed`
+(or `bin/gantry test ./app/posts`) runs `go vet` and `go test` only on affected
+packages and their reverse importers.
+
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is
 whoever its scope's filter lets in, which the generator can't know.

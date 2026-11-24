@@ -199,13 +199,16 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 	if env.Development() {
 		t.Fatalf("testkit: Verify runs the app as GANTRY_ENV=development, whose reload script takes the page cache's ETag and Last-Modified off every page: run it as GANTRY_ENV=test, as bin/gantry verify does")
 	}
-	features := Features(t, path)
+	allFeatures := Features(t, path)
+	features := filterFeatures(t, path, allFeatures, parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES")))
 	report := VerifyReport{
 		Passed:         true,
 		UnmappedRoutes: []string{},
 		Features:       make([]FeatureResult, len(features)),
 	}
+	indexByName := make(map[string]int, len(features))
 	for i, f := range features {
+		indexByName[f.Name] = i
 		report.Features[i] = FeatureResult{
 			Name:      f.Name,
 			Role:      f.Role,
@@ -224,8 +227,10 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		t.Errorf("%s", msg)
 		report.Passed = false
 		report.Failures++
-		report.Features[i].Passed = false
-		report.Features[i].Errors = append(report.Features[i].Errors, msg)
+		if i >= 0 {
+			report.Features[i].Passed = false
+			report.Features[i].Errors = append(report.Features[i].Errors, msg)
+		}
 	}
 	for _, r := range routes {
 		if r.Mounted {
@@ -234,17 +239,22 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		report.Routes++
 		name := strings.TrimSpace(r.Method + " " + r.Path)
 		in := 0
-		for i, f := range features {
+		for _, f := range allFeatures {
 			if !f.covers(r) {
 				continue
 			}
 			in++
-			report.Features[i].Routes = append(report.Features[i].Routes, name)
+			idx, selected := indexByName[f.Name]
+			if !selected {
+				idx = -1
+			} else {
+				report.Features[idx].Routes = append(report.Features[idx].Routes, name)
+			}
 			if f.Cacheable && !r.Cached {
-				failFeature(i, "%s: %s is cacheable, and %s isn't Cached", path, f.Name, name)
+				failFeature(idx, "%s: %s is cacheable, and %s isn't Cached", path, f.Name, name)
 			}
 			if r.Cached && !f.Cacheable {
-				failFeature(i, "%s: %s is Cached, and its feature %s isn't cacheable", path, name, f.Name)
+				failFeature(idx, "%s: %s is Cached, and its feature %s isn't cacheable", path, name, f.Name)
 			}
 		}
 		if in == 0 {
@@ -298,10 +308,15 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		}
 	}
 	if os.Getenv("GANTRY_VERIFY_BROWSER") == "1" {
+		selectedNames := make([]string, 0, len(features))
+		for _, f := range features {
+			selectedNames = append(selectedNames, f.Name)
+		}
 		bm := VerifyBrowser(t, h, path, roles, BrowserOptions{
 			ArtifactsDir: os.Getenv("GANTRY_VERIFY_ARTIFACTS"),
 			CDPURL:       os.Getenv("GANTRY_CDP_URL"),
 			ChromePath:   os.Getenv("GANTRY_CHROME_BIN"),
+			Features:     selectedNames,
 		})
 		report.Browser = &bm
 		if !bm.Passed {
@@ -315,6 +330,47 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		}
 	}
 	return report
+}
+
+func parseVerifyFeatures(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func filterFeatures(t testing.TB, path string, all []Feature, selected []string) []Feature {
+	t.Helper()
+	if len(selected) == 0 {
+		return all
+	}
+	byName := make(map[string]Feature, len(all))
+	valid := make([]string, 0, len(all))
+	for _, f := range all {
+		byName[f.Name] = f
+		valid = append(valid, f.Name)
+	}
+	want := make(map[string]bool, len(selected))
+	for _, name := range selected {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("testkit: %s has no feature %q (available: %s)", path, name, strings.Join(valid, ", "))
+		}
+		want[name] = true
+	}
+	var filtered []Feature
+	for _, f := range all {
+		if want[f.Name] {
+			filtered = append(filtered, f)
+		}
+	}
+	return filtered
 }
 
 type captureTB struct {

@@ -30,7 +30,7 @@ type command struct {
 }
 
 var commands = []command{
-	{name: "check", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _, _, _ := checkFlags(); return fs },
+	{name: "check", args: "[PATH...]", about: "development checks (no server needed)", flags: func() *flag.FlagSet { fs, _, _, _, _, _, _ := checkFlags(); return fs },
 		run: func(root string, args []string, out, _ io.Writer) error { return developmentCheck(root, args, out) }},
 	{name: "new", args: "NAME", flags: func() *flag.FlagSet { return new(newOptions).flags("NAME") }, run: newApp},
 	{name: "g resource", args: "[NAMESPACE/]TABLE FIELD:TYPE[:required]...", about: "a table, its model and its pages",
@@ -55,14 +55,14 @@ var commands = []command{
 	{name: "task", args: "NAME [ARGS...]", about: "the app's tasks, in its container", flags: localFlag, run: appCommand("task")},
 	{name: "tasks", about: "the tasks there are", flags: localFlag, run: appCommand("tasks")},
 	{name: "routes", about: "the app's routes, as its router has them", flags: func() *flag.FlagSet { fs, _, _, _ := routesFlags(); return fs }, run: routes},
-	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: func() *flag.FlagSet { fs, _, _, _, _ := verifyFlags(); return fs }, run: verify},
+	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: func() *flag.FlagSet { fs, _, _, _, _, _, _, _ := verifyFlags(); return fs }, run: verify},
+	{name: "test", args: "[ARGS...]", about: "run app tests (all, --changed, or targeted packages)", flags: func() *flag.FlagSet { fs, _, _, _ := testFlags(); return fs }, run: testCommand},
 	{name: "dev", houston: true, run: func(root string, args []string, _, errOut io.Writer) error {
 		if err := developmentCheck(root, nil, errOut); err != nil {
 			fmt.Fprintln(errOut, "gantry check:", err)
 		}
 		return houston(root, append([]string{"dev"}, args...), errOut)
 	}},
-	{name: "test", houston: true},
 	{name: "console", houston: true},
 	{name: "exec", houston: true},
 	{name: "status", houston: true},

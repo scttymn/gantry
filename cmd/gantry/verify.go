@@ -30,20 +30,23 @@ const (
 
 const verifyCopy = ".gantry-verify-*.yml"
 
-func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser *bool, artifacts *string) {
+func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser, changed *bool, artifacts, feature, base *string) {
 	fs, local = appFlags()
 	asJSON = fs.Bool("json", false, "a JSON report of features, visits, cache and leak checks")
 	browser = fs.Bool("browser", false, "also render each feature in headless Chrome via CDP and capture screenshots")
 	artifacts = fs.String("artifacts", "", "output `DIR` for --browser screenshots and manifest.json (default "+defaultVerifyArtifacts+")")
-	return fs, local, asJSON, browser, artifacts
+	feature = fs.String("feature", "", "comma-separated feature `NAME`s from test/features.yaml to verify")
+	changed = fs.Bool("changed", false, "verify only features affected by git changes")
+	base = fs.String("base", "", "base `REF` for --changed (default origin/main or main)")
+	return fs, local, asJSON, browser, changed, artifacts, feature, base
 }
 
 func verify(root string, args []string, out, errOut io.Writer) error {
-	fs, local, asJSON, browser, artifacts := verifyFlags()
+	fs, local, asJSON, browser, changed, artifacts, feature, base := verifyFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || *artifacts != "" && !*browser {
+	if fs.NArg() > 0 || (*artifacts != "" && !*browser) || (*base != "" && !*changed) || (*changed && *feature != "") {
 		return usageError{}
 	}
 	if _, err := os.Stat(filepath.Join(root, "test", "features.yaml")); err != nil {
@@ -51,6 +54,30 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	}
 	if !hasTestFeatures(filepath.Join(root, "app")) {
 		return errors.New("app/ has no TestFeatures, so go test would run nothing and pass: copy a new app's app/features_test.go (docs/development.md#an-app-made-before-the-feature-map)")
+	}
+	selectedFeatures := strings.TrimSpace(*feature)
+	if *changed {
+		files, _, ok := gitChangedFiles(root, *base)
+		if ok {
+			names, all, err := affectedFeatures(root, files)
+			if err != nil {
+				return err
+			}
+			if !all {
+				if len(names) == 0 {
+					if *asJSON {
+						return json.NewEncoder(out).Encode(testkit.VerifyReport{
+							Passed:         true,
+							UnmappedRoutes: []string{},
+							Features:       []testkit.FeatureResult{},
+						})
+					}
+					fmt.Fprintln(out, "gantry verify --changed: no features affected")
+					return nil
+				}
+				selectedFeatures = strings.Join(names, ",")
+			}
+		}
 	}
 	artifactsDir := *artifacts
 	if *browser && artifactsDir == "" {
@@ -60,6 +87,9 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 		envVars := []string{"GANTRY_ENV=test"}
 		if *asJSON {
 			envVars = append(envVars, "GANTRY_VERIFY_JSON=1")
+		}
+		if selectedFeatures != "" {
+			envVars = append(envVars, "GANTRY_VERIFY_FEATURES="+selectedFeatures)
 		}
 		if *browser {
 			absArtifacts := artifactsDir
@@ -80,7 +110,7 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("no compose.yml here, for Houston's test stack: %w (or run it on this machine, with --local)", err)
 	}
-	command := verifyTestCommand(*asJSON, *browser, artifactsDir)
+	command := verifyTestCommand(*asJSON, *browser, artifactsDir, selectedFeatures)
 	copied, err := featuresCompose(compose, command)
 	if err != nil {
 		return err
@@ -110,10 +140,13 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	return houston(root, houstonArgs, errOut)
 }
 
-func verifyTestCommand(asJSON, browser bool, artifactsDir string) string {
+func verifyTestCommand(asJSON, browser bool, artifactsDir, features string) string {
 	var envPrefix []string
 	if asJSON {
 		envPrefix = append(envPrefix, "GANTRY_VERIFY_JSON=1")
+	}
+	if features != "" {
+		envPrefix = append(envPrefix, "GANTRY_VERIFY_FEATURES="+shellQuote(features))
 	}
 	if browser {
 		envPrefix = append(envPrefix, "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS="+shellQuote(artifactsDir))

@@ -19,6 +19,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: templ and sqlc, from the Dockerfile's toolchain
         run: |
           docker build -q --target toolchain -t shop-toolchain .
@@ -28,9 +29,27 @@ jobs:
           docker cp "$id:/usr/local/bin/sqlc" "$RUNNER_TEMP/bin/sqlc"
           docker rm "$id" >/dev/null
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - run: bin/gantry check --strict
+      - name: Strict check
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            bin/gantry check --strict --changed --base "origin/${{ github.base_ref }}"
+          else
+            bin/gantry check --strict
+          fi
       - run: bin/gantry check --generated
       - name: golangci-lint
         run: docker run --rm -v "$PWD:/app" -w /app shop-toolchain go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
-      - run: bin/gantry test
-      - run: bin/gantry verify
+      - name: Tests
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            bin/gantry test --changed --base "origin/${{ github.base_ref }}"
+          else
+            bin/gantry test
+          fi
+      - name: Verify
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            bin/gantry verify --changed --base "origin/${{ github.base_ref }}"
+          else
+            bin/gantry verify
+          fi

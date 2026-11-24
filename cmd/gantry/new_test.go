@@ -154,13 +154,25 @@ func TestNewCI(t *testing.T) {
 				if msg := checkInvocation(command); msg != "" {
 					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
 				}
+			} else if command, ok := strings.CutPrefix(line, "bin/gantry "); ok {
+				runs = append(runs, command)
+				if msg := checkInvocation(command); msg != "" {
+					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+				}
 			}
 			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(action) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, action)
 			}
 		}
-		if want := []string{"check --strict", "check --generated", "test", "verify"}; !reflect.DeepEqual(runs, want) {
-			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
+		for _, want := range []string{"check --strict", "check --generated", "test", "verify"} {
+			if !slices.Contains(runs, want) {
+				t.Errorf("%s: ci.yml missing %q in %q", engine, want, runs)
+			}
+		}
+		for _, want := range []string{"check --strict --changed", "test --changed", "verify --changed"} {
+			if !strings.Contains(string(ci), "bin/gantry "+want) {
+				t.Errorf("%s: ci.yml missing PR targeted %q:\n%s", engine, want, ci)
+			}
 		}
 		if want := "golangci-lint@" + pins.GolangciLint + " run ./..."; !strings.Contains(string(ci), want) {
 			t.Errorf("%s: ci.yml doesn't run %q:\n%s", engine, want, ci)

@@ -8,15 +8,20 @@ import (
 	"io"
 )
 
-var checkDevelopment = devcheck.Scan
+var (
+	checkDevelopment      = devcheck.Scan
+	checkDevelopmentPaths = devcheck.ScanPaths
+)
 
-func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON, generated *bool) {
+func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON, generated, changed *bool, base *string) {
 	fs = flagSet("check")
 	strict = fs.Bool("strict", false, "fail on a violation")
 	rules = fs.Bool("rules", false, "the rules, with their guidance")
 	asJSON = fs.Bool("json", false, "as JSON, with stable field names (docs/development.md)")
 	generated = fs.Bool("generated", false, "fail on generated Go (templ's, sqlc's) that isn't what its source makes")
-	return fs, strict, rules, asJSON, generated
+	changed = fs.Bool("changed", false, "scan only files changed in git")
+	base = fs.String("base", "", "base `REF` for --changed (default origin/main or main)")
+	return fs, strict, rules, asJSON, generated, changed, base
 }
 
 type checkReport struct {
@@ -43,11 +48,16 @@ type checkRule struct {
 }
 
 func developmentCheck(root string, args []string, out io.Writer) error {
-	fs, strict, rules, asJSON, generated := checkFlags()
+	fs, strict, rules, asJSON, generated, changed, base := checkFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || *strict && *rules || *generated && (*strict || *rules || *asJSON) {
+	paths := fs.Args()
+	if (*base != "" && !*changed) ||
+		(*changed && (len(paths) > 0 || *rules || *generated)) ||
+		(*strict && *rules) ||
+		(*generated && (*strict || *rules || *asJSON || len(paths) > 0)) ||
+		(*rules && len(paths) > 0) {
 		return usageError{}
 	}
 	if *generated {
@@ -66,7 +76,23 @@ func developmentCheck(root string, args []string, out io.Writer) error {
 		}
 		return nil
 	}
-	warnings, err := checkDevelopment(root)
+	var (
+		warnings []devcheck.Warning
+		err      error
+	)
+	switch {
+	case *changed:
+		files, _, ok := gitChangedFiles(root, *base)
+		if !ok {
+			warnings, err = checkDevelopment(root)
+		} else if len(files) > 0 {
+			warnings, err = checkDevelopmentPaths(root, files)
+		}
+	case len(paths) > 0:
+		warnings, err = checkDevelopmentPaths(root, paths)
+	default:
+		warnings, err = checkDevelopment(root)
+	}
 	if err != nil {
 		return err
 	}
