@@ -1,8 +1,15 @@
 package devcheck
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestMigrationDown(t *testing.T) {
+	scan := func(root string) ([]Warning, error) {
+		got, err := Scan(root)
+		return slices.DeleteFunc(got, func(w Warning) bool { return w.Rule == "comments" }), err
+	}
 	root := t.TempDir()
 	put(t, root, "db/migrations/00001_start.sql", "-- +goose Up\nCREATE TABLE posts (id integer);\n\n-- +goose Down\nDROP TABLE posts;\n")
 	put(t, root, "db/migrations/00002_backfill.sql", "-- +goose Up\nUPDATE posts SET id = id;\n\n-- +goose Down\n-- What undoes it. Left empty, the migration can't be rolled back.\n")
@@ -10,7 +17,7 @@ func TestMigrationDown(t *testing.T) {
 	put(t, root, "db/migrations/00004_mentions.sql", "-- +goose Up\n-- the -- +goose Down section is missing\nCREATE TABLE mentions (id integer);\n")
 	put(t, root, "app/models/posts.sql", "-- name: Posts :many\nSELECT * FROM posts;\n")
 	put(t, root, "db/schema.sql", "CREATE TABLE posts (id integer);\n")
-	got, err := Scan(root)
+	got, err := scan(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +31,7 @@ func TestMigrationDown(t *testing.T) {
 	}
 
 	put(t, root, ".gantry-check.json", `{"exceptions":[{"rule":"migration-down","file":"db/migrations/00003_titles.sql","reason":"Applied everywhere before Down sections were required (#59)."}]}`)
-	got, err = Scan(root)
+	got, err = scan(root)
 	if err != nil || len(got) != 1 || got[0].File != "db/migrations/00004_mentions.sql" {
 		t.Fatal(got, err)
 	}

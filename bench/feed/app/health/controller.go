@@ -1,5 +1,3 @@
-// Package health is the API's health check, at /health: unlike /up, it asks
-// the database.
 package health
 
 import (
@@ -12,13 +10,11 @@ import (
 	"feed/app/models"
 )
 
-// Controller answers the health check.
 type Controller struct {
 	DB      *db.DB
 	Started time.Time
 }
 
-// Show is GET /health.
 func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
 	if err := models.New(c.DB.Read).Ping(r.Context()); err != nil {
 		return web.JSON(w, http.StatusServiceUnavailable, struct {

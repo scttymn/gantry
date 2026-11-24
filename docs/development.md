@@ -66,6 +66,7 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 | `inline-download` | Advice | Send uploads as downloads, so an uploaded HTML or SVG file can't run as the app's own page | http.ServeContent or ServeFile with no Content-Disposition serves a file inline; send uploads with web.Download or storage's routes, and serve inline only types checked to be images |
 | `cached-scope` | Violation | Cache only pages that are the same for every visitor, so no one is shown a page drawn for someone else | a route the page cache serves (Cached, PageCache.Handler, or Resources wrapped in the cache's Handler) has a handler that reads auth.Current, SignedIn, a cookie or the flash; draw that part where it isn't cached, or add the route with Handle |
 | `cache-set-cookie` | Violation | Set cookies and sessions on routes whose handler runs for every visitor | a route the page cache serves has a handler that sets a cookie, the flash or a session, which a cached copy never sends; set it on a route added with Handle |
+| `comments` | Violation | Keep intent in names, types and tests, which the compiler and CI check, not in comments, which go stale and give a workaround a place to explain itself instead of being fixed | a comment outside a Go doc comment on an exported framework name or package clause, or any comment in an app or a generator's template; put the intent in a name, type or test, and fix a workaround's root cause instead of explaining it. Directives stay: //go:, //nolint:<linter> // <reason>, sqlc's -- name: and goose's -- +goose lines |
 | `migration-down` | Violation | Keep rollback and testkit.Migrations checking every migration's undo | migration has no -- +goose Down section, so rolling back stops at it; add one that undoes the up, or leave it empty to mark the migration irreversible |
 
 <!-- /rules -->
@@ -73,7 +74,8 @@ as proof. Checks run at startup, not continuously during Houston's rebuilds.
 Strict mode fails on violations. Advisory findings require context and stay
 visible in both the terminal and browser without failing CI. The Go checks use
 syntax trees and imported package names, so import aliases work and comments
-are not treated as calls. Generated templ Go and test Go files are skipped.
+are not treated as calls. Generated templ Go files are skipped, and test Go
+files by every rule but `comments`.
 The guard rule recognizes the generated positive `cfg.Development()` shape;
 custom equivalent guards require review and an exception. This checks specific
 conventions, not every possible path through a program. It cannot prove that a
@@ -97,6 +99,21 @@ and SQL run on a DB's `Read` or `Write` pool or a `*db.Tx` outside
 `app/models`. `background-work` allows `sync.WaitGroup.Go`, whose goroutines
 the request waits for. `http-client`, `raw-html`, `cross-origin-bypass` and
 `tx-defer` read every Go file, gantry's own included.
+
+`comments` holds an app to no comments at all: Go, tests included, `.templ`,
+SQL, YAML, shell, JavaScript, CSS, HTML, `.gitignore` and `.dockerignore`.
+Intent goes in a name, a type or a test, which the compiler and the tests
+check; a comment that explains a workaround is a sign to fix its cause. What
+stays are directives a tool reads: `//go:` lines, `//nolint:<linter> //
+<reason>`, sqlc's `-- name: Name :one` (`:many`, `:exec` and the rest), goose's
+`-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, a script's `#!`
+line and `go.mod`'s `// indirect`. Go that says it's generated (`// Code
+generated ... DO NOT EDIT.`, as sqlc's is) and the packages `importmap pin`
+vendors into `assets/js/vendor/`, which keep their license notices, aren't
+read. Files without an extension, such as the `Dockerfile` and
+`bin/gantry`, aren't either: Strict picks files by extension, and gantry's own
+templates for them are checked instead. `.gantry-check.json` can't except a
+file from it.
 
 The advice rules read one function at a time: a handler routed inline is a
 function of its own, and a `c.DB.Tx` closure is part of the function that
@@ -135,7 +152,9 @@ signed-in user's cached page is shown to anyone else.
 Upgrading: these rules are new in this release. An app that fails one fixes
 the code the message names, or adds an exception with its reason. Gantry's
 generators write code that passes them, so a new app, its resources and its
-recipes are clean.
+recipes are clean. `comments` is new too, and has no exceptions: an app made
+before it fails `check --strict` until its comments are gone, each one's
+intent in a name, a type or a test.
 
 `bin/gantry check --json` prints the same scan as one JSON object, for tools
 and agents. Its field names are stable:
@@ -174,7 +193,7 @@ project root. A new app has the file, with no exceptions:
 
 Exceptions match exactly one file and rule, apply to terminal and browser
 checks, and require a reason. Wildcards, unknown rules, unknown config fields,
-and empty reasons are rejected. Keep exceptions narrow and review this file
+empty reasons and an exception for `comments`, which takes none, are rejected. Keep exceptions narrow and review this file
 alongside code changes. They suppress all findings of that rule in the named
 file; line numbers are intentionally not used because edits move lines.
 

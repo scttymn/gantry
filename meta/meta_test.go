@@ -60,22 +60,18 @@ func TestPageOverridesSite(t *testing.T) {
 	hasNot(t, html, "social-1a2b3c4d")
 }
 
-// With no image, the card is the small one, and no image tag is written.
 func TestNoImage(t *testing.T) {
 	html := render(t, Site{Name: "Shop", URL: "https://shop.example.com"}, Page{Title: "Shop", Path: "/"})
 	has(t, html, `<meta name="twitter:card" content="summary">`, `<link rel="canonical" href="https://shop.example.com/">`)
 	hasNot(t, html, "og:image", "twitter:image")
 }
 
-// With no site address (development), nothing that needs an absolute one is
-// written: no canonical link, og:url or image, rather than wrong ones.
 func TestNoSiteURL(t *testing.T) {
 	html := render(t, Site{Name: "Shop", Image: "/assets/social.png"}, Page{Title: "Shop", Description: "Things.", Path: "/"})
 	has(t, html, `<meta property="og:title" content="Shop">`, `<meta name="description" content="Things.">`, `<meta name="twitter:card" content="summary">`)
 	hasNot(t, html, "canonical", "og:url", "og:image", "twitter:image")
 }
 
-// An absolute image works without a site address.
 func TestAbsoluteImageWithoutSiteURL(t *testing.T) {
 	html := render(t, Site{Name: "Shop"}, Page{Title: "Shop", Image: "https://cdn.example.net/card.png"})
 	has(t, html, `<meta property="og:image" content="https://cdn.example.net/card.png">`, `<meta name="twitter:card" content="summary_large_image">`)
@@ -97,8 +93,6 @@ func TestTwitterHandle(t *testing.T) {
 	has(t, render(t, Site{Name: "S", Twitter: "@sevenmoons"}, Page{Title: "S"}), `<meta name="twitter:site" content="@sevenmoons">`)
 }
 
-// A path without its leading slash, and a site address with or without a
-// trailing one, join with exactly one.
 func TestJoining(t *testing.T) {
 	for _, u := range []string{"https://a.example", "https://a.example/"} {
 		html := render(t, Site{URL: u, Image: "assets/c.png"}, Page{Path: "terms"})

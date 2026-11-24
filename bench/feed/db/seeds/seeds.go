@@ -1,5 +1,3 @@
-// Package seeds is the data a fresh database starts with (Rails' db/seeds):
-// run at start and by gantry db seed, so it must be safe to run again.
 package seeds
 
 import (
@@ -14,8 +12,6 @@ import (
 	"github.com/scttymn/gantry/db"
 )
 
-// Run fills an empty database for FEED_SEED_USERS users (bin/bench sets it:
-// 50,000, the challenge's), and does nothing without it.
 func Run(ctx context.Context, d *db.DB) error {
 	users, _ := strconv.Atoi(os.Getenv("FEED_SEED_USERS"))
 	if users <= 0 {
@@ -24,10 +20,6 @@ func Run(ctx context.Context, d *db.DB) error {
 	return Fill(ctx, d, users)
 }
 
-// Fill makes the challenge's shape of data for that many users: ten posts
-// each over a year, the newest last, and about four likes a post. It's the
-// same rows every time, all of them or none, and a database that has users
-// is left as it is.
 func Fill(ctx context.Context, d *db.DB, users int) error {
 	rng := rand.New(rand.NewPCG(12, 2026))
 	word := func(from []string) string { return from[rng.IntN(len(from))] }
@@ -37,8 +29,6 @@ func Fill(ctx context.Context, d *db.DB, users int) error {
 	every := 365 * 24 * time.Hour / time.Duration(posts)
 
 	return d.Tx(ctx, func(tx *db.Tx) error {
-		// Asked inside the transaction, which is the one writer: of two
-		// processes starting at once, the second finds the first's users.
 		var have int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (SELECT 1 FROM users LIMIT 1)`).Scan(&have); err != nil || have > 0 {
 			return err
@@ -54,7 +44,7 @@ func Fill(ctx context.Context, d *db.DB, users int) error {
 		}
 		p := newRows(tx, `INSERT INTO posts (id, user_id, body, created_at) VALUES `, 4)
 		l := newRows(tx, `INSERT INTO likes (user_id, post_id, created_at) VALUES `, 3)
-		l.after = p // a like's post has to be there
+		l.after = p
 		for id := 1; id <= posts; id++ {
 			var body strings.Builder
 			for n := 6 + rng.IntN(18); n > 0; n-- {
@@ -67,7 +57,6 @@ func Fill(ctx context.Context, d *db.DB, users int) error {
 			if err := p.add(ctx, id, 1+rng.IntN(users), body.String(), at); err != nil {
 				return err
 			}
-			// Its likes are from users one after another, so no two are one user's.
 			for first, n := rng.IntN(users), min(rng.IntN(9), users); n > 0; n-- {
 				if err := l.add(ctx, (first+n)%users+1, id, at); err != nil {
 					return err
@@ -78,14 +67,12 @@ func Fill(ctx context.Context, d *db.DB, users int) error {
 	})
 }
 
-// rows inserts many rows a statement at a time: the same statement for
-// every full batch, so it's compiled once.
 type rows struct {
 	tx     *db.Tx
-	insert string // "INSERT INTO t (a, b) VALUES "
+	insert string
 	width  int
 	args   []any
-	after  *rows // rows these point at, which go in first
+	after  *rows
 }
 
 const batch = 200

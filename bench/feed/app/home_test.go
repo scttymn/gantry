@@ -19,8 +19,6 @@ import (
 	"feed/test"
 )
 
-// newApp is the app on a test database, its jobs defined; they run when
-// the test calls a.Jobs.Drain.
 func newApp(t *testing.T) *app.App {
 	t.Setenv("DATA_DIR", t.TempDir())
 	d := test.DB(t)
@@ -59,7 +57,6 @@ func TestHome(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Feed is running.") {
 		t.Fatalf("GET / = %d\n%s", w.Code, w.Body)
 	}
-	// Every stylesheet, script and image the page refers to loads.
 	testkit.Links(t, h, testkit.Page{Path: "/"})
 }
 
@@ -69,7 +66,6 @@ func TestUp(t *testing.T) {
 	}
 }
 
-// A path with no route is the API's 404, as JSON.
 func TestErrorPages(t *testing.T) {
 	w := get(t, handler(t), "/no-such-page")
 	if w.Code != http.StatusNotFound || strings.TrimSpace(w.Body.String()) != `{"error":"not found"}` {
@@ -77,9 +73,6 @@ func TestErrorPages(t *testing.T) {
 	}
 }
 
-// The bench's own routes (the profiler, what the process has used) are in a
-// build with the bench tag, on a port of their own: an ordinary build
-// serves nothing under /debug.
 func TestNoDebugRoutes(t *testing.T) {
 	h := handler(t)
 	for _, path := range []string{"/debug/pprof/", "/debug/pprof/profile", "/debug/usage"} {

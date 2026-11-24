@@ -8,7 +8,6 @@ import (
 	"testing"
 )
 
-// recorder is a testing.TB that keeps what Links reports.
 type recorder struct {
 	testing.TB
 	errors []string
@@ -73,7 +72,6 @@ func site(extra string, missing ...string) http.Handler {
 			http.Error(w, "sign in", http.StatusUnauthorized)
 			return
 		}
-		// Only the files the page has: anything else it asks for is a bug.
 		for _, prefix := range []string{"/assets/", "/photos/", "/favicon.svg", "/private/"} {
 			if strings.HasPrefix(r.URL.Path, prefix) {
 				return
@@ -90,7 +88,7 @@ func TestSrcset(t *testing.T) {
 		"/a.webp":                               "/a.webp",
 		"data:image/webp;base64,UklG+/=":        "data:image/webp;base64,UklG+/=",
 		"data:image/gif;base64,R0,AA 1x, /b 2x": "data:image/gif;base64,R0,AA|/b",
-		"/a.webp,/b.webp":                       "/a.webp,/b.webp", // one URL: no space after the comma
+		"/a.webp,/b.webp":                       "/a.webp,/b.webp",
 		" /a.webp 1x ,  /b.webp 2x ":            "/a.webp|/b.webp",
 		"/a.webp, /b.webp":                      "/a.webp|/b.webp",
 		"":                                      "",
@@ -129,7 +127,6 @@ func TestLinks(t *testing.T) {
 
 	t.Run("a file must be 200; a link may redirect", func(t *testing.T) {
 		r := check(t, site(`<img src="/admin">`), Page{Path: "/", Skip: []string{"/logout"}})
-		// /admin is checked once, as the first reference to it: the link.
 		if len(r.errors) != 0 {
 			t.Error(r.errors)
 		}
@@ -161,7 +158,7 @@ func TestLinks(t *testing.T) {
 			"/":                      `<a href="/elsewhere">Not crawled</a>`,
 		}
 		for path, body := range pages {
-			pattern := path // exact, without a trailing slash
+			pattern := path
 			if path == "/" {
 				pattern = "/{$}"
 			}
@@ -185,7 +182,6 @@ func TestLinks(t *testing.T) {
 		if len(r.errors) != 1 || r.errors[0] != "/admin/programs/1/edit: img src /photos/gone.webp: 404" {
 			t.Error(r.errors)
 		}
-		// Each admin page is fetched once as a page and once as a link from each page that links to it.
 		if visits["/admin/programs/1/edit"] != 2 || visits["/elsewhere"] != 0 || visits["/"] != 1 {
 			t.Error(visits)
 		}

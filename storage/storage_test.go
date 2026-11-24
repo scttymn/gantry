@@ -27,8 +27,6 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// Rails' tables, as gantry g storage writes them for SQLite, with Rails'
-// variant records beside them, as in a database Rails made.
 var schema = fstest.MapFS{"00001_storage.sql": {Data: []byte(`-- +goose Up
 CREATE TABLE active_storage_blobs (id integer PRIMARY KEY AUTOINCREMENT NOT NULL, key varchar NOT NULL, filename varchar NOT NULL,
   content_type varchar, metadata text, service_name varchar NOT NULL, byte_size bigint NOT NULL, checksum varchar, created_at datetime(6) NOT NULL);
@@ -48,7 +46,6 @@ func newStorage(t *testing.T) *Storage {
 	return s
 }
 
-// picture is a JPEG this size.
 func picture(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -112,12 +109,10 @@ func TestAttach(t *testing.T) {
 	if _, ok, _ := s.Find(ctx, clip(2)); ok {
 		t.Error("another record has nothing attached")
 	}
-	// A file that isn't a picture is kept as it is.
 	txt, err := s.Attach(ctx, Ref{"Clip", 1, "script"}, File{Filename: "notes.txt", Data: []byte("hello there")})
 	if err != nil || !strings.HasPrefix(txt.ContentType, "text/plain") || txt.Width != 0 || s.Picture(txt) {
 		t.Errorf("text: %+v %v", txt, err)
 	}
-	// A picture claiming more pixels than the pipeline reads is refused.
 	bomb := []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
 	if b, err := s.Attach(ctx, clip(3), File{Filename: "bomb.gif", Data: bomb}); !errors.Is(err, images.ErrTooManyPixels) {
 		t.Errorf("stored a bomb: %+v %v", b, err)
@@ -166,8 +161,6 @@ func TestDetachAndAttachBlob(t *testing.T) {
 	if len(loose) != 1 || loose[0].Key != a.Key {
 		t.Fatalf("Unattached: %+v", loose)
 	}
-	// A new thumbnail, then the old one back (a restore): the new one, not
-	// detached, is purged.
 	b, _ := s.Attach(ctx, clip(1), File{"b.jpg", picture(t, 200, 100)})
 	if _, err := s.AttachBlob(ctx, clip(1), a.Key); err != nil {
 		t.Fatal(err)
@@ -181,7 +174,6 @@ func TestDetachAndAttachBlob(t *testing.T) {
 	if loose, _ := s.Unattached(ctx); len(loose) != 0 {
 		t.Errorf("Unattached: %+v", loose)
 	}
-	// PurgeBlob leaves an attached blob alone, and removes a loose one.
 	if err := s.PurgeBlob(ctx, a.Key); err != nil || !exists(s.Path(a.Key)) {
 		t.Fatalf("an attached blob was purged: %v", err)
 	}
@@ -266,8 +258,6 @@ func TestServe(t *testing.T) {
 	if w := get(s.URL(txt)); w.Code != 200 || w.Body.String() != "hello there" {
 		t.Errorf("an original: %d %q", w.Code, w.Body.String())
 	}
-	// An upload that isn't a picture is a download, never a page of the
-	// app's: a script in it would run with the visitor's session.
 	page, _ := s.Attach(ctx, Ref{"Clip", 1, "page"}, File{"page.html", []byte(`<html><script>fetch("/account")</script></html>`)})
 	svg, _ := s.Attach(ctx, Ref{"Clip", 1, "logo"}, File{"logo.svg", []byte(`<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/account")</script></svg>`)})
 	for _, b := range []Blob{txt, page, svg} {
@@ -314,7 +304,6 @@ func TestImg(t *testing.T) {
 	}
 }
 
-// noRoom is a machine without the memory for a copy.
 type noRoom struct{}
 
 func (noRoom) Make(context.Context, string, string, int, int) error { return images.ErrNoRoom }
@@ -336,7 +325,6 @@ func TestWarm(t *testing.T) {
 	if made, err := s.Warm(ctx); made != 0 || err != nil {
 		t.Errorf("a second warming made %d (%v): only what's missing", made, err)
 	}
-	// A Rails blob not analysed yet is analysed, then warmed.
 	s.DB.Write.Exec(`UPDATE active_storage_blobs SET metadata = '{"identified":true}' WHERE id = $1`, a.ID)
 	s.Images.Forget(a.Key)
 	if made, err := s.Warm(ctx); made != len(s.Images.WidthsFor(500))+1 || err != nil {
@@ -345,20 +333,17 @@ func TestWarm(t *testing.T) {
 	if found, _, _ := s.Find(ctx, clip(1)); found.Width != 500 || found.Height != 300 {
 		t.Errorf("not analysed: %+v", found)
 	}
-	// Without the room for a copy, warming stops, and says why.
 	s.Images.Forget(a.Key)
 	s.Images.Maker = noRoom{}
 	if made, err := s.Warm(ctx); made != 0 || !errors.Is(err, images.ErrNoRoom) {
 		t.Errorf("made %d, err %v: want a stop at ErrNoRoom", made, err)
 	}
-	s.Images.PlaceholderWidth = 0 // a copy's turn to find no room
+	s.Images.PlaceholderWidth = 0
 	if made, err := s.Warm(ctx); made != 0 || !errors.Is(err, images.ErrNoRoom) {
 		t.Errorf("made %d, err %v: want a stop at ErrNoRoom", made, err)
 	}
 }
 
-// held makes copies in this process, the first one held until it's let go:
-// a warming in the middle of a copy.
 type held struct {
 	p       *images.Pipeline
 	started chan struct{}
@@ -374,8 +359,6 @@ func (h *held) Make(ctx context.Context, src, dst string, width, quality int) er
 	return images.InProcess{Pipeline: h.p}.Make(ctx, src, dst, width, quality)
 }
 
-// Uploads that come while a warming runs queue one more between them, not
-// one each; it makes every copy they need.
 func TestWarmLaterQueuesOne(t *testing.T) {
 	s := newStorage(t)
 	var logged strings.Builder
@@ -384,7 +367,7 @@ func TestWarmLaterQueuesOne(t *testing.T) {
 	h := &held{p: s.Images, started: make(chan struct{}), release: make(chan struct{})}
 	s.Images.Maker = h
 	first, _ := s.Attach(ctx, clip(1), File{"a.jpg", picture(t, 200, 100)})
-	<-h.started // the first upload's warming is making a copy
+	<-h.started
 	var later []Blob
 	for id := int64(2); id <= 5; id++ {
 		b, err := s.Attach(ctx, clip(id), File{"b.jpg", picture(t, 200, 100)})
@@ -405,7 +388,6 @@ func TestWarmLaterQueuesOne(t *testing.T) {
 	}
 }
 
-// syncWriter is a writer for goroutines' logs.
 type syncWriter struct {
 	mu sync.Mutex
 	w  io.Writer
@@ -417,8 +399,6 @@ func (s *syncWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
-// Rows Rails wrote read as they are: its timestamps, its metadata, and its
-// variant records, which purging clears.
 func TestRailsRows(t *testing.T) {
 	s := newStorage(t)
 	key := "abcdefghijklmnopqrstuvwxyz01"
@@ -447,7 +427,6 @@ func TestRailsRows(t *testing.T) {
 	}
 }
 
-// Without Rails' variant records table, purging still works.
 func TestPurgeWithoutVariantRecords(t *testing.T) {
 	s := newStorage(t)
 	s.DB.Write.Exec(`DROP TABLE active_storage_variant_records`)

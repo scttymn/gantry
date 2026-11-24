@@ -106,8 +106,6 @@ func Tags(s Site, p Page) templ.Component {
 	})
 }
 
-// absolute is ref as an absolute address: as it is when it has a scheme,
-// else joined to base; "" when it can't be (no base, or no ref).
 func absolute(base, ref string) string {
 	if ref == "" {
 		return ""

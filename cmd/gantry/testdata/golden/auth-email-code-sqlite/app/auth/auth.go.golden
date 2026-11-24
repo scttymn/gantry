@@ -1,5 +1,3 @@
-// Package auth connects Gantry's email-code authentication to this app's views.
-// Code issuance, verification, limits and sessions stay in gantry/auth.
 package auth
 
 import (
@@ -16,10 +14,6 @@ import (
 type Auth = gantryauth.Auth
 type User = gantryauth.User
 
-// New selects email-code login. key must be a random secret of at least 32
-// bytes from AUTH_CODE_KEY. Use a real sender or a development mail capture;
-// mail.Log cannot deliver codes. A session ends 30 days unused or 90 days
-// after sign-in; gantryauth.NoLimit lifts either.
 func New(d *db.DB, signer sign.Signer, sender mail.Sender, from string, key []byte) *Auth {
 	return &Auth{
 		DB: d, Signer: signer, Mail: sender, From: from,

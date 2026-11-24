@@ -23,8 +23,6 @@ func Migrations(t testing.TB, d *db.DB, fsys fs.FS, table string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The schema before each migration, and once they've all run: each is
-	// applied alone, by migrating a copy of fsys that ends at it.
 	before := make([]string, 0, len(st)+1)
 	upTo := fstest.MapFS{}
 	for _, m := range st {

@@ -17,7 +17,6 @@ var (
 	traceKey = NewKey[[]string]("trace")
 )
 
-// trace is a filter that notes its name in Current, in order.
 func trace(name string) Filter {
 	return func(w http.ResponseWriter, r *http.Request) error {
 		t, _ := Get(r, traceKey)
@@ -26,7 +25,6 @@ func trace(name string) Filter {
 	}
 }
 
-// answer is a handler that writes what the filters before it left.
 func answer(w http.ResponseWriter, r *http.Request) error {
 	t, _ := Get(r, traceKey)
 	u, _ := Get(r, userKey)
@@ -37,7 +35,7 @@ func answer(w http.ResponseWriter, r *http.Request) error {
 func serve(h http.Handler, method, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(method, path, nil)
-	r.Header.Set("Accept", "text/plain") // the bare status, not a page
+	r.Header.Set("Accept", "text/plain")
 	h.ServeHTTP(w, r)
 	return w
 }
@@ -73,17 +71,17 @@ func TestPipelines(t *testing.T) {
 	h := rt.Handler()
 
 	for _, tc := range []struct{ path, code, body string }{
-		{"/open", "200", "handler,"},                                 // no scope, no filters
-		{"/admin/dashboard?as=sam", "200", "a,b,handler,sam"},        // in order, Current passed on
-		{"/admin/deep/?as=sam", "200", "a,b,c,handler,sam"},          // the outer scope's first
-		{"/admin/dashboard", "302", "<a href=\"/login\">Found</a>."}, // a filter that answers ends it
-		{"/api/ping", "401", ""},                                     // a filter's error, answered as a handler's
+		{"/open", "200", "handler,"},
+		{"/admin/dashboard?as=sam", "200", "a,b,handler,sam"},
+		{"/admin/deep/?as=sam", "200", "a,b,c,handler,sam"},
+		{"/admin/dashboard", "302", "<a href=\"/login\">Found</a>."},
+		{"/api/ping", "401", ""},
 		{"/api/ping?token=ok", "200", "handler,"},
-		{"/api/files/x?token=ok", "200", "a file"}, // Mount, through the scope's filters
+		{"/api/files/x?token=ok", "200", "a file"},
 		{"/api/files/x", "401", ""},
-		{"/api/posts/7?token=ok", "200", "post 7"}, // Resources, prefixed and filtered
+		{"/api/posts/7?token=ok", "200", "post 7"},
 		{"/api/posts/7", "401", ""},
-		{"/dashboard", "404", ""}, // a scope's routes are only under its prefix
+		{"/dashboard", "404", ""},
 	} {
 		w := serve(h, "GET", tc.path)
 		if got := strings.TrimSpace(w.Body.String()); strconv.Itoa(w.Code) != tc.code || got != tc.body {
@@ -108,12 +106,10 @@ func TestCurrent(t *testing.T) {
 	if u, ok := Get(r, userKey); !ok || u.Name != "sam" {
 		t.Errorf("Get = %v, %v", u, ok)
 	}
-	// Two keys with one name are two keys.
 	other := NewKey[user]("user")
 	if _, ok := Get(r, other); ok {
 		t.Error("another key with the same name read the first's value")
 	}
-	// A request that didn't come through a router has no Current to set.
 	defer func() {
 		if v := recover(); v == nil || !strings.Contains(v.(string), "WithCurrent") {
 			t.Errorf("Set without Current: %v", v)
@@ -122,7 +118,6 @@ func TestCurrent(t *testing.T) {
 	Set(httptest.NewRequest("GET", "/", nil), userKey, user{})
 }
 
-// Each request has a Current of its own.
 func TestCurrentPerRequest(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Scope("", Pipeline{trace("x")}, func(s *Scope) { s.Handle("GET /t", answer) })

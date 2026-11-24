@@ -10,8 +10,6 @@ import (
 
 var checkDevelopment = devcheck.Scan
 
-// checkFlags are gantry check's: --strict or --rules, and --json; or
-// --generated alone.
 func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON, generated *bool) {
 	fs = flagSet("check")
 	strict = fs.Bool("strict", false, "fail on a violation")
@@ -21,8 +19,6 @@ func checkFlags() (fs *flag.FlagSet, strict, rules, asJSON, generated *bool) {
 	return fs, strict, rules, asJSON, generated
 }
 
-// checkReport is check --json's: the counts, and every finding in the
-// order the text lists them. Its field names are stable.
 type checkReport struct {
 	Violations int            `json:"violations"`
 	Advisories int            `json:"advisories"`
@@ -30,10 +26,12 @@ type checkReport struct {
 }
 
 type checkFinding struct {
-	File     string `json:"file"`
-	Line     int    `json:"line"` // 0: the file as a whole
-	Rule     string `json:"rule"`
-	Severity string `json:"severity"` // "error" (a violation) or "advice"
+	File string `json:"file"`
+	// 0: the file as a whole
+	Line int    `json:"line"`
+	Rule string `json:"rule"`
+	// "error" (a violation) or "advice"
+	Severity string `json:"severity"`
 	Message  string `json:"message"`
 }
 

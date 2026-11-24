@@ -10,11 +10,6 @@ import (
 	"strings"
 )
 
-// The rules here hold an app to its layout (docs/plans/gantry.md, "An app's
-// layout"), so they read only what's under app/.
-
-// appPackage is a file's package path under app/: "" for app itself (where
-// routes.go is), "posts/comments" for app/posts/comments.
 func appPackage(file string) (string, bool) {
 	if !strings.HasPrefix(file, "app/") {
 		return "", false
@@ -22,10 +17,6 @@ func appPackage(file string) (string, bool) {
 	return strings.TrimPrefix(strings.TrimPrefix(path.Dir(file), "app"), "/"), true
 }
 
-// layer is where an app package sits in "routes.go → resources → services →
-// models, and anything → shared", but for models: app/shared holds page
-// shells and resource helpers, which import web and templ. mailers and jobs
-// are none of these.
 func layer(pkg string) string {
 	first, _, _ := strings.Cut(pkg, "/")
 	switch {
@@ -41,7 +32,6 @@ func layer(pkg string) string {
 
 func within(imp, pkg string) bool { return imp == pkg || strings.HasPrefix(imp, pkg+"/") }
 
-// boundary is why app/from mustn't import imp, "" when it may.
 func boundary(module, from, imp string) string {
 	importer := "app/" + from
 	to, internal := "", false
@@ -98,9 +88,6 @@ func checkImportBoundary(s *Source, report func(int, string)) error {
 	return nil
 }
 
-// checkViewDB finds a view (a .templ file) that holds the database: the
-// app's models.New or Queries, gantry's db.DB, Tx or Querier, or a DB's Read
-// or Write pool.
 func checkViewDB(s *Source, report func(int, string)) error {
 	if _, ok := appPackage(s.Path); !ok {
 		return nil
@@ -163,7 +150,6 @@ func checkBackgroundWork(s *Source, report func(int, string)) error {
 	})
 }
 
-// rawSQL are the methods that run SQL on a *sql.DB or a *sql.Tx.
 var rawSQL = []string{"Exec", "ExecContext", "Query", "QueryContext", "QueryRow", "QueryRowContext", "Prepare", "PrepareContext", "Begin", "BeginTx"}
 
 func checkSQLOutsideModels(s *Source, report func(int, string)) error {
@@ -233,8 +219,6 @@ func isGantryTx(name string, stack []ast.Node, aliases map[string]string) bool {
 	return false
 }
 
-// pools tells which of a DB's pools a query runs on: models.New(c.DB.Read)
-// or a name given it in the function.
 type pools struct {
 	models string
 	named  map[string]string
@@ -276,8 +260,6 @@ func (p pools) name(lhs []ast.Expr, rhs []ast.Expr) {
 	}
 }
 
-// txClosure is the function a db.Tx call runs, x.Tx(ctx, fn), nil for
-// anything else.
 func txClosure(n ast.Node) *ast.FuncLit {
 	call, ok := n.(*ast.CallExpr)
 	if !ok || len(call.Args) != 2 {
@@ -290,9 +272,6 @@ func txClosure(n ast.Node) *ast.FuncLit {
 	return fn
 }
 
-// visitFunctions calls visit once for each function, with a walk of its own
-// nodes: what a Tx closure in it does is the function's, and any other
-// function literal (a handler routed inline) is a function of its own.
 func visitFunctions(s *Source, visit func(walk func(func(ast.Node)), aliases map[string]string, offset func(token.Pos) int)) error {
 	return visitNodes(s, func(n ast.Node, stack []ast.Node, aliases map[string]string, offset func(token.Pos) int) {
 		var body *ast.BlockStmt
@@ -374,7 +353,6 @@ func checkReadThenWrite(s *Source, report func(int, string)) error {
 	})
 }
 
-// getActions are the actions Resources routes GET to.
 var getActions = []string{"Index", "Show", "New", "Edit"}
 
 func checkGetMutates(s *Source, report func(int, string)) error {
@@ -442,8 +420,6 @@ func isHandler(fn *ast.FuncType, aliases map[string]string) bool {
 	return pkg == "net/http" && name == "ResponseWriter"
 }
 
-// getRoute is the pattern a function is routed to, as Handle or Cached's
-// handler, when that's a GET: its method GET or HEAD, or none.
 func getRoute(fn *ast.FuncLit, stack []ast.Node) (string, bool) {
 	if len(stack) < 2 {
 		return "", false

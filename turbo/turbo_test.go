@@ -71,7 +71,6 @@ func TestRequests(t *testing.T) {
 	if Accepts(r) || Frame(r) != "" {
 		t.Error("a plain request")
 	}
-	// What Turbo sends with a form.
 	r.Header.Set("Accept", "text/vnd.turbo-stream.html, text/html, application/xhtml+xml")
 	r.Header.Set("Turbo-Frame", "new_message")
 	r.Header.Set("X-Turbo-Request-Id", "abc-1")

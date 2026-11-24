@@ -7,8 +7,6 @@ import (
 	"github.com/scttymn/gantry/web"
 )
 
-// ConfigureSocial adds Apple/Google identities to this existing Auth. Call once
-// before Routes. Missing provider credentials leave existing auth unchanged.
 func ConfigureSocial(a *Auth, getenv func(string) string) error {
 	social, err := gantryauth.SocialFromEnv(getenv)
 	if err != nil {
@@ -16,7 +14,6 @@ func ConfigureSocial(a *Auth, getenv func(string) string) error {
 	}
 	a.Social = social
 	a.Views.Identities = func(w http.ResponseWriter, r *http.Request, p gantryauth.Page) error {
-		// Not pageStatus: an app whose auth.go predates it can add this recipe.
 		status := http.StatusOK
 		if p.Status != 0 {
 			status = p.Status

@@ -19,16 +19,14 @@ import (
 
 var flashKey = NewKey[string]("flash")
 
-// cached is a router with a page cache over a few routes that count their
-// renders, at a clock and data version the test moves.
 type cached struct {
 	h       http.Handler
 	renders atomic.Int64
 	version atomic.Int64
 	now     time.Time
 	cache   *PageCache
-	gate    chan struct{} // when set, /slow waits for it
-	steady  atomic.Value  // what /steady says: the same every render until changed
+	gate    chan struct{}
+	steady  atomic.Value
 }
 
 func newCached(t *testing.T) *cached {
@@ -400,7 +398,7 @@ func TestPageCache(t *testing.T) {
 		for i := range bodies {
 			wg.Go(func() { bodies[i] = c.get("/slow").Body.String() })
 		}
-		time.Sleep(50 * time.Millisecond) // let them all arrive
+		time.Sleep(50 * time.Millisecond)
 		close(c.gate)
 		wg.Wait()
 		if c.renders.Load() != 1 {
@@ -425,7 +423,7 @@ func TestPageCache(t *testing.T) {
 				got[who] = rec
 				mu.Unlock()
 			})
-			time.Sleep(20 * time.Millisecond) // ada's render starts first; grace waits on it
+			time.Sleep(20 * time.Millisecond)
 		}
 		close(c.gate)
 		wg.Wait()
@@ -502,12 +500,6 @@ func TestPageCache(t *testing.T) {
 	})
 }
 
-// A kept page says when it last changed: its first render after a start (a
-// deploy), or the first render whose content differed from the one before
-// (an edit in the admin, a class that's begun). Rendered again the same, it
-// keeps its date. If-Modified-Since gets a 304 then, as If-None-Match does:
-// a proxy in front that drops ETags (Cloudflare does, when it may rewrite
-// HTML) passes Last-Modified on.
 func TestPageCacheLastModified(t *testing.T) {
 	lastModified := func(t *testing.T, rec *httptest.ResponseRecorder) time.Time {
 		t.Helper()
@@ -537,8 +529,8 @@ func TestPageCacheLastModified(t *testing.T) {
 	t.Run("rendered again the same, it keeps its time", func(t *testing.T) {
 		c := newCached(t)
 		first := lastModified(t, c.get("/steady"))
-		c.now = c.now.Add(2 * time.Minute) // past its max age
-		c.version.Add(1)                   // and a write elsewhere
+		c.now = c.now.Add(2 * time.Minute)
+		c.version.Add(1)
 		rec := c.get("/steady", "If-Modified-Since", since(first))
 		if c.renders.Load() != 2 {
 			t.Fatalf("%d renders; the page should have been made again", c.renders.Load())

@@ -1,7 +1,5 @@
 .cache/
 .gantry/
-# What the build makes (`shop assets`): the scripts minified, the
-# pictures' copies.
 assets/built/*
 !assets/built/.gitkeep
 .env

@@ -94,8 +94,6 @@ func (a *Auth) codeDigest(purpose, value string) string {
 	return hex.EncodeToString(m.Sum(nil))
 }
 
-// codeLimit atomically reserves a slot; its conditional upsert serializes
-// callers sharing the bucket on both SQLite and PostgreSQL.
 func (a *Auth) codeLimit(ctx context.Context, tx *db.Tx, key string, limit int, window time.Duration, now time.Time) error {
 	var n int
 	err := tx.QueryRowContext(ctx, `INSERT INTO auth_code_limits (bucket, count, expires_at) VALUES ($1, 1, $2)
@@ -165,8 +163,6 @@ challenge_digest = excluded.challenge_digest, code_digest = excluded.code_digest
 	msg := mail.Message{From: a.From, To: email, Subject: "Your sign-in code",
 		Text: "Your sign-in code is: " + code + "\n\nIt expires in 10 minutes and can be used only once.\nIf you didn't request this code, you can ignore this email.\n"}
 	if err := a.Mail.Send(ctx, msg); err != nil {
-		// A request may have been cancelled during delivery. Invalidate only
-		// its own challenge, without accidentally deleting a later resend.
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_, cleanupErr := a.DB.Write.ExecContext(cleanup, `DELETE FROM auth_login_codes WHERE challenge_digest = $1`, digest)
@@ -203,14 +199,14 @@ WHERE challenge_digest = $1 AND expires_at > $2 AND attempts < $3
 RETURNING email_address, code_digest`, digest, now.Unix(), CodeAttempts).Scan(&email, &expected)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
-		} // Commit the IP attempt.
+		}
 		if err != nil {
 			return err
 		}
 		actual := a.codeDigest("login", digest+"\x00"+email+"\x00"+strings.TrimSpace(code))
 		if !hmac.Equal([]byte(expected), []byte(actual)) {
 			return nil
-		} // Commit the failed guess.
+		}
 		user, err = a.findBy(ctx, tx, "email_address", email)
 		if errors.Is(err, ErrNoUser) && a.EmailCodes.Signup {
 			if a.EmailCodes.CreateUser != nil {
@@ -288,8 +284,6 @@ func (a *Auth) sendCode(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		to := a.paths().Login
-		// A failed resend must leave the browser able to use its earlier
-		// challenge (unless delivery failed after it was replaced).
 		if _, pending, ok := a.codeRequest(r); ok && pending == email {
 			to += "/verify"
 		}

@@ -103,7 +103,6 @@ func TestFirstUserSetup(t *testing.T) {
 					}
 				})
 			}
-			// Cross-origin requests are rejected by the same Gantry router protection.
 			r := httptest.NewRequest("POST", "https://example.com/sign-in/setup", strings.NewReader(setupForm(code, "owner@example.com").Encode()))
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			r.Header.Set("Sec-Fetch-Site", "cross-site")
@@ -145,7 +144,6 @@ func TestFirstUserSetup(t *testing.T) {
 			if count != 1 {
 				t.Fatal("stale form created another account")
 			}
-			// Losing every user does not re-enable the wizard, including after restart.
 			a.DB.Write.Exec(`DELETE FROM sessions`)
 			a.DB.Write.Exec(`DELETE FROM users`)
 			h = setupHandler(a)

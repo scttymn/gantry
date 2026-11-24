@@ -263,7 +263,6 @@ func TestSocialRoundTrip(t *testing.T) {
 				if f.finish(v, code, c).Code != 400 {
 					t.Fatal("replayed flow accepted")
 				}
-				// Provider subject stays linked when email changes; no duplicate user.
 				v, c = f.begin(t, false)
 				w = f.finish(v, f.issue(v, map[string]any{"email": "changed@example.com", "email_verified": false}), c)
 				session = sessionCookie(t, w)
@@ -341,7 +340,6 @@ func TestSocialStateProtection(t *testing.T) {
 			case "provider-error":
 				f.fail = true
 			case "signature":
-				// Cache an unrelated public key before signing the response with a new key.
 				payload, _ := json.Marshal(map[string]any{"iss": f.p.issuer, "aud": "client", "sub": "none", "nonce": "x", "exp": f.a.now().Add(time.Hour).Unix(), "iat": f.a.now().Unix()})
 				signer, _ := jose.NewSigner(jose.SigningKey{Algorithm: jose.RS256, Key: f.key}, (&jose.SignerOptions{}).WithHeader("kid", "test"))
 				j, _ := signer.Sign(payload)
@@ -384,7 +382,6 @@ func TestSocialLinking(t *testing.T) {
 					t.Fatal("unverified password email auto-linked")
 				}
 			}
-			// OTP proves the existing user's email; the next social login auto-links.
 			challenge, err := f.a.RequestLoginCode(t.Context(), user.EmailAddress, "ip")
 			if err != nil {
 				t.Fatal(err)
@@ -405,7 +402,6 @@ func TestSocialLinking(t *testing.T) {
 			if n != 1 {
 				t.Fatal("duplicate user")
 			}
-			// A different subject cannot replace an already-linked Google identity.
 			v, c = f.begin(t, true, session)
 			w = f.finish(v, f.issue(v, map[string]any{"sub": "different", "email": "different@gmail.com"}), c)
 			for _, cookie := range w.Result().Cookies() {
@@ -413,8 +409,6 @@ func TestSocialLinking(t *testing.T) {
 					t.Fatal("replaced existing identity")
 				}
 			}
-			// Revoking the database session stops linking, including Apple's callback
-			// where the ordinary SameSite=Lax session cookie would not be present.
 			v, c = f.begin(t, true, session)
 			f.a.DB.Write.Exec(`DELETE FROM sessions`)
 			w = f.finish(v, f.issue(v, nil), c)

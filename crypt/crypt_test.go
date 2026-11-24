@@ -58,7 +58,6 @@ func TestRoundTrip(t *testing.T) {
 	if err := d.Read.QueryRow(`SELECT token FROM secrets WHERE id = 2`).Scan(&empty); err != nil || empty.Reveal() != "" || stored != "" {
 		t.Errorf("an empty value: stored %q, read %q, %v", stored, empty.Reveal(), err)
 	}
-	// The same value twice isn't stored the same: each has its own nonce.
 	a, _ := Of("x").Value()
 	b, _ := Of("x").Value()
 	if a == b {
@@ -66,8 +65,6 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-// The newest key encrypts, every key decrypts: rotate by putting the new
-// one first, then re-saving rows.
 func TestRotation(t *testing.T) {
 	use(t, oldKey)
 	written, _ := Of("secret").Value()
@@ -80,7 +77,7 @@ func TestRotation(t *testing.T) {
 	if strings.Split(rewritten.(string), ":")[2] == strings.Split(written.(string), ":")[2] {
 		t.Error("re-saving didn't move it to the newest key")
 	}
-	use(t, newKey) // the old key retired
+	use(t, newKey)
 	if err := s.Scan(written); err == nil || !strings.Contains(err.Error(), "no key") {
 		t.Errorf("a retired key's value: %v", err)
 	}
@@ -101,7 +98,7 @@ func TestRefusals(t *testing.T) {
 			t.Errorf("%s: read", name)
 		}
 	}
-	for _, n := range []int{5, 16, 24} { // 16 and 24 would be AES-128 and -192
+	for _, n := range []int{5, 16, 24} {
 		if err := Use(make([]byte, n)); err == nil {
 			t.Errorf("a %d-byte key", n)
 		}
@@ -112,7 +109,6 @@ func TestRefusals(t *testing.T) {
 	}
 }
 
-// A secret never shows where it could leak: printed, logged, or as JSON.
 func TestFiltered(t *testing.T) {
 	s := Of("cf-api-token-123")
 	var logs bytes.Buffer

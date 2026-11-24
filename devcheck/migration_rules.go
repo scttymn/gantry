@@ -5,7 +5,6 @@ import (
 	"regexp"
 )
 
-// gooseDown is the line goose starts a migration's down section with.
 var gooseDown = regexp.MustCompile(`(?m)^-- \+goose Down[ \t\r]*$`)
 
 func checkMigrationDown(s *Source, report func(int, string)) error {

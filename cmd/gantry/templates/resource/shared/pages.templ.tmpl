@@ -15,8 +15,6 @@ templ notice(p Page) {
 	}
 }
 
-// ListPage is a resource's list, as Rails' scaffold's index: a row for each
-// record, with a link to edit it, and one to make a new one.
 templ ListPage(p Page, l List) {
 	@layout.Layout(layout.Page{Title: p.Title, Path: p.Path}) {
 		<main class="resource">
@@ -47,8 +45,6 @@ templ ListPage(p Page, l List) {
 	}
 }
 
-// FormPage is a record's new or edit page, as Rails' scaffold's form: its
-// fields, what's wrong when it's sent back, and on an edit, deleting it.
 templ FormPage(p Page, f Form) {
 	@layout.Layout(layout.Page{Title: p.Title, Path: p.Path}) {
 		<main class="resource">

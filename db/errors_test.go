@@ -9,7 +9,6 @@ import (
 	"github.com/scttymn/gantry/internal/testenv"
 )
 
-// constraintSchema makes a parent and a child table on d's engine.
 func constraintSchema(t *testing.T, d *DB) {
 	t.Helper()
 	id := "integer PRIMARY KEY"
@@ -64,7 +63,6 @@ func TestConstraintErrorsPostgres(t *testing.T) {
 	checkConstraintErrors(t, d)
 }
 
-// ErrStale is answered 409 Conflict (Rails' StaleObjectError).
 func TestErrStale(t *testing.T) {
 	var s interface{ HTTPStatus() int }
 	if !errors.As(fmt.Errorf("saving: %w", ErrStale), &s) || s.HTTPStatus() != 409 {

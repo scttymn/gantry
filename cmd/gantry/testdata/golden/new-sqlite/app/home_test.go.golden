@@ -18,8 +18,6 @@ import (
 	"example.com/shop/test"
 )
 
-// newApp is the app on a test database, its jobs defined; they run when
-// the test calls a.Jobs.Drain.
 func newApp(t *testing.T) *app.App {
 	t.Setenv("DATA_DIR", t.TempDir())
 	d := test.DB(t)
@@ -57,7 +55,6 @@ func TestHome(t *testing.T) {
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "Shop is running.") {
 		t.Fatalf("GET / = %d\n%s", w.Code, w.Body)
 	}
-	// Every stylesheet, script and image the page refers to loads.
 	testkit.Links(t, h, testkit.Page{Path: "/"})
 }
 

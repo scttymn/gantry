@@ -1,5 +1,3 @@
-// Package hygiene holds checks on the repository's files themselves, the
-// patterns an agent copies from whatever it finds here.
 package hygiene
 
 import (
@@ -21,14 +19,8 @@ import (
 	"github.com/scttymn/gantry/internal/pins"
 )
 
-// checkout is the repository's root, from this package's directory.
 var checkout = filepath.Join("..", "..")
 
-// git runs git in root. Without git, or a repository it can read, the test is
-// skipped, or fails when CI is set: there a skip would pass unseen. bin/go
-// can't read a worktree's repository, whose .git names a directory outside
-// the container. safe.directory: CI's container runs as root on a checkout
-// the runner's user owns.
 func git(t *testing.T, root string, args ...string) []byte {
 	t.Helper()
 	out, err := exec.Command("git", append([]string{"-C", root, "-c", "safe.directory=*"}, args...)...).Output()
@@ -41,8 +33,6 @@ func git(t *testing.T, root string, args ...string) []byte {
 	return out
 }
 
-// files calls each with every text file git tracks under root, by its
-// slash-separated path from root.
 func files(t *testing.T, root string, each func(name, text string)) {
 	t.Helper()
 	for _, name := range strings.Split(strings.TrimSuffix(string(git(t, root, "ls-files", "-z")), "\x00"), "\x00") {
@@ -57,8 +47,6 @@ func files(t *testing.T, root string, each func(name, text string)) {
 	}
 }
 
-// Only what git tracks is checked: a contributor's .env, scratch app or
-// editor files never reach the repository.
 func TestFilesAreTracked(t *testing.T) {
 	root := t.TempDir()
 	git(t, root, "init", "-q")
@@ -78,8 +66,6 @@ func TestFilesAreTracked(t *testing.T) {
 	}
 }
 
-// shellchecked is what bin/shellcheck --list names in root, a checkout with
-// the script.
 func shellchecked(t *testing.T, root string) []string {
 	t.Helper()
 	cmd := exec.Command(filepath.Join(root, "bin/shellcheck"), "--list")
@@ -91,9 +77,6 @@ func shellchecked(t *testing.T, root string) []string {
 	return strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
 }
 
-// bin/shellcheck finds the scripts itself: every file git tracks whose first
-// line runs sh, bash, dash or ksh, or that's named as a shell script, a
-// generator's template or golden of one too.
 func TestShellcheckListsScripts(t *testing.T) {
 	root := t.TempDir()
 	git(t, root, "init", "-q")
@@ -129,10 +112,6 @@ func TestShellcheckListsScripts(t *testing.T) {
 	}
 }
 
-// CI's shellcheck step (bin/shellcheck) reads every script here, each one
-// executable or starting with #!: one added anywhere is checked, with no list
-// to add it to. Every script here is a shell script; one that isn't fails
-// here until this test knows it.
 func TestEveryScriptIsShellchecked(t *testing.T) {
 	executable := map[string]bool{}
 	for _, entry := range strings.Split(strings.TrimSuffix(string(git(t, checkout, "ls-files", "-s", "-z")), "\x00"), "\x00") {
@@ -160,10 +139,6 @@ var (
 	gooseDown = regexp.MustCompile(`(?m)^-- \+goose Down[ \t\r]*$`)
 )
 
-// migrationProblem is whether name is a goose migration, and what's wrong
-// with it ("" when nothing is). A SQL file is one by its place (a migrations
-// directory, a generator's migration.sql.tmpl), so a mistyped Up line doesn't
-// hide it, or by its Up line wherever it is.
 func migrationProblem(name, text string) (bool, string) {
 	if !strings.HasSuffix(name, ".sql") && !strings.HasSuffix(name, ".sql.tmpl") && !strings.HasSuffix(name, ".sql.golden") {
 		return false, ""
@@ -203,9 +178,6 @@ func TestMigrationProblem(t *testing.T) {
 	}
 }
 
-// Every goose migration here (jobs', the generators' templates and their
-// goldens, bench/feed's) has its up and down sections. Rolling back stops at
-// one without a down, and testkit.Migrations checks no migration older than it.
 func TestMigrationsHaveDown(t *testing.T) {
 	n := 0
 	files(t, checkout, func(name, text string) {
@@ -227,10 +199,6 @@ var (
 	testFunc = regexp.MustCompile(`\bfunc (Test[A-Z][A-Za-z0-9_]*)\(`)
 )
 
-// staleTestNames is each test named in texts (file → text) that no text
-// defines, with the files that name it. A definition counts wherever it is:
-// a _test.go file, a template or golden of one, or a string a test writes
-// out as a file.
 func staleTestNames(texts map[string]string) map[string][]string {
 	defined := map[string]bool{}
 	for _, text := range texts {
@@ -250,7 +218,6 @@ func staleTestNames(texts map[string]string) map[string][]string {
 }
 
 func TestStaleTestNames(t *testing.T) {
-	// Built here, so this file's own text names none of them.
 	a, b, gone := "Test"+"A", "Test"+"B", "Test"+"Gone"
 	got := staleTestNames(map[string]string{
 		"a_test.go":       "package a\n\n// Like " + b + ".\nfunc " + a + "(t *testing.T) {}\n",
@@ -263,9 +230,6 @@ func TestStaleTestNames(t *testing.T) {
 	}
 }
 
-// Every test the repository names (in a comment, a workflow, a doc, a
-// message) is one it has: a test renamed or replaced leaves no pointer to
-// nothing behind. docs/plans records what was, and keeps its old names.
 func TestNamedTestsExist(t *testing.T) {
 	texts := map[string]string{}
 	files(t, checkout, func(name, text string) {
@@ -281,10 +245,6 @@ func TestNamedTestsExist(t *testing.T) {
 
 var templStamp = regexp.MustCompile(`(?m)^// templ: version: (\S+)$`)
 
-// Every _templ.go here (bench/feed's) was made by the templ gantry builds
-// with: one made by another can call what pins.Templ's runtime hasn't (or has
-// no more). gantry new's views aren't generated until an app runs templ, so
-// bumping templ means regenerating these.
 func TestTemplCodeIsPinned(t *testing.T) {
 	n := 0
 	files(t, checkout, func(name, text string) {
@@ -305,14 +265,9 @@ func TestTemplCodeIsPinned(t *testing.T) {
 	}
 }
 
-// email is an address (its first group) and its domain (its second). It
-// doesn't start just after a backslash: in "\t@templ.Raw(x)", a templ call in
-// a Go string, the t is the escape's.
 var email = regexp.MustCompile(`(?:^|[^\\A-Za-z0-9._%+-])([A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]+))`)
 
-// exampleDomain is a domain reserved for examples (RFC 2606, RFC 6761, and
-// .internal).
-func exampleDomain(domain string) bool {
+func reservedByRFC2606OrInternal(domain string) bool {
 	domain = strings.ToLower(domain)
 	for _, d := range []string{"example.com", "example.net", "example.org"} {
 		if domain == d || strings.HasSuffix(domain, "."+d) {
@@ -323,20 +278,17 @@ func exampleDomain(domain string) bool {
 	return slices.Contains([]string{"example", "test", "invalid", "localhost", "internal"}, tld)
 }
 
-// providerDomains are the mail providers social login treats specially
-// (auth/social_provider.go), allowed only in the tests of it.
 var providerDomains = map[string][]string{
 	"auth/social_test.go": {"gmail.com", "privaterelay.appleid.com"},
 }
 
-// addressProblems is the email addresses in name that aren't examples.
 func addressProblems(name, text string) []string {
 	if strings.HasPrefix(name, "docs/plans/") {
 		return nil
 	}
 	var bad []string
 	for _, m := range email.FindAllStringSubmatch(text, -1) {
-		if !exampleDomain(m[2]) && !slices.Contains(providerDomains[name], strings.ToLower(m[2])) {
+		if !reservedByRFC2606OrInternal(m[2]) && !slices.Contains(providerDomains[name], strings.ToLower(m[2])) {
 			bad = append(bad, m[1])
 		}
 	}
@@ -344,7 +296,6 @@ func addressProblems(name, text string) []string {
 }
 
 func TestAddressProblems(t *testing.T) {
-	// Built here, so this file's own text holds none of them.
 	at := func(local, domain string) string { return local + "@" + domain }
 	gmail, relay, real, short := at("someone", "gmail.com"), at("relay", "privaterelay.appleid.com"), at("person", "realcompany.co"), at("a", "b.c")
 	for _, c := range []struct {
@@ -367,9 +318,6 @@ func TestAddressProblems(t *testing.T) {
 	}
 }
 
-// Email addresses in code, tests, goldens and docs are made up, at a domain
-// reserved for examples: a real one is someone's, or an app's (d681bf7).
-// docs/plans quotes the conversations gantry was planned in.
 func TestEmailAddressesAreExamples(t *testing.T) {
 	files(t, checkout, func(name, text string) {
 		for _, bad := range addressProblems(name, text) {
@@ -378,8 +326,6 @@ func TestEmailAddressesAreExamples(t *testing.T) {
 	})
 }
 
-// modules is the directory, from the checkout's root, of each module git
-// tracks.
 func modules(t *testing.T) (dirs []string) {
 	t.Helper()
 	files(t, checkout, func(name, _ string) {
@@ -390,8 +336,6 @@ func modules(t *testing.T) (dirs []string) {
 	return dirs
 }
 
-// A dependabotUpdate is one of .github/dependabot.yml's updates, the part
-// of it these tests read.
 type dependabotUpdate struct {
 	Ecosystem   string                    `yaml:"package-ecosystem"`
 	Directories []string                  `yaml:"directories"`
@@ -413,8 +357,6 @@ func dependabotUpdates(t *testing.T) []dependabotUpdate {
 	return config.Updates
 }
 
-// Each group says by its patterns which dependencies are in it: Dependabot
-// takes a group without them for all, and its configuration check may not.
 func TestDependabotGroupsHavePatterns(t *testing.T) {
 	for _, u := range dependabotUpdates(t) {
 		for name, group := range u.Groups {
@@ -425,12 +367,6 @@ func TestDependabotGroupsHavePatterns(t *testing.T) {
 	}
 }
 
-// What's in more than one module is one version in each: each module that
-// has modernc.org/sqlite or github.com/mattn/go-sqlite3 has the root's
-// (a bump of one module alone leaves the others behind), and modernc.org/sqlite
-// has the modernc.org/libc its go.mod requires, which it runs on and no
-// other ("Fragile modernc.org/libc dependency", its docs say). go get
-// modernc.org/sqlite brings that one, and Dependabot leaves libc alone.
 func TestModulesHaveGantrysSQLite(t *testing.T) {
 	gomod := func(dir string, args ...string) string {
 		t.Helper()
@@ -442,7 +378,6 @@ func TestModulesHaveGantrysSQLite(t *testing.T) {
 		}
 		return string(out)
 	}
-	// selected is each module's build list: a module's path and version.
 	selected := func(dir string) map[string]string {
 		versions := map[string]string{}
 		for line := range strings.Lines(gomod(dir, "list", "-m", "-f", "{{.Path}} {{.Version}}", "all")) {
@@ -477,9 +412,6 @@ func TestModulesHaveGantrysSQLite(t *testing.T) {
 	}
 }
 
-// Every module here is checked tidy by ci.yml (bin/ci runs the same list:
-// TestBinCIRunsTheCIWorkflow) and bumped by Dependabot in the pull request
-// that bumps it at the root, so a new module isn't left out of either.
 func TestModulesAreAllChecked(t *testing.T) {
 	workflow, err := os.ReadFile(filepath.Join(checkout, ".github/workflows/ci.yml"))
 	if err != nil {

@@ -18,7 +18,6 @@ export function greet ( name ) {
 }
 `
 
-// built is fsys with what Precompile wrote into dir, as the build embeds it.
 func built(t *testing.T, fsys fstest.MapFS, dir string) fstest.MapFS {
 	t.Helper()
 	out := fstest.MapFS{}
@@ -46,8 +45,6 @@ func served(t *testing.T, a *Assets, name string) string {
 	return w.Body.String()
 }
 
-// The build minifies each script; the app serves the minified one, under
-// its own fingerprint, and the import map names it.
 func TestPrecompileScripts(t *testing.T) {
 	src := fstest.MapFS{"js/greet.js": {Data: []byte(script)}, "css/site.css": {Data: []byte("body{}")}}
 	a, err := New(src)
@@ -60,7 +57,7 @@ func TestPrecompileScripts(t *testing.T) {
 	plain := a.Path("greet.js")
 	dir := t.TempDir()
 	os.MkdirAll(filepath.Join(dir, "js"), 0o755)
-	os.WriteFile(filepath.Join(dir, "js", "0123456789abcdef.js"), []byte("old"), 0o644) // a gone source's
+	os.WriteFile(filepath.Join(dir, "js", "0123456789abcdef.js"), []byte("old"), 0o644)
 	if _, err := a.Precompile(context.Background(), dir); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +82,6 @@ func TestPrecompileScripts(t *testing.T) {
 		t.Errorf("the build's files became assets: %d", len(b.byName))
 	}
 
-	// A script edited since the build is served as it is now.
 	edited := built(t, src, dir)
 	edited["js/greet.js"] = &fstest.MapFile{Data: []byte(script + "export const version = 2\n")}
 	c, err := New(edited)
@@ -97,8 +93,6 @@ func TestPrecompileScripts(t *testing.T) {
 	}
 }
 
-// A vendored package's license travels with it: the build's minifying keeps
-// a /*! */ comment, as MIT asks of every copy.
 func TestPrecompileKeepsLicenses(t *testing.T) {
 	const license = "/*!\nLib 1.0\nCopyright (c) Someone\nPermission is hereby granted\n*/"
 	src := fstest.MapFS{"js/vendor/lib.js": {Data: []byte("// lib@1.0 downloaded from https://example.com\n\n" + license + "\nexport const lib = 1 + 2\n")}}
@@ -119,7 +113,6 @@ func TestPrecompileKeepsLicenses(t *testing.T) {
 	}
 }
 
-// With Images, the build makes the pictures' copies too, under images/.
 func TestPrecompilePictures(t *testing.T) {
 	a, im := pictures(t)
 	dir := t.TempDir()

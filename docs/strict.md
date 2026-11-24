@@ -123,3 +123,41 @@ source without running the app. `testkit.Verify` checks the map against
 `Router.Routes` in the app's `TestFeatures`. `bin/gantry verify` runs that test
 to check each feature's pages, its caching headers, and that cached pages
 aren't shown across users.
+
+## Comments
+
+Comments go stale, nothing checks them, and they give a workaround a place to
+explain itself instead of being fixed. Names, types and tests are checked by
+the compiler and CI, so that's where intent goes. The `comments` rule holds
+gantry and its apps to that:
+
+- Gantry's own Go has doc comments on exported names (functions, methods,
+  types, constants, variables, struct fields and interface methods) and on
+  package clauses, and no other comment: none inside a function, none
+  trailing a line, none on an unexported name, none in a `_test.go` file
+  (a test isn't documented API: its name says what it checks).
+- An app, and every template in `cmd/gantry/templates` that `gantry new` and
+  the generators write it from, has no comments at all, doc comments and
+  tests included.
+- `TODO`, `FIXME`, `HACK` and `XXX` are reported anywhere, doc comments
+  included: a plan is an issue, linked from the pull request. Commented-out
+  code is reported too: git keeps the old version.
+- What stays is what a tool reads: `//go:` directives, `//nolint:<linter> //
+  <reason>` (a bare `//nolint` is reported), sqlc's `-- name:` and goose's
+  `-- +goose Up`, `Down`, `StatementBegin` and `StatementEnd`, cgo's preamble,
+  a script's `#!` line and `go.mod`'s `// indirect`. A license header is the
+  one other exception the policy allows, when gantry adopts one (#37); the
+  packages `importmap pin` vendors keep theirs, and aren't read.
+
+Go is parsed with its comments, and each comment group belongs to what it
+documents or the function it's in. Templates, SQL, `.templ`, YAML, shell,
+JavaScript and CSS are read a line at a time, with each one's comment markers:
+a marker counts at the start of a line or after a space, so `https://` and
+`"#fff"` aren't comments. Go that says it's generated (sqlc's, templ's) isn't
+read. `bench/` is modules of its own, and `bench/feed` is checked as the app it
+is.
+
+The rule takes no exceptions in `.gantry-check.json`: an exception for it
+fails the scan. There's no baseline either; gantry and `bench/feed` pass it
+(`TestGantryPassesStrict`), and every generated app does
+(`TestGeneratorMatrix`, `TestGolden`).

@@ -16,14 +16,6 @@ import (
 	"example.com/shop/db/seeds"
 )
 
-// dbCommand is `shop db ...`, Rails' db: tasks:
-//
-//	migrate       runs what's pending; in development it rewrites db/schema.sql
-//	rollback [N]  undoes the last migration (or N)
-//	status        every migration, and whether it ran
-//	seed          db/seeds
-//	reset         development only: an empty database, migrated and seeded
-//	console       psql on the database (or gantry's own console)
 func dbCommand(ctx context.Context, cfg config.Config, args []string, in io.Reader, out, errOut io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprint(errOut, usage)
@@ -107,8 +99,6 @@ func dbCommand(ctx context.Context, cfg config.Config, args []string, in io.Read
 	return 0
 }
 
-// writeSchema rewrites db/schema.sql: the schema the migrations leave, for
-// sqlc and for reading (Rails' schema file).
 func writeSchema(ctx context.Context, d *db.DB) error {
 	s, err := d.Schema(ctx, migrations.Table)
 	if err != nil {
@@ -117,8 +107,6 @@ func writeSchema(ctx context.Context, d *db.DB) error {
 	return os.WriteFile("db/schema.sql", []byte(s), 0o644)
 }
 
-// reset empties the database, in development only (Rails protects every
-// other environment the same way).
 func reset(ctx context.Context, cfg config.Config) error {
 	if !cfg.Development() {
 		return errors.New("reset empties the database, so it runs in development only (GANTRY_ENV=development)")
@@ -132,9 +120,6 @@ func reset(ctx context.Context, cfg config.Config) error {
 	return err
 }
 
-// console is psql on the database, attached to the terminal
-// (Rails' dbconsole), or gantry's own SQL console where it isn't installed:
-// the production image has only the app.
 func console(ctx context.Context, cfg config.Config, in io.Reader, out, errOut io.Writer) int {
 	cmd := exec.Command("psql", cfg.DatabaseURL)
 	if cmd.Err != nil {

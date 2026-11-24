@@ -1,3 +1,0 @@
-# Every page may be crawled. To keep crawlers out:
-# User-agent: *
-# Disallow: /

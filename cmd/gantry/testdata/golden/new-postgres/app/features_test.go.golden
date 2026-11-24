@@ -6,12 +6,6 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// TestFeatures checks every route is in a feature of test/features.yaml,
-// then visits each feature's pages as each role (testkit.Verify):
-// bin/gantry verify runs it. Roles signs a visitor in as each role but
-// public, as the nth (0 or 1) of two test users of it, and returns what
-// only that user's pages show (their email). The app has no sign-in yet, so
-// a feature for signed-in or admin visitors fails until it has one here.
 func TestFeatures(t *testing.T) {
 	rt := newApp(t).Router()
 	testkit.Verify(t, rt.Handler(), rt.Routes(), "../test/features.yaml", testkit.Roles{})

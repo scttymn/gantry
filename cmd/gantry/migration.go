@@ -10,13 +10,8 @@ import (
 	"time"
 )
 
-// now is when a migration is generated, for its file name; tests set it.
 var now = time.Now
 
-// A column's SQL on each engine. Text is NOT NULL with an empty default, so sqlc gives
-// it a plain string (the gym site's plain columns); a number, a position or
-// a date may be unset, as the resource generator's forms expect; required
-// makes it NOT NULL.
 var columnTypes = map[string]struct{ sqlite, postgres string }{
 	"string":   {"text NOT NULL DEFAULT ''", "text NOT NULL DEFAULT ''"},
 	"text":     {"text NOT NULL DEFAULT ''", "text NOT NULL DEFAULT ''"},
@@ -27,7 +22,6 @@ var columnTypes = map[string]struct{ sqlite, postgres string }{
 	"datetime": {"datetime", "timestamptz"},
 }
 
-// column is one column's definition, for engine ("sqlite" or "postgresql").
 func column(engine, name, typ string, required bool) (string, error) {
 	t, ok := columnTypes[typ]
 	if !ok {
@@ -43,10 +37,6 @@ func column(engine, name, typ string, required bool) (string, error) {
 	return fmt.Sprintf("%q %s", name, sql), nil
 }
 
-// generateMigration writes db/migrations/<timestamp>_<name>.sql. As Rails',
-// the name shapes it: create_posts makes the table (with id, created_at and
-// updated_at), add_email_to_users adds the fields as columns, and anything
-// else is an empty up and down to fill in.
 func generateMigration(root string, args []string, out io.Writer) error {
 	if len(args) < 1 || !columnName.MatchString(args[0]) {
 		return errors.New("a migration name in snake_case: create_posts, add_email_to_users")
@@ -86,9 +76,6 @@ func generateMigration(root string, args []string, out io.Writer) error {
 			drops = append([]string{fmt.Sprintf("ALTER TABLE %q DROP COLUMN %q;", table, names[i])}, drops...)
 		}
 		up, down = strings.Join(adds, "\n"), strings.Join(drops, "\n")
-	default:
-		up = "-- The change: SQL for this app's engine (" + engine + ")."
-		down = "-- What undoes it. Left empty, the migration can't be rolled back."
 	}
 
 	dir := filepath.Join(root, "db", "migrations")
@@ -96,15 +83,20 @@ func generateMigration(root string, args []string, out io.Writer) error {
 		return err
 	}
 	file := now().UTC().Format("20060102150405") + "_" + name + ".sql"
-	body := "-- +goose Up\n" + up + "\n\n-- +goose Down\n" + down + "\n"
+	body := "-- +goose Up\n\n-- +goose Down\n"
+	if up != "" {
+		body = "-- +goose Up\n" + up + "\n\n-- +goose Down\n" + down + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, file), []byte(body), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintln(out, "  wrote", filepath.Join("db", "migrations", file))
+	if up == "" {
+		fmt.Fprintf(out, "  write the change in it under -- +goose Up, in SQL for this app's engine (%s), and what undoes it under -- +goose Down: left empty, the migration can't be rolled back\n", engine)
+	}
 	return nil
 }
 
-// sqlcEngine is the engine sqlc.yaml names: "sqlite" when there's none.
 func sqlcEngine(root string) string {
 	data, _ := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
 	for _, line := range strings.Split(string(data), "\n") {

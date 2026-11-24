@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// posts has every action; drafts only some.
 type posts struct{}
 
 func (posts) Index(w http.ResponseWriter, r *http.Request) error { return say(w, "index") }

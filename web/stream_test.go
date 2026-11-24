@@ -17,10 +17,6 @@ import (
 	"time"
 )
 
-// logBuffer is the server's log, read by the test: the server writes it
-// from its own goroutines, so it takes a lock. (The test reads it after the
-// client has seen what follows the write, over the network, which orders
-// them, but isn't anything the race detector can see.)
 type logBuffer struct {
 	mu  sync.Mutex
 	buf bytes.Buffer
@@ -38,8 +34,6 @@ func (l *logBuffer) String() string {
 	return l.buf.String()
 }
 
-// streamApp serves a stream that says its first part, then waits for
-// next before ending.
 func streamApp(t *testing.T, contentType string, next chan struct{}) (*httptest.Server, *logBuffer) {
 	t.Helper()
 	logs := &logBuffer{}
@@ -47,7 +41,6 @@ func streamApp(t *testing.T, contentType string, next chan struct{}) (*httptest.
 	rt.Handle("GET /stream", func(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Content-Type", contentType)
 		rc := http.NewResponseController(w)
-		// A long stream moves its own write deadline.
 		deadline := rc.SetWriteDeadline(time.Now().Add(time.Hour))
 		fmt.Fprintf(w, "data: first deadline=%v\n\n", deadline)
 		if err := rc.Flush(); err != nil {
@@ -87,8 +80,6 @@ func TestStreams(t *testing.T) {
 		if gzipped {
 			body = gunzip(t, resp.Body)
 		}
-		// The first part arrives while the handler is still waiting: nothing
-		// held it back. (Held back, it would never come: give up after 5s.)
 		giveUp := time.AfterFunc(5*time.Second, func() { resp.Body.Close() })
 		line, err := bufio.NewReader(body).ReadString('\n')
 		giveUp.Stop()
@@ -103,9 +94,6 @@ func TestStreams(t *testing.T) {
 	}
 }
 
-// A failure after the response started can't be a page any more: the
-// connection is cut, so the client sees an error, not a page that looks
-// whole.
 func TestFailureMidStream(t *testing.T) {
 	srv, logs := streamApp(t, "text/plain", make(chan struct{}))
 	resp, err := http.Get(srv.URL + "/half")
@@ -122,7 +110,6 @@ func TestFailureMidStream(t *testing.T) {
 	}
 }
 
-// A client that leaves cancels the handler's work, and that isn't an error.
 func TestClientLeaves(t *testing.T) {
 	stopped := make(chan struct{}, 1)
 	srv, logs := streamApp(t, "text/plain", stopped)

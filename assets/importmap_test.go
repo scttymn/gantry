@@ -61,7 +61,6 @@ func TestImportMap(t *testing.T) {
 	if err := json.Unmarshal([]byte(mapJSON[1]), &parsed); err != nil || len(parsed.Imports) != len(want) {
 		t.Errorf("the map: %v %v", parsed, err)
 	}
-	// Preloads in the order pinned, then the entry.
 	preloads := regexp.MustCompile(`<link rel="modulepreload" href="([^"]+)">`).FindAllStringSubmatch(page, -1)
 	if len(preloads) != 8 || preloads[0][1] != want["application"] || preloads[1][1] != want["@hotwired/turbo"] {
 		t.Errorf("preloads: %v", preloads)
@@ -75,7 +74,6 @@ func TestImportMap(t *testing.T) {
 		t.Errorf("another entry: %s", b.String())
 	}
 
-	// The hashes are of the scripts as drawn.
 	hash := func(s string) string {
 		sum := sha256.Sum256([]byte(s))
 		return "'sha256-" + base64.StdEncoding.EncodeToString(sum[:]) + "'"
@@ -87,7 +85,6 @@ func TestImportMap(t *testing.T) {
 		t.Errorf("another entry's hashes: %s", got)
 	}
 
-	// The files are served, as JavaScript.
 	w := httptest.NewRecorder()
 	a.Handler().ServeHTTP(w, httptest.NewRequest("GET", want["application"], nil))
 	if w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/javascript") || w.Body.String() != `import "@hotwired/turbo"` {
@@ -95,7 +92,6 @@ func TestImportMap(t *testing.T) {
 	}
 }
 
-// A name that could close the script can't: the map is escaped JSON.
 func TestImportMapEscapes(t *testing.T) {
 	a, _ := New(scripts)
 	m := a.ImportMap(Pin("</script><script>alert(1)</script>", "application.js"))

@@ -1,14 +1,9 @@
--- A sortable list: by position, then id, as the Rails app's
--- order(:position, :id); an unset position sorts first.
-
 -- name: ListPillars :many
 SELECT * FROM pillars ORDER BY position, id;
 
 -- name: GetPillar :one
 SELECT * FROM pillars WHERE id = sqlc.arg(id);
 
--- The row, read in the transaction that changes it, so no other change
--- lands between the read and the write: SQLite's transaction holds the write lock already.
 -- name: GetPillarForUpdate :one
 SELECT * FROM pillars WHERE id = sqlc.arg(id);
 
@@ -24,7 +19,5 @@ WHERE id = sqlc.arg(id);
 -- name: DeletePillar :exec
 DELETE FROM pillars WHERE id = sqlc.arg(id);
 
--- A new pillar with no position goes last, as Rails' Positioned.
--- BIGINT is int64 on both engines, as the position column is.
 -- name: NextPillarPosition :one
 SELECT CAST(COALESCE(MAX(position), 0) + 1 AS BIGINT) AS position FROM pillars;

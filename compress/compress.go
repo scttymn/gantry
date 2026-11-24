@@ -18,8 +18,6 @@ import (
 	"strings"
 	"sync"
 
-	// The standard library's API and format, at about twice its speed: gzip
-	// is a third of a page's CPU otherwise (docs/plans/gantry.md, Evidence).
 	"github.com/klauspost/compress/gzip"
 )
 
@@ -54,8 +52,6 @@ func Compressible(contentType string) bool {
 	t = strings.ToLower(strings.TrimSpace(t))
 	switch {
 	case t == "text/event-stream":
-		// A stream of events arrives as it's sent: gzip would hold each
-		// event back in its buffer, and proxies buffer compressed streams.
 		return false
 	case strings.HasPrefix(t, "text/"):
 		return true
@@ -70,7 +66,7 @@ func Compressible(contentType string) bool {
 func Bytes(data []byte) []byte {
 	var b bytes.Buffer
 	w, _ := gzip.NewWriterLevel(&b, gzip.BestCompression)
-	_, _ = w.Write(data) // into memory, which can't fail
+	_, _ = w.Write(data)
 	w.Close()
 	return b.Bytes()
 }
@@ -98,7 +94,6 @@ func Handler(next http.Handler) http.Handler {
 	})
 }
 
-// writer decides at the first header or byte whether to compress.
 type writer struct {
 	http.ResponseWriter
 	gz      *gzip.Writer

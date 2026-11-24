@@ -1,6 +1,3 @@
--- The schema as the migrations leave it, for sqlc and for reading. It's
--- written from the migrations; don't edit it by hand.
-
 CREATE TABLE likes (
   user_id     INTEGER NOT NULL REFERENCES users(id),
   post_id     INTEGER NOT NULL REFERENCES posts(id),

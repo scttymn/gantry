@@ -28,14 +28,12 @@ type backupArgs struct {
 
 var start = time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC)
 
-// onEngines runs test on SQLite, then on Postgres.
 func onEngines(t *testing.T, test func(t *testing.T, engine string)) {
 	for _, engine := range []string{"sqlite", "postgres"} {
 		t.Run(engine, func(t *testing.T) { test(t, engine) })
 	}
 }
 
-// queue is a queue on a fresh database of engine, on a clock the test moves.
 func queue(t *testing.T, engine string, o Options) (*Queue, *db.DB, *testkit.FakeClock) {
 	t.Helper()
 	var d *db.DB
@@ -63,7 +61,6 @@ func queue(t *testing.T, engine string, o Options) (*Queue, *db.DB, *testkit.Fak
 	return q, d, clock
 }
 
-// ran records a job's runs.
 type ran struct {
 	mu   sync.Mutex
 	args []backupArgs
@@ -101,7 +98,6 @@ func testEnqueueAndRun(t *testing.T, engine string) {
 	}
 }
 
-// Inside a transaction, a job is saved with the change or not at all.
 func TestEnqueueTx(t *testing.T) { onEngines(t, testEnqueueTx) }
 
 func testEnqueueTx(t *testing.T, engine string) {
@@ -196,7 +192,6 @@ func testRetries(t *testing.T, engine string) {
 	if len(failed) != 1 || failed[0].Name != "hopeless" || failed[0].Error != "never" || failed[0].Attempts != 2 {
 		t.Errorf("failed %+v", failed)
 	}
-	// Retried by hand, it runs again.
 	if err := q.Retry(ctx, failed[0].ID); err != nil {
 		t.Fatal(err)
 	}
@@ -205,8 +200,6 @@ func testRetries(t *testing.T, engine string) {
 	}
 }
 
-// No retries unless asked (Active Job's default), and Discard gives up at
-// once whatever the retries.
 func TestNoRetriesAndDiscard(t *testing.T) { onEngines(t, testNoRetriesAndDiscard) }
 
 func testNoRetriesAndDiscard(t *testing.T, engine string) {
@@ -260,7 +253,6 @@ func testTimeout(t *testing.T, engine string) {
 	}
 }
 
-// A panic is a failure like any other: logged, and the queue goes on.
 func TestPanic(t *testing.T) { onEngines(t, testPanic) }
 
 func testPanic(t *testing.T, engine string) {
@@ -276,8 +268,6 @@ func testPanic(t *testing.T, engine string) {
 	}
 }
 
-// At most N at a time per key: a job over the limit waits its turn, or is
-// discarded when the limit says so; another key runs.
 func TestLimits(t *testing.T) { onEngines(t, testLimits) }
 
 func testLimits(t *testing.T, engine string) {
@@ -316,7 +306,6 @@ func testLimits(t *testing.T, engine string) {
 	}
 	close(release)
 
-	// A finished job frees its slot for the next.
 	q3, _, _ := queue(t, engine, Options{})
 	var ran3 atomic.Int32
 	one := Define(q3, "deploy", func(ctx context.Context, s string) error { ran3.Add(1); return nil },
@@ -328,7 +317,6 @@ func testLimits(t *testing.T, engine string) {
 		t.Errorf("%d of two ran one after the other", ran3.Load())
 	}
 
-	// Discarding instead of waiting.
 	q2, _, _ := queue(t, engine, Options{})
 	var ran atomic.Int32
 	once := Define(q2, "sync", func(ctx context.Context, s string) error { ran.Add(1); return nil },
@@ -346,7 +334,6 @@ func testLimits(t *testing.T, engine string) {
 	}
 }
 
-// A limit held by a process that crashed expires (Solid Queue's 3 minutes).
 func TestLimitExpires(t *testing.T) { onEngines(t, testLimitExpires) }
 
 func testLimitExpires(t *testing.T, engine string) {
@@ -368,8 +355,6 @@ func testLimitExpires(t *testing.T, engine string) {
 	}
 }
 
-// A job that runs past its limit's Duration loses its slot to the next one;
-// once both finish, the limit is still To at once, not one more.
 func TestLimitOutlived(t *testing.T) { onEngines(t, testLimitOutlived) }
 
 func testLimitOutlived(t *testing.T, engine string) {
@@ -405,7 +390,6 @@ func testLimitOutlived(t *testing.T, engine string) {
 	}
 }
 
-// Workers claiming at once take no more than a limit's To between them.
 func TestLimitConcurrentClaims(t *testing.T) { onEngines(t, testLimitConcurrentClaims) }
 
 func testLimitConcurrentClaims(t *testing.T, engine string) {
@@ -435,8 +419,6 @@ func testLimitConcurrentClaims(t *testing.T, engine string) {
 	}
 }
 
-// However many jobs over a discarding limit are ahead, they're dropped and
-// the job behind them runs.
 func TestLimitDiscardsMany(t *testing.T) { onEngines(t, testLimitDiscardsMany) }
 
 func testLimitDiscardsMany(t *testing.T, engine string) {
@@ -461,8 +443,6 @@ func testLimitDiscardsMany(t *testing.T, engine string) {
 	}
 }
 
-// A stalled worker whose job was claimed again doesn't free the slot the new
-// claim holds.
 func TestStaleWorkerLimit(t *testing.T) { onEngines(t, testStaleWorkerLimit) }
 
 func testStaleWorkerLimit(t *testing.T, engine string) {
@@ -488,8 +468,6 @@ func testStaleWorkerLimit(t *testing.T, engine string) {
 	}
 }
 
-// A job whose failure can't be saved stays claimed, to be run again, so it
-// isn't given up on: OnExhausted doesn't run.
 func TestSettleFails(t *testing.T) { onEngines(t, testSettleFails) }
 
 func testSettleFails(t *testing.T, engine string) {
@@ -505,8 +483,6 @@ func testSettleFails(t *testing.T, engine string) {
 	}
 }
 
-// failWrites makes the database refuse event (INSERT or UPDATE) on
-// gantry_jobs where when holds, until it's undone.
 func failWrites(t *testing.T, d *db.DB, event, when string) (undo func()) {
 	t.Helper()
 	ctx := context.Background()
@@ -529,8 +505,6 @@ func failWrites(t *testing.T, d *db.DB, event, when string) (undo func()) {
 	}
 }
 
-// Jobs waiting on their limit don't hold up the ones behind them, however
-// many wait.
 func TestLimitHeadOfLine(t *testing.T) { onEngines(t, testLimitHeadOfLine) }
 
 func testLimitHeadOfLine(t *testing.T, engine string) {
@@ -550,9 +524,6 @@ func testLimitHeadOfLine(t *testing.T, engine string) {
 	}
 }
 
-// A worker that stalls past Dead, its job gone back and claimed again (by
-// another process, or another worker of its own), ends late: what it ends
-// with is dropped, not written over the new claim.
 func TestStaleWorker(t *testing.T) { onEngines(t, testStaleWorker) }
 
 func testStaleWorker(t *testing.T, engine string) {
@@ -596,8 +567,6 @@ func testStaleWorker(t *testing.T, engine string) {
 
 var errReset = errors.New("connection reset")
 
-// brokenRead is a database whose read of jobs fails after its first row, as
-// a dropped connection does; other queries find nothing.
 type brokenRead struct{}
 
 func (brokenRead) Connect(context.Context) (driver.Conn, error) { return brokenRead{}, nil }
@@ -635,8 +604,6 @@ func (r *rows) Next(dest []driver.Value) error {
 	return nil
 }
 
-// A claim whose read fails partway fails, rather than claiming from what it
-// read before the failure.
 func TestClaimReadFails(t *testing.T) {
 	broken := sql.OpenDB(brokenRead{})
 	defer broken.Close()
@@ -659,14 +626,13 @@ func testRecurring(t *testing.T, engine string) {
 	if err := Define(q, "backup", func(ctx context.Context, s string) error { nightly.Add(1); return nil }, Opts[string]{}).Cron("0 3 * * *", chicago, "x"); err != nil {
 		t.Fatal(err)
 	}
-	// A second process running the same schedules enqueues nothing twice.
 	q2, err := New(ctx, d, Options{Now: clock.Now, Log: slog.New(slog.DiscardHandler)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	Define(q2, "sweep", func(ctx context.Context, s string) error { every.Add(1); return nil }, Opts[string]{}).Every(10*time.Minute, "x")
 
-	for range 6 { // an hour, ten minutes at a time
+	for range 6 {
 		clock.Advance(10 * time.Minute)
 		q2.Drain(ctx)
 		drain(t, q)
@@ -674,13 +640,11 @@ func testRecurring(t *testing.T, engine string) {
 	if every.Load() != 6 {
 		t.Errorf("every ten minutes for an hour: %d runs, want 6", every.Load())
 	}
-	// 3:00 in Chicago is 8:00 UTC (daylight time): after 20 hours, once.
 	clock.Advance(20 * time.Hour)
 	drain(t, q)
 	if nightly.Load() != 1 {
 		t.Errorf("the nightly backup ran %d times", nightly.Load())
 	}
-	// The twenty hours' missed sweeps aren't made up: one, then on schedule.
 	drain(t, q)
 	if every.Load() != 7 {
 		t.Errorf("after twenty hours idle: %d sweeps, want 7 (one, not a backlog)", every.Load())
@@ -690,8 +654,6 @@ func testRecurring(t *testing.T, engine string) {
 	}
 }
 
-// A tick whose job isn't saved isn't recorded either: the next tick enqueues
-// the run, rather than finding it taken.
 func TestRecurringInsertFails(t *testing.T) { onEngines(t, testRecurringInsertFails) }
 
 func testRecurringInsertFails(t *testing.T, engine string) {
@@ -711,8 +673,6 @@ func testRecurringInsertFails(t *testing.T, engine string) {
 	}
 }
 
-// A process whose ticker stalls past Keep doesn't enqueue the run it missed:
-// that run's tick may be cleared by then, and another process ran it.
 func TestRecurringStalledPastKeep(t *testing.T) { onEngines(t, testRecurringStalledPastKeep) }
 
 func testRecurringStalledPastKeep(t *testing.T, engine string) {
@@ -740,7 +700,6 @@ func testRecurringStalledPastKeep(t *testing.T, engine string) {
 	}
 }
 
-// A recurring job's ticks are kept as long as finished jobs, then cleared.
 func TestTicksCleared(t *testing.T) { onEngines(t, testTicksCleared) }
 
 func testTicksCleared(t *testing.T, engine string) {
@@ -766,7 +725,6 @@ func testTicksCleared(t *testing.T, engine string) {
 	}
 }
 
-// Finished jobs are kept a day, then cleared; failed ones stay.
 func TestClearing(t *testing.T) { onEngines(t, testClearing) }
 
 func testClearing(t *testing.T, engine string) {
@@ -792,8 +750,6 @@ func testClearing(t *testing.T, engine string) {
 	}
 }
 
-// A process that stops heartbeating (it crashed) has its claimed jobs put
-// back, for another to run.
 func TestCrashedProcess(t *testing.T) { onEngines(t, testCrashedProcess) }
 
 func testCrashedProcess(t *testing.T, engine string) {
@@ -817,7 +773,7 @@ func testCrashedProcess(t *testing.T, engine string) {
 	if r.Load() != 0 {
 		t.Fatal("released while its process might be alive")
 	}
-	clock.Advance(2 * time.Minute) // silent for six; the other, still beating
+	clock.Advance(2 * time.Minute)
 	q.beat(ctx, "alive")
 	q.maintain(ctx)
 	drain(t, q)
@@ -826,9 +782,6 @@ func testCrashedProcess(t *testing.T, engine string) {
 	}
 }
 
-// Run: workers per queue, at most the queue's concurrency at once, woken by
-// an enqueue; on shutdown, running jobs get their grace, then their
-// contexts end and they go back to the queue.
 func TestRun(t *testing.T) { onEngines(t, testRun) }
 
 func testRun(t *testing.T, engine string) {

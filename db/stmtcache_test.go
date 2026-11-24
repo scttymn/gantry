@@ -13,8 +13,6 @@ import (
 	"time"
 )
 
-// counts is what reached the driver: statements compiled and closed through
-// the cache, and SQL handed to the driver to run as it would with no cache.
 type counts struct{ prepared, closed, direct atomic.Int64 }
 
 func (n *counts) open() int64 { return n.prepared.Load() - n.closed.Load() }
@@ -61,7 +59,6 @@ type countingStmt struct {
 	n *counts
 }
 
-// Unwrap is the driver's statement it counts for: keepable reads it.
 func (s *countingStmt) Unwrap() driver.Stmt { return s.sqliteStmt }
 
 func (s *countingStmt) Close() error {
@@ -69,8 +66,6 @@ func (s *countingStmt) Close() error {
 	return s.sqliteStmt.Close()
 }
 
-// countedPool is one connection to a new database, through the statement
-// cache, over a driver that counts.
 func countedPool(t *testing.T) (*sql.DB, *counts) {
 	t.Helper()
 	return countedPoolAt(t, filepath.Join(t.TempDir(), "test.sqlite3"))
@@ -89,8 +84,6 @@ func countedPoolAt(t *testing.T, path string) (*sql.DB, *counts) {
 	return pool, n
 }
 
-// plainPool is one connection through the driver alone: what the cache is
-// compared with.
 func plainPool(t *testing.T) *sql.DB {
 	t.Helper()
 	c, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
@@ -133,13 +126,10 @@ func ints(t *testing.T, q Querier, query string, args ...any) []int {
 	return got
 }
 
-// SQL an app runs again is compiled once on a connection, not on every call.
 func TestStatementCachePreparesOnce(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
 	mustExec(t, pool, things)
-	// The connection is open: what it ran setting itself up (limitLog) is
-	// counted by now.
 	direct := n.direct.Load()
 	mustExec(t, pool, `INSERT INTO things (id, name) VALUES (1, 'one')`)
 	before := n.prepared.Load()
@@ -157,8 +147,6 @@ func TestStatementCachePreparesOnce(t *testing.T) {
 	}
 }
 
-// The other door: a transaction's writes, a row read back from an INSERT and
-// an Exec, are compiled once however many transactions run them.
 func TestStatementCacheInTransactions(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
@@ -189,7 +177,6 @@ func TestStatementCacheInTransactions(t *testing.T) {
 	}
 }
 
-// answer is everything a statement's run tells its caller.
 type answer struct {
 	Columns  []string
 	Types    []string
@@ -230,8 +217,6 @@ func queryAnswer(q Querier, query string, args ...any) (a answer) {
 }
 
 func execAnswer(q Querier, query string, args ...any) (a answer) {
-	// The driver's result for SQL with no statement in it is nil, and asking
-	// it anything panics: that's an answer too, and the cache gives the same.
 	defer func() {
 		if v := recover(); v != nil {
 			a = answer{Err: fmt.Sprint("panic: ", v)}
@@ -246,8 +231,6 @@ func execAnswer(q Querier, query string, args ...any) (a answer) {
 	return a
 }
 
-// same runs a statement on the plain driver and through the cache, and
-// reports any difference in what they answer.
 func same(t *testing.T, plain, cached Querier, run func(Querier, string, ...any) answer, query string, args ...any) answer {
 	t.Helper()
 	want, got := run(plain, query, args...), run(cached, query, args...)
@@ -257,8 +240,6 @@ func same(t *testing.T, plain, cached Querier, run func(Querier, string, ...any)
 	return got
 }
 
-// Through the cache a statement answers as the driver alone does, the first
-// time (compiled) and again (kept), whatever its arguments are.
 func TestStatementCacheMatchesDriver(t *testing.T) {
 	plain := plainPool(t)
 	cached, _ := countedPool(t)
@@ -279,16 +260,12 @@ func TestStatementCacheMatchesDriver(t *testing.T) {
 		same(t, plain, cached, queryAnswer, `INSERT INTO kinds (n) VALUES (?) RETURNING id, n`, int64(3))
 		same(t, plain, cached, execAnswer, `UPDATE kinds SET n = n + 1 WHERE n IS NOT NULL`)
 		same(t, plain, cached, execAnswer, `DELETE FROM kinds WHERE id = ?`, 99)
-		// Too few arguments, and too many.
 		same(t, plain, cached, queryAnswer, `SELECT id FROM kinds WHERE n = ? AND s = ?`, int64(7))
 		same(t, plain, cached, queryAnswer, `SELECT id FROM kinds WHERE n = ?`, int64(7), "extra")
 		same(t, plain, cached, execAnswer, `DELETE FROM kinds WHERE id = ? AND n = ?`, 99)
 	}
 }
 
-// database/sql asks a connection and its rows what more they can do, and
-// through the cache they can do exactly what the driver's can: a driver
-// that gains one shows here.
 func TestStatementCacheKeepsDriverInterfaces(t *testing.T) {
 	ctx := context.Background()
 	base, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
@@ -320,7 +297,6 @@ func TestStatementCacheKeepsDriverInterfaces(t *testing.T) {
 		(*driver.ConnBeginTx)(nil), (*driver.ConnPrepareContext)(nil), (*driver.ExecerContext)(nil),
 		(*driver.QueryerContext)(nil), (*driver.Pinger)(nil), (*driver.SessionResetter)(nil),
 		(*driver.Validator)(nil), (*driver.NamedValueChecker)(nil))
-	// What the cache runs a kept statement through.
 	stmt, err := raw.(driver.ConnPrepareContext).PrepareContext(ctx, `SELECT 1`)
 	if err != nil {
 		t.Fatal(err)
@@ -345,16 +321,12 @@ func TestStatementCacheKeepsDriverInterfaces(t *testing.T) {
 		(*driver.RowsColumnTypeScanType)(nil), (*driver.RowsNextResultSet)(nil))
 }
 
-// The same SQL run again while its rows are still being read, in one
-// transaction: the kept statement is in use, so the second run has one of
-// its own, and neither loses a row.
 func TestStatementCacheSameQueryNested(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
 	mustExec(t, pool, things)
 	mustExec(t, pool, `INSERT INTO things (id, name) VALUES (1, 'one'), (2, 'two'), (3, 'three')`)
 	const query = `SELECT id FROM things WHERE id > ? ORDER BY id`
-	// Kept, by a first run.
 	if got := ints(t, pool, query, 0); !reflect.DeepEqual(got, []int{1, 2, 3}) {
 		t.Fatalf("got %v", got)
 	}
@@ -384,7 +356,6 @@ func TestStatementCacheSameQueryNested(t *testing.T) {
 		t.Errorf("the outer rows: %v, %v; want 1 2 3", got, err)
 	}
 	outer.Close()
-	// Free again, and still the kept one.
 	if got := ints(t, tx, query, 1); !reflect.DeepEqual(got, []int{2, 3}) {
 		t.Errorf("afterwards: %v", got)
 	}
@@ -396,9 +367,6 @@ func TestStatementCacheSameQueryNested(t *testing.T) {
 	}
 }
 
-// What isn't one good statement behaves as the driver alone has it: a
-// script runs whole, nothing does nothing, and SQL that doesn't compile is
-// the driver's error each time, with nothing kept.
 func TestStatementCacheScriptsAndErrors(t *testing.T) {
 	plain := plainPool(t)
 	cached, n := countedPool(t)
@@ -429,11 +397,6 @@ func TestStatementCacheScriptsAndErrors(t *testing.T) {
 	same(t, plain, cached, queryAnswer, `SELECT 1`)
 }
 
-// A PRAGMA does its work, or reads its value, as it's compiled, not as it's
-// run: kept and run again it would do nothing, or answer with what was true
-// the first time. SQLite sees to it (it compiles a PRAGMA again each time
-// one is run), so set, read and set again answer as the driver alone has
-// them, as do the other statements that aren't a read or a write of rows.
 func TestStatementCachePragmas(t *testing.T) {
 	plain := plainPool(t)
 	cached, _ := countedPool(t)
@@ -465,8 +428,6 @@ func TestStatementCachePragmas(t *testing.T) {
 	}
 }
 
-// SQL is kept however it's written: sqlc's queries start with a comment
-// naming them.
 func TestStatementCacheCommentedSQL(t *testing.T) {
 	plain := plainPool(t)
 	cached, n := countedPool(t)
@@ -486,8 +447,6 @@ func TestStatementCacheCommentedSQL(t *testing.T) {
 	}
 }
 
-// A statement refused by a constraint is still good: the error is the
-// driver's own, and the same SQL with other values goes in.
 func TestStatementCacheAfterConstraintError(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
@@ -515,16 +474,11 @@ func TestStatementCacheAfterConstraintError(t *testing.T) {
 	}
 }
 
-// A query cancelled part-way, in its first step or between rows, and the
-// same SQL runs right afterwards. The driver may have database/sql drop the
-// connection it interrupted, and a new one compiles its own: what was kept
-// on the dropped one is closed with it.
 func TestStatementCacheAfterCancel(t *testing.T) {
 	pool, n := countedPool(t)
 	const count = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT count(*) FROM c`
 	const each = `WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c WHERE x < ?) SELECT x FROM c`
 
-	// Kept, then cancelled in the one long step that counts.
 	var total int
 	if err := pool.QueryRowContext(context.Background(), count, 10).Scan(&total); err != nil || total != 10 {
 		t.Fatalf("got %d, %v", total, err)
@@ -538,7 +492,6 @@ func TestStatementCacheAfterCancel(t *testing.T) {
 		t.Errorf("after the cancelled count: %d, %v", total, err)
 	}
 
-	// Cancelled between rows, its rows left open.
 	ctx, cancel = context.WithCancel(context.Background())
 	rows, err := pool.QueryContext(ctx, each, int64(1)<<40)
 	if err != nil {
@@ -565,9 +518,6 @@ func TestStatementCacheAfterCancel(t *testing.T) {
 	}
 }
 
-// A kept statement follows the schema, as a migration on another connection
-// changes it: a new column is in SELECT *, a dropped table is an error, and
-// the table made again is read again.
 func TestStatementCacheAfterSchemaChange(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.sqlite3")
 	reader, n := countedPoolAt(t, path)
@@ -596,13 +546,10 @@ func TestStatementCacheAfterSchemaChange(t *testing.T) {
 	}
 }
 
-// A connection keeps no more than stmtCacheSize statements, the ones run
-// longest ago closed first and one whose rows are open never; SQL past
-// stmtCacheMaxSQL isn't kept at all.
 func TestStatementCacheBounded(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
-	conn, err := pool.Conn(ctx) // one connection throughout, held across the open rows
+	conn, err := pool.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +584,6 @@ func TestStatementCacheBounded(t *testing.T) {
 	if got := n.prepared.Load() - before; got != 1 {
 		t.Errorf("the oldest statement was still kept (compiled %d times)", got)
 	}
-	// The one whose rows were open through all of it is still the kept one.
 	var v int
 	if err := held.Scan(&v); err != nil || v != 1 || !held.Next() {
 		t.Errorf("the held rows: %d, %v, %v", v, err, held.Err())
@@ -658,11 +604,6 @@ func TestStatementCacheBounded(t *testing.T) {
 	}
 }
 
-// Every kept statement busy at once (the rows of each still open, on one
-// connection), and one more statement still runs and is right: there's
-// nothing to close to make room for it, so it goes to the driver as it is,
-// and nothing that's kept is closed under its rows. Once rows close, new
-// SQL is kept again.
 func TestStatementCacheEveryStatementBusy(t *testing.T) {
 	ctx := context.Background()
 	pool, n := countedPool(t)
@@ -714,9 +655,6 @@ func TestStatementCacheEveryStatementBusy(t *testing.T) {
 	}
 }
 
-// bareConnector's connections are the driver's with nothing but the least
-// database/sql asks; bareStmtConnector's are whole, and their statements
-// are that bare.
 type bareConnector struct{ driver.Connector }
 
 func (c bareConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -741,8 +679,6 @@ func (c bareStmtConn) PrepareContext(ctx context.Context, query string) (driver.
 	return struct{ driver.Stmt }{s}, err
 }
 
-// Over a driver that isn't the one the cache was written for, it says so
-// at the first use, and doesn't quietly run with nothing kept.
 func TestStatementCacheUnknownDriver(t *testing.T) {
 	ctx := context.Background()
 	base, err := sqliteConnector(filepath.Join(t.TempDir(), "test.sqlite3"), false)
@@ -765,7 +701,6 @@ func TestStatementCacheUnknownDriver(t *testing.T) {
 	}
 }
 
-// Closing the database closes every statement its connections compiled.
 func TestStatementCacheClosesStatements(t *testing.T) {
 	pool, n := countedPool(t)
 	mustExec(t, pool, things)
@@ -786,7 +721,6 @@ func TestStatementCacheClosesStatements(t *testing.T) {
 	}
 }
 
-// What the cache saves on a query an app runs again and again.
 func BenchmarkRepeatedQuery(b *testing.B) {
 	const query = `SELECT t.id, t.name, (SELECT count(*) FROM things u WHERE u.id <= t.id) FROM things t WHERE t.id = ?`
 	run := func(b *testing.B, pool *sql.DB) {

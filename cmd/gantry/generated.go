@@ -13,14 +13,6 @@ import (
 	"strings"
 )
 
-// generatedCheck is `gantry check --generated`: templ's and sqlc's code,
-// generated again in a copy of the app without it, against the app's own. A
-// generated file that isn't what its source makes was edited by hand, or its
-// source was and it wasn't generated again; either way the next generate
-// replaces it. One no generator makes any more lost its source, and no
-// generate deletes it. It runs the templ and sqlc installed here, as an
-// app's CI does (its workflow copies them out of the Dockerfile's
-// toolchain); a file another version made is said to be that, not an edit.
 func generatedCheck(root string, out io.Writer) error {
 	tools := [][]string{{"templ", "generate"}}
 	if hasQueries(root) {
@@ -42,8 +34,6 @@ func generatedCheck(root string, out io.Writer) error {
 	}
 	for _, tool := range tools {
 		if output, err := runQuietlyIn(scratch, tool[0], tool[1:]...); err != nil {
-			// The generator's own words, then the error, which reports the
-			// failure whether or not they could be written.
 			_, _ = out.Write(output)
 			return fmt.Errorf("%s failed in a copy of the app (%v)", strings.Join(tool, " "), err)
 		}
@@ -61,7 +51,7 @@ func generatedCheck(root string, out io.Writer) error {
 		}
 		g, ok := parseGenerated(rel, made)
 		if !ok {
-			return nil // a copy of the app's own file
+			return nil
 		}
 		have, there := generated[rel]
 		delete(generated, rel)
@@ -97,13 +87,12 @@ func generatedCheck(root string, out io.Writer) error {
 	return nil
 }
 
-// generatedFile is what a generated file's name and header say about it.
 type generatedFile struct {
-	name    string // the generator: "templ", "sqlc"
-	tool    string // its command: "templ generate"
-	source  string // what it's made from: "app/posts/index.templ"
-	edit    string // what to change instead of it
-	version string // the generator's, which it stamps in the header
+	name    string
+	tool    string
+	source  string
+	edit    string
+	version string
 }
 
 var (
@@ -114,9 +103,6 @@ var (
 	sqlcSource  = regexp.MustCompile(`(?m)^// source: (\S+)$`)
 )
 
-// parseGenerated is what made the file at slash path rel, with body; ok is
-// false for a file no generator made. Every _templ.go is templ's, header
-// or not: a hand-written one is still where templ writes.
 func parseGenerated(rel string, body []byte) (g generatedFile, ok bool) {
 	switch {
 	case strings.HasSuffix(rel, "_templ.go") || templHeader.Match(body):
@@ -140,9 +126,6 @@ func parseGenerated(rel string, body []byte) (g generatedFile, ok bool) {
 	return g, true
 }
 
-// hasQueries reports whether sqlc.yaml names any query files: a new app's
-// names app/models/*.sql, which is empty until a model has queries, and sqlc
-// fails on no queries.
 func hasQueries(root string) bool {
 	data, err := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
 	if err != nil {
@@ -164,10 +147,6 @@ func hasQueries(root string) bool {
 	return false
 }
 
-// copyApp copies the app's files at root into dir, but for what no
-// generator reads (git's, the downloaded tools', the caches and the build's)
-// and what the generators made, which it returns by slash path: generate
-// writes those afresh, and leaves any whose source is gone.
 func copyApp(root, dir string) (generated map[string][]byte, err error) {
 	generated = map[string][]byte{}
 	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {

@@ -34,9 +34,9 @@ import (
 // asked for.
 type Images struct {
 	a        *Assets
-	pipeline *images.Pipeline // WebP, what every browser takes
-	avif     *images.Pipeline // AVIF, offered first
-	server   *images.Server   // AVIF beside WebP, as uploads' (images.Server.AVIF)
+	pipeline *images.Pipeline
+	avif     *images.Pipeline
+	server   *images.Server
 	byName   map[string]*picture
 	byKey    map[string]*picture
 }
@@ -47,14 +47,8 @@ type picture struct {
 	width, height               int
 }
 
-// avifSlow is images.AVIFSlow; tests set it.
 var avifSlow = images.AVIFSlow
 
-// withAVIF reports whether a picture comes in AVIF: its AVIF copies are in
-// the build, or, with nothing built for it (development, tests), this
-// machine makes AVIF at a compiled speed. A build on a machine that
-// doesn't (Precompile skips AVIF there) leaves the picture WebP alone, so
-// no request waits minutes for a copy.
 func (im *Images) withAVIF(key string) bool {
 	built := im.a.copies[key]
 	for name := range built {
@@ -76,15 +70,13 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 		p = &images.Pipeline{}
 	}
 	if p.Dir == "" {
-		// Copies made on request, without the build's: shared by the
-		// processes on this machine (tests), each written whole and renamed in.
 		p.Dir = filepath.Join(os.TempDir(), "gantry-asset-images")
 	}
 	im := &Images{a: a, pipeline: p, byName: map[string]*picture{}, byKey: map[string]*picture{}}
 	for name, f := range a.byName {
 		width, height, contentType, err := p.Dimensions(f.body)
 		if err != nil || !p.Resizable(contentType) {
-			continue // not a picture (a stylesheet, an SVG)
+			continue
 		}
 		ext := path.Ext(f.digested)
 		key := strings.ReplaceAll(strings.TrimSuffix(f.digested, ext), "/", "--")
@@ -97,8 +89,6 @@ func (a *Assets) Images(p *images.Pipeline) *Images {
 	return im
 }
 
-// original is where the picture's own bytes are written for the pipeline,
-// which reads files: beside the on-request copies, never among the build's.
 func (im *Images) original(pic *picture) (string, error) {
 	path := filepath.Join(os.TempDir(), "gantry-asset-originals", pic.key+pic.ext)
 	if _, err := os.Stat(path); err == nil {
@@ -141,7 +131,7 @@ func (im *Images) Precompile(ctx context.Context, dir string) (made int, err err
 	}
 	formats := []*images.Pipeline{im.pipeline, im.avif}
 	if avifSlow() != "" {
-		formats = formats[:1] // WebP alone: see images.AVIFSlow
+		formats = formats[:1]
 	}
 	for _, q := range formats {
 		p := &images.Pipeline{Dir: dir, Encoder: q.Encoder, Widths: q.Widths, Quality: q.Quality, Decoders: q.Decoders, Maker: q.Maker, MaxPixels: q.MaxPixels}

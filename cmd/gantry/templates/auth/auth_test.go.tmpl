@@ -39,7 +39,6 @@ func TestPasswordSetupAndLogin(t *testing.T) {
  if signedIn.Code!=302 || b.Get("/account/").Code!=200 { t.Fatal("password login failed") }
 }
 
-// gantry sets Page.Status (422) when it redraws a form with errors.
 func TestViewsKeepPageStatus(t *testing.T) {
  a := New(nil,sign.Signer{},nil,"","")
  views := map[string]func(http.ResponseWriter,*http.Request,gantryauth.Page) error{

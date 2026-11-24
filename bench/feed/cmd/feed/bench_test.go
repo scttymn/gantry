@@ -8,10 +8,6 @@ import (
 	"testing"
 )
 
-// The bench's port (the profiler, the process's CPU time) is in a build
-// with the bench tag and no other: bench.go says so in its first line, and
-// nothing else in the command reaches for the profiler. An app deployed
-// from this folder has no such port, whatever BENCH_ADDR is.
 func TestBenchPortNeedsTheTag(t *testing.T) {
 	src, err := os.ReadFile("bench.go")
 	if err != nil {

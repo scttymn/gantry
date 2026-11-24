@@ -15,6 +15,19 @@
 // production is SECRET_KEY, outside the database too (sign.Key). Only routes
 // wrapped in Require look a session up: public pages never touch the
 // sessions table.
+//
+// Sign-in takes as long for an email with no user as for a wrong password:
+// it checks a hash made for the purpose. Sign-out is POST or DELETE, never
+// GET: cross-origin protection guards only the methods that change state,
+// and a link or redirect from any site could sign its visitors out. A
+// password reset answers at once, and the same, whether or not the address
+// is a user's, so the form can't be used to find out who has an account. Its
+// link isn't queued as a job (the jobs table would keep a working link),
+// stops working once the password changes, and its pages are kept out of
+// caches and its token out of the Referer of anything they load, link or
+// redirect to. A fixed number of reset emails are in flight at once; past
+// it a request gets the usual answer and no email, so a flood can't pile up
+// lookups and mail connections.
 package auth
 
 import (
@@ -59,10 +72,12 @@ type Session struct {
 // the sign-in pages are (for its forms' actions and links).
 type Page struct {
 	Notice, Alert string
-	Status        int    // response status for custom views; zero means 200
-	EmailAddress  string // the address receiving a login code
-	Paths         Paths
-	Social        []SocialButton
+	// response status for custom views; zero means 200
+	Status int
+	// the address receiving a login code
+	EmailAddress string
+	Paths        Paths
+	Social       []SocialButton
 }
 
 // Views draw the sign-in pages. Each writes the whole response, so an app
@@ -80,10 +95,14 @@ type Views struct {
 
 // Paths are where the sign-in pages are. Zero values take the defaults.
 type Paths struct {
-	Login      string // "/login": GET the form, POST to sign in
-	Logout     string // "/logout": POST (or DELETE) to sign out
-	Passwords  string // "/passwords": /new, POST, /{token}/edit, PUT or PATCH /{token}
-	AfterLogin string // "/": where sign-in lands when nothing asked to come back
+	// "/login": GET the form, POST to sign in
+	Login string
+	// "/logout": POST (or DELETE) to sign out
+	Logout string
+	// "/passwords": /new, POST, /{token}/edit, PUT or PATCH /{token}
+	Passwords string
+	// "/": where sign-in lands when nothing asked to come back
+	AfterLogin string
 }
 
 // Auth is an app's sign-in.
@@ -93,13 +112,16 @@ type Auth struct {
 	// EmailCodes opts into passwordless email-code login. Nil preserves
 	// password login. Signup is a separate explicit option.
 	EmailCodes *EmailCodes
-	Social     *Social    // optional Apple/Google identities, sharing ordinary sessions
-	FirstUser  *FirstUser // optional one-time installation setup for password auth
+	// optional Apple/Google identities, sharing ordinary sessions
+	Social *Social
+	// optional one-time installation setup for password auth
+	FirstUser *FirstUser
 	// Mail sends login codes or password reset links. Nil: no reset by email (an app that
 	// sends no email): its pages aren't mounted, and Page.Paths.Passwords is
 	// blank, so the sign-in page doesn't offer it.
 	Mail mail.Sender
-	From string // who authentication emails are from
+	// who authentication emails are from
+	From string
 	// URL is an absolute address on the site for path, for emailed links:
 	// the app's configured host, never the request's, which whoever asks
 	// could set to their own.
@@ -134,10 +156,9 @@ type Auth struct {
 	Attempt func(r *http.Request) bool
 	Failed  func(r *http.Request, email string)
 
-	resets *sends // made by Routes; a pointer, so a copied Auth shares it
+	resets *sends
 }
 
-// The messages are Rails 8's generator's.
 const (
 	msgBadLogin     = "Try another email address or password."
 	msgTooMany      = "Try again later."
@@ -158,7 +179,6 @@ const (
 	defaultLifetime = 90 * 24 * time.Hour
 )
 
-// limit is d, its default when zero, and zero (none) when negative.
 func limit(d, fallback time.Duration) time.Duration {
 	switch {
 	case d == 0:
@@ -169,8 +189,6 @@ func limit(d, fallback time.Duration) time.Duration {
 	return d
 }
 
-// bcryptCost is Rails' (has_secure_password's default). Tests lower it:
-// a cost-12 hash takes a quarter of a second.
 var bcryptCost = 12
 
 func (a *Auth) now() time.Time {
@@ -265,9 +283,6 @@ func Hash(password string) (string, error) {
 	return string(h), err
 }
 
-// A hash to compare against when there's no such user, so a wrong email
-// takes as long as a wrong password. Made on first need: a cost-12 hash
-// takes a quarter of a second.
 var dummy = sync.OnceValue(func() []byte {
 	h, _ := bcrypt.GenerateFromPassword([]byte("no such user"), bcryptCost)
 	return h
@@ -300,7 +315,7 @@ func (a *Auth) Find(ctx context.Context, id int64) (User, error) {
 func (a *Auth) Authenticate(ctx context.Context, email, password string) (User, bool) {
 	u, err := a.FindByEmail(ctx, email)
 	if err != nil {
-		_ = bcrypt.CompareHashAndPassword(dummy(), []byte(password)) // for its time, not its answer: a miss takes as long as a hit
+		_ = bcrypt.CompareHashAndPassword(dummy(), []byte(password))
 		return User{}, false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(u.PasswordDigest), []byte(password)) != nil {
@@ -316,8 +331,6 @@ func (a *Auth) CreateUser(ctx context.Context, email, password string) (User, er
 	if err != nil {
 		return User{}, err
 	}
-	// Completion is permanent. Avoid installation locks for ordinary account
-	// creation once setup is over; the pending path still rechecks under lock.
 	finishSetup := false
 	if a.setupEnabled() {
 		if err := a.DB.Read.QueryRowContext(ctx, `SELECT NOT completed FROM auth_setup WHERE id=1`).Scan(&finishSetup); err != nil {
@@ -386,18 +399,13 @@ func (a *Auth) StartSession(w http.ResponseWriter, r *http.Request, u User) (Ses
 	return s, nil
 }
 
-// ended is a session past Idle or Lifetime.
 func (a *Auth) ended(created, seen, now time.Time) bool {
 	lifetime, idle := limit(a.Lifetime, defaultLifetime), limit(a.Idle, defaultIdle)
 	return (lifetime > 0 && !now.Before(created.Add(lifetime))) || (idle > 0 && !now.Before(seen.Add(idle)))
 }
 
-// touchEvery is how often a session's last_seen_at is written: often
-// enough to show who's active, rarely enough not to write on every request.
 const touchEvery = time.Hour
 
-// sessionOf is the request's session and its user, if its cookie names
-// one that still exists.
 func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 	c, err := r.Cookie(a.cookie())
 	if err != nil || c.Value == "" {
@@ -441,7 +449,6 @@ func (a *Auth) sessionOf(r *http.Request) (User, Session, bool) {
 
 type userKey struct{}
 
-// currentUser is the signed-in user in web.Current, where Required puts it.
 var currentUser = web.NewKey[User]("auth.user")
 
 // Current is the signed-in user of a request that went through Require or
@@ -529,8 +536,6 @@ func (a *Auth) Routes(rt web.Routes) {
 			rt.Handle("POST "+p.Login+"/setup", a.setupUser)
 		}
 	}
-	// Not GET: cross-origin protection guards only the methods that change
-	// state, and a link or redirect from any site could sign its visitors out.
 	rt.Handle("POST "+p.Logout, a.logout)
 	rt.Handle("DELETE "+p.Logout, a.logout)
 	if a.Mail == nil || a.EmailCodes != nil {
@@ -546,7 +551,6 @@ func (a *Auth) Routes(rt web.Routes) {
 	rt.Handle("PATCH "+p.Passwords+"/{token}", a.updatePassword)
 }
 
-// page is the flash for this page, taken.
 func (a *Auth) page(w http.ResponseWriter, r *http.Request) Page {
 	p := Page{Paths: a.paths(), Social: a.socialButtons()}
 	if a.Mail == nil || a.EmailCodes != nil {
@@ -628,7 +632,6 @@ func (a *Auth) forgotPassword(w http.ResponseWriter, r *http.Request) error {
 	return a.views().ForgotPassword(w, r, a.page(w, r))
 }
 
-// fingerprint changes whenever the password does, so a used link dies.
 func fingerprint(u User) string {
 	sum := sha256.Sum256([]byte(u.PasswordDigest))
 	return hex.EncodeToString(sum[:])[:10]
@@ -665,13 +668,8 @@ func (a *Auth) UserByResetToken(ctx context.Context, token string) (User, error)
 	return u, nil
 }
 
-// maxResetSends caps the reset emails in flight. Past it a request gets the
-// usual answer and no email, so a flood can't pile up lookups and mail
-// connections, each held up to a minute.
 const maxResetSends = 100
 
-// sends counts the reset emails in flight. Unlike a WaitGroup, it may be
-// waited on while new ones start.
 type sends struct {
 	mu   sync.Mutex
 	idle sync.Cond
@@ -684,7 +682,6 @@ func newSends() *sends {
 	return s
 }
 
-// start counts one more, unless maxResetSends are in flight.
 func (s *sends) start() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -720,10 +717,6 @@ func (a *Auth) Wait() {
 	}
 }
 
-// sendReset answers at once, and then emails a reset link if the address is
-// a user's. Anyone else gets the same answer, as fast, so the form can't be
-// used to find out who has an account. The link isn't queued as a job: the
-// jobs table would keep a working reset link in the database.
 func (a *Auth) sendReset(w http.ResponseWriter, r *http.Request) error {
 	resetHeaders(w)
 	p := a.paths()
@@ -746,8 +739,6 @@ func (a *Auth) sendReset(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// logger is Log, or slog's default: a reset email's failure has no response
-// to show it.
 func (a *Auth) logger() *slog.Logger {
 	if a.Log != nil {
 		return a.Log
@@ -755,8 +746,6 @@ func (a *Auth) logger() *slog.Logger {
 	return slog.Default()
 }
 
-// mailReset runs off the request, outside the router's recovery, so a panic
-// in it (an app's sender, say) is logged here rather than ending the process.
 func (a *Auth) mailReset(ctx context.Context, email string) {
 	defer func() {
 		if p := recover(); p != nil {
@@ -782,9 +771,6 @@ func (a *Auth) mailReset(ctx context.Context, email string) {
 	}
 }
 
-// resetHeaders keep the reset pages and answers out of caches, and the
-// token in the edit page's address out of the Referer of anything it loads,
-// links or redirects to.
 func resetHeaders(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Referrer-Policy", "no-referrer")
@@ -811,7 +797,6 @@ func (a *Auth) updatePassword(w http.ResponseWriter, r *http.Request) error {
 	}
 	password, confirmation := r.PostFormValue("password"), r.PostFormValue("password_confirmation")
 	if errs := a.rules(password, confirmation); len(errs) > 0 {
-		// Say what was actually wrong: a password that breaks the rules isn't a mismatch.
 		a.flash().Redirect(w, r, p.Passwords+"/"+url.PathEscape(token)+"/edit", "alert", sentence(errs))
 		return nil
 	}
@@ -822,7 +807,6 @@ func (a *Auth) updatePassword(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// sentence joins messages as Rails' to_sentence.
 func sentence(items []string) string {
 	switch len(items) {
 	case 0:

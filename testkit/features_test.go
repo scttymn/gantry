@@ -12,8 +12,6 @@ import (
 	"github.com/scttymn/gantry/web"
 )
 
-// club is an app with a page for everyone, one for members, one for
-// admins, a cached news page, and files.
 func club(cache *web.PageCache) *web.Router {
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Cache = cache
@@ -53,7 +51,6 @@ func club(cache *web.PageCache) *web.Router {
 	return rt
 }
 
-// roles sign in as two members and two admins (an admin is a member too).
 var roles = Roles{
 	SignedIn: func(v *Visitor, n int) string {
 		v.Get(fmt.Sprintf("/login?as=member%d", n))
@@ -106,15 +103,13 @@ func verify(t *testing.T, rt *web.Router, yaml string, signIn Roles) *recorder {
 }
 
 func TestVerify(t *testing.T) {
-	// The page cache skips no one: a page with who's signed in on it would
-	// be shown to everyone after.
 	everyone := func() *web.PageCache { return &web.PageCache{Skip: func(*http.Request) bool { return false }} }
 	for _, tc := range []struct {
 		name   string
 		rt     *web.Router
 		yaml   string
 		signIn Roles
-		want   []string // in what it reports; none: it passes
+		want   []string
 	}{
 		{"every feature as every role", club(&web.PageCache{}), clubMap, roles, nil},
 		{"a route in no feature", club(&web.PageCache{}), strings.Replace(clubMap, ", GET /login]", "]", 1), roles,
@@ -150,8 +145,6 @@ func TestVerify(t *testing.T) {
 	}
 }
 
-// A page that leaks for one role alone is caught: each role's first visit
-// renders its own copy, not one an earlier role left in the cache.
 func TestVerifyLeakForOneRole(t *testing.T) {
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Cache = &web.PageCache{Skip: func(*http.Request) bool { return false }}
@@ -187,8 +180,6 @@ features:
 	}
 }
 
-// A page's references are requested as the visitor who saw the page: with
-// its headers (a bearer token) and the cookies for that page's path.
 func TestVerifyLinksAsTheVisitor(t *testing.T) {
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	token := func(w http.ResponseWriter, r *http.Request) error {
@@ -262,8 +253,6 @@ func TestProbe(t *testing.T) {
 	}
 }
 
-// A feature map that doesn't say what Verify needs fails before anything
-// is visited.
 func TestFeaturesInvalid(t *testing.T) {
 	for yaml, want := range map[string]string{
 		"features:\n  - name: x\n    routes: [/x]\n    role: owner\n":                                       `x: role "owner": public, signed-in or admin`,

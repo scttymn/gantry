@@ -78,7 +78,6 @@ func TestReloadInjection(t *testing.T) {
 	}
 }
 
-// readEvent reads one server-sent event's name and data, skipping comments.
 func readEvent(t *testing.T, r *bufio.Reader) (name, data string) {
 	t.Helper()
 	for {
@@ -122,8 +121,6 @@ func TestReloadStream(t *testing.T) {
 		t.Fatal(name, data)
 	}
 
-	// templ rewrote a template's text: the server reads it on the next
-	// render, so the version changes with no restart.
 	later := time.Now().Add(time.Second)
 	if err := os.WriteFile(text, []byte("new text"), 0o644); err != nil {
 		t.Fatal(err)
@@ -134,7 +131,6 @@ func TestReloadStream(t *testing.T) {
 	if name, data := readEvent(t, events); name != "version" || data != "b00t.1" {
 		t.Fatal(name, data)
 	}
-	// A page rendered now has the new version.
 	if out, _ := h.inject(context.Background(), []byte(`<html><body></body></html>`)); !strings.Contains(string(out), `data-version="b00t.1"`) {
 		t.Fatal(string(out))
 	}
@@ -190,8 +186,6 @@ func TestTemplTextFiles(t *testing.T) {
 	}
 }
 
-// A tab that was hidden had no stream open while the text changed: its
-// stream, when it's shown again, still says the version changed.
 func TestReloadSeesChangesWhileNoStreamIsOpen(t *testing.T) {
 	text := filepath.Join(t.TempDir(), "templ_page.txt")
 	if err := os.WriteFile(text, []byte("old"), 0o644); err != nil {

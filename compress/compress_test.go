@@ -30,7 +30,7 @@ func text(contentType string, parts ...string) http.Handler {
 		if contentType != "" {
 			w.Header().Set("Content-Type", contentType)
 		}
-		w.Header().Set("Content-Length", "999999") // wrong once compressed; must go
+		w.Header().Set("Content-Length", "999999")
 		for _, p := range parts {
 			io.WriteString(w, p)
 		}

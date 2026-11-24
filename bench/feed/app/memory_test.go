@@ -14,17 +14,6 @@ import (
 	"feed/db/seeds"
 )
 
-// What an open connection costs the app, by the runtime's own account: its
-// goroutine's stack, and what's on the heap for it. In the challenge every
-// user holds a connection open and asks of it now and then, so this, times
-// the users, is the memory the app needs: it's what stops it there, not CPU.
-//
-// Three kinds of connection, each idle when counted: one that has asked for
-// nothing yet, one that has had an answer the database had no part in, and
-// one that has read the feed and a post (and, one in seven, liked it). The
-// stack is counted twice: as the requests left it, and after the collector
-// has been by a few times, which is when the runtime gives back what a
-// goroutine no longer reaches into.
 func TestMemoryPerConnection(t *testing.T) {
 	if testing.Short() {
 		t.Skip("opens thousands of connections")
@@ -91,9 +80,6 @@ func TestMemoryPerConnection(t *testing.T) {
 	}
 }
 
-// settle lets the collector by until what it can give back is given back: a
-// goroutine's stack is halved once a collection, while it's using under a
-// quarter of it.
 func settle() {
 	for range 6 {
 		runtime.GC()

@@ -1,5 +1,3 @@
-/* The app's styles. More files go beside this one, bundled in
-   assets/assets.go: All.Styles("application.css", "site.css"). */
 :root {
   color-scheme: light dark;
   --bg: #fff;

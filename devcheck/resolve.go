@@ -11,18 +11,10 @@ import (
 	"strings"
 )
 
-// The cache rules follow a route to its handler, and the handler to what it
-// calls, across the app's files and packages. Strict reads source without
-// building it, so this follows syntax: a name is followed when where it's
-// declared says what it is (a parameter's type, x := T{...}, a struct's
-// field, a function's one result), and passed over otherwise, never guessed.
-
-// program is the Go code a scan can follow names into: the packages under
-// its root, each parsed when a rule first needs it and kept for the scan.
 type program struct {
 	root, module string
 	set          *token.FileSet
-	pkgs         map[string]*goPackage // by import path; nil: not under the root
+	pkgs         map[string]*goPackage
 }
 
 func newProgram(root, module string) *program {
@@ -30,16 +22,16 @@ func newProgram(root, module string) *program {
 }
 
 type goPackage struct {
-	path    string // import path
+	path    string
 	files   []*goFile
 	funcs   map[string]fn
 	types   map[string]typeDecl
-	methods map[string]map[string]fn // by receiver type, then name
+	methods map[string]map[string]fn
 }
 
 type goFile struct {
 	set     *token.FileSet
-	path    string // project-relative
+	path    string
 	file    *ast.File
 	pkg     *goPackage
 	aliases map[string]string
@@ -50,10 +42,9 @@ type typeDecl struct {
 	spec *ast.TypeSpec
 }
 
-// fn is a function the program can read: a declaration, or a literal in one.
 type fn struct {
 	file *goFile
-	top  *ast.FuncDecl // the declaration, or the one the literal is in (nil at package level)
+	top  *ast.FuncDecl
 	lit  *ast.FuncLit
 }
 
@@ -77,12 +68,8 @@ func (f fn) String() string {
 	return name + f.top.Name.Name
 }
 
-// named is a named type: its package's import path and its name. The zero
-// value is a type the program doesn't know.
 type named struct{ pkg, name string }
 
-// ref is a function, method or field by its package's import path, its
-// type's name (none for a package's own function) and its name.
 type ref struct{ pkg, recv, name string }
 
 func (r ref) String() string {
@@ -92,9 +79,6 @@ func (r ref) String() string {
 	return path.Base(r.pkg) + "." + r.recv + "." + r.name
 }
 
-// outside are the results and fields of gantry's packages that the program
-// follows and a scan of an app doesn't read: the router NewRouter makes, and
-// the page cache it holds.
 var outside = map[ref]named{
 	{gantryWeb, "", "NewRouter"}:   {gantryWeb, "Router"},
 	{gantryWeb, "Router", "Cache"}: {gantryWeb, "PageCache"},
@@ -120,9 +104,6 @@ func (p *program) importPath(dir string) string {
 	return p.module + "/" + dir
 }
 
-// pkg is the package at importPath, nil when it isn't under the root. Its
-// tests and templ's generated files aren't read, as the scan doesn't read
-// them, nor a file that doesn't parse, which its own scan reports.
 func (p *program) pkg(importPath string) *goPackage {
 	if pkg, ok := p.pkgs[importPath]; ok {
 		return pkg
@@ -182,9 +163,6 @@ func (p *program) pkg(importPath string) *goPackage {
 	return pkg
 }
 
-// receiver is the name of the type a method is declared on, its package's
-// own by Go's rules, so it needs no lookup: the type may be declared after
-// the method, or in another file.
 func receiver(d *ast.FuncDecl) string {
 	if d.Recv == nil || len(d.Recv.List) != 1 {
 		return ""
@@ -199,12 +177,11 @@ func receiver(d *ast.FuncDecl) string {
 		case *ast.Ident:
 			return e.Name
 		default:
-			return "" // a generic type's, T[K]: not followed
+			return ""
 		}
 	}
 }
 
-// file is the scanned file at a project-relative path, as the program read it.
 func (p *program) file(rel string) *goFile {
 	pkg := p.pkg(p.importPath(path.Dir(rel)))
 	if pkg == nil {
@@ -222,8 +199,6 @@ func (f *goFile) at(pos token.Pos) string {
 	return f.path + ":" + strconv.Itoa(f.set.Position(pos).Line)
 }
 
-// typeName is the named type a type expression is, pointers dropped: T
-// declared in the file's package, or pkg.T.
 func (f *goFile) typeName(e ast.Expr) named {
 	switch e := e.(type) {
 	case *ast.StarExpr:
@@ -242,9 +217,6 @@ func (f *goFile) typeName(e ast.Expr) named {
 	return named{}
 }
 
-// declared is what name is at pos in top, the last declaration of it before
-// pos in a scope that holds pos: its declared type, or the value it was
-// given (neither for one the program can't follow, as a range variable).
 func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Expr, found bool) {
 	if top == nil {
 		return nil, nil, false
@@ -281,9 +253,6 @@ func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Exp
 			if pos >= n.End() {
 				return false
 			}
-		// A declaration's names are declared after it: in x := x, or in a
-		// range's expression, x is still the one before. Inside it (a
-		// function literal on its right), keep looking.
 		case *ast.RangeStmt:
 			if pos >= n.End() {
 				return false
@@ -326,8 +295,6 @@ func declared(top *ast.FuncDecl, name string, pos token.Pos) (typ, value ast.Exp
 	return
 }
 
-// imported is the import path a name in f means at pos, "" when it's not an
-// import's (or a declaration in the function hides the import).
 func imported(f *goFile, top *ast.FuncDecl, e ast.Expr) string {
 	id, ok := e.(*ast.Ident)
 	if !ok {
@@ -339,19 +306,12 @@ func imported(f *goFile, top *ast.FuncDecl, e ast.Expr) string {
 	return f.aliases[id.Name]
 }
 
-// maxDepth bounds how far one name is followed, so a declaration that
-// refers to itself can't loop.
 const maxDepth = 16
 
-// typeOf is the named type of e, in f's function top, an alias's the type it
-// stands for.
 func (p *program) typeOf(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) named {
 	return p.unalias(p.exprType(f, top, e, depth), depth)
 }
 
-// unalias is the type an alias stands for, through aliases of aliases (g
-// auth's type Auth = gantryauth.Auth is gantry's Auth), and t itself when
-// it isn't one.
 func (p *program) unalias(t named, depth int) named {
 	for ; depth <= maxDepth; depth++ {
 		pkg := p.pkg(t.pkg)
@@ -390,11 +350,11 @@ func (p *program) exprType(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) 
 		case value != nil:
 			return p.typeOf(f, top, value, depth+1)
 		case !found:
-			return named{} // a package's variable: not followed
+			return named{}
 		}
 	case *ast.SelectorExpr:
 		if imported(f, top, e.X) != "" {
-			return named{} // another package's variable
+			return named{}
 		}
 		return p.field(p.typeOf(f, top, e.X, depth+1), e.Sel.Name, depth+1)
 	case *ast.CallExpr:
@@ -410,7 +370,6 @@ func (p *program) exprType(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) 
 	return named{}
 }
 
-// field is the type of t's field name, its own or one it embeds.
 func (p *program) field(t named, name string, depth int) named {
 	if t = p.unalias(t, depth); t.name == "" || depth > maxDepth {
 		return named{}
@@ -450,8 +409,6 @@ func (p *program) field(t named, name string, depth int) named {
 	return named{}
 }
 
-// method is t's method name, its own or one a type it embeds has: the code,
-// when the program reads t's package, and what it is either way.
 func (p *program) method(t named, name string, depth int) (fn, ref) {
 	if t = p.unalias(t, depth); t.name == "" || depth > maxDepth {
 		return fn{}, ref{}
@@ -478,8 +435,6 @@ func (p *program) method(t named, name string, depth int) (fn, ref) {
 	return fn{}, ref{}
 }
 
-// callee is what a call to e runs, in f's function top: its code when the
-// program can read it, and what it is.
 type callee struct {
 	fn  fn
 	ref ref
@@ -517,15 +472,11 @@ func (p *program) callee(f *goFile, top *ast.FuncDecl, e ast.Expr, depth int) ca
 	return callee{}
 }
 
-// reached is a call a function makes, itself or through the functions it
-// calls: where it is, and the functions on the way, the first one first.
 type reached struct {
 	what, at string
 	via      []fn
 }
 
-// reach is the first call in f, or in a function it calls that the program
-// can read, that is names. A function already on the way isn't read again.
 func (p *program) reach(f fn, is func(callee, *ast.CallExpr) string, seen map[*ast.BlockStmt]bool) (reached, bool) {
 	body := f.body()
 	if body == nil || seen[body] {

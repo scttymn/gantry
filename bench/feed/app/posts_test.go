@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// token is a bearer token for user 1, signed as the app expects.
 func token(secret string, exp time.Time) string {
 	enc := base64.RawURLEncoding.EncodeToString
 	signed := enc([]byte(`{"alg":"HS256","typ":"JWT"}`)) + "." + enc([]byte(fmt.Sprintf(`{"sub":"1","username":"ada","exp":%d}`, exp.Unix())))
@@ -22,9 +21,6 @@ func token(secret string, exp time.Time) string {
 	return signed + "." + enc(mac.Sum(nil))
 }
 
-// The feed is the 20 newest posts, the newest first (and of two made in one
-// millisecond, the later id), each with its author's name and its likes
-// counted; and /health asks the database.
 func TestFeed(t *testing.T) {
 	a := newApp(t)
 	h := a.Handler()
@@ -35,7 +31,7 @@ func TestFeed(t *testing.T) {
 		}
 	}
 	for id := 1; id <= 25; id++ {
-		at := fmt.Sprintf("2025-06-01T12:00:%02d.000Z", id/2) // two posts to a second
+		at := fmt.Sprintf("2025-06-01T12:00:%02d.000Z", id/2)
 		if _, err := a.DB.Write.ExecContext(ctx, `INSERT INTO posts (id, user_id, body, created_at) VALUES (?, ?, ?, ?)`, id, 1+id%3, fmt.Sprint("post ", id), at); err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +78,6 @@ func TestFeed(t *testing.T) {
 	}
 }
 
-// A token that isn't good yet (nbf) is refused as an expired one is.
 func TestTokenNotYetGood(t *testing.T) {
 	a := newApp(t)
 	h := a.Handler()
@@ -96,7 +91,7 @@ func TestTokenNotYetGood(t *testing.T) {
 	now := time.Now().Unix()
 	for claims, want := range map[string]int{
 		fmt.Sprintf(`{"sub":"1","username":"ada","nbf":%d,"exp":%d}`, now+3600, now+7200): 401,
-		fmt.Sprintf(`{"sub":"1","username":"ada","nbf":%d,"exp":%d}`, now-60, now+7200):   400, // good: on to the body
+		fmt.Sprintf(`{"sub":"1","username":"ada","nbf":%d,"exp":%d}`, now-60, now+7200):   400,
 		fmt.Sprintf(`{"sub":"1","username":"ada","nbf":"soon","exp":%d}`, now+7200):       401,
 	} {
 		w := httptest.NewRecorder()

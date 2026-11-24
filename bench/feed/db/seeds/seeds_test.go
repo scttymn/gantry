@@ -12,7 +12,6 @@ import (
 	"feed/test"
 )
 
-// rows is every row of a table, as text, in order.
 func rows(t *testing.T, d *db.DB, table, order string) string {
 	t.Helper()
 	r, err := d.Read.QueryContext(context.Background(), `SELECT * FROM `+table+` ORDER BY `+order)
@@ -44,10 +43,6 @@ func count(t *testing.T, d *db.DB, query string) (n int) {
 	return n
 }
 
-// The seeds make the challenge's shape of data: ten posts a user, about
-// four likes a post, the same rows every time, in the wire's timestamps,
-// with no like of a user or a post that isn't there; and a database that
-// has its users is left as it is.
 func TestSeed(t *testing.T) {
 	ctx := context.Background()
 	const users = 40
@@ -70,7 +65,6 @@ func TestSeed(t *testing.T) {
 	if got := count(t, d, `SELECT count(*) FROM posts WHERE length(body) NOT BETWEEN 1 AND 500 OR created_at NOT GLOB '20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9].[0-9][0-9][0-9]Z'`); got != 0 {
 		t.Errorf("%d posts with a body or a time the API couldn't send as it is", got)
 	}
-	// The newest posts are the last made, so the feed is theirs.
 	if got := count(t, d, `SELECT count(*) FROM (SELECT id, lag(id) OVER (ORDER BY created_at, id) AS before FROM posts) WHERE id < before`); got != 0 {
 		t.Errorf("%d posts older than the one before them", got)
 	}
@@ -92,8 +86,6 @@ func TestSeed(t *testing.T) {
 	}
 }
 
-// Two processes starting on one empty database both seed it: one does, and
-// the other finds its users there, with no error and nothing doubled.
 func TestSeedTwiceAtOnce(t *testing.T) {
 	ctx := context.Background()
 	d := test.DB(t)
@@ -111,8 +103,6 @@ func TestSeedTwiceAtOnce(t *testing.T) {
 	}
 }
 
-// Run seeds only when it's asked to: an app started without
-// FEED_SEED_USERS has an empty database.
 func TestRunNeedsAsking(t *testing.T) {
 	ctx := context.Background()
 	d := test.DB(t)

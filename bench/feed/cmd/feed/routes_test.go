@@ -9,8 +9,6 @@ import (
 	"feed/config"
 )
 
-// feed routes --json is the challenge's routes, as bin/gantry routes and
-// the AGENTS.md beside it say, with the POSTs behind the bearer token.
 func TestRoutesJSON(t *testing.T) {
 	t.Setenv("GANTRY_ENV", "test")
 	t.Setenv("DATA_DIR", t.TempDir())

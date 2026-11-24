@@ -13,9 +13,6 @@ import (
 const developmentBufferLimit = 2 << 20
 const developmentPageOpen = `<div data-gantry-development-layout><div data-gantry-page>`
 
-// The panel's style, and the page's around it, is a stylesheet from the app
-// itself, not style attributes, so the app's Content-Security-Policy lets it
-// in. The panel links it.
 const (
 	developmentStyles     = "/_gantry/development.css"
 	developmentStylesheet = `<link rel="stylesheet" href="` + developmentStyles + `">`
@@ -29,9 +26,6 @@ const (
 `
 )
 
-// Buffer only ordinary, bounded HTML responses, for inject to change.
-// Streams, upgraded connections, ranges and already encoded content keep
-// their original delivery behavior.
 func serveDevelopmentPage(next http.Handler, w http.ResponseWriter, r *http.Request, inject func(context.Context, []byte) ([]byte, bool)) {
 	if r.Method == http.MethodHead || r.Header.Get("Upgrade") != "" || r.Header.Get("Range") != "" {
 		next.ServeHTTP(w, r)

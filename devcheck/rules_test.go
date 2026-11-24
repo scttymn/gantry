@@ -11,14 +11,11 @@ import (
 	"testing"
 )
 
-// Each rule's bypass is reported where it is, at the rule's severity, its
-// recommended pattern and legitimate alternatives aren't, and an exception
-// for the file silences it.
 func TestRules(t *testing.T) {
 	for _, tc := range []struct {
 		name, rule string
 		files      map[string]string
-		want       []string // the rule's findings, file:line
+		want       []string
 	}{
 		{"models import the web", "import-boundary", map[string]string{"app/models/posts.go": `package models
 
@@ -554,8 +551,6 @@ func (a *App) guest(w http.ResponseWriter, r *http.Request) error {
 	return err
 }
 `}), []string{"app/routes.go:16", "app/routes.go:20", "app/routes.go:21", "app/routes.go:22", "app/routes.go:23"}},
-		// g auth's app/auth has type Auth = gantryauth.Auth; an alias's fields
-		// and methods are the aliased type's.
 		{"through an alias of gantry's Auth", "cached-scope", withCachedApp(map[string]string{
 			"app/auth/auth.go":        "package auth\n\nimport gantryauth \"github.com/scttymn/gantry/auth\"\n\ntype Auth = gantryauth.Auth\n",
 			"app/admin/controller.go": "package admin\n\nimport \"example.com/shop/app/shared/resource\"\n\ntype Controller = resource.Controller\n",
@@ -584,8 +579,6 @@ func (a *App) Router(rt *web.Router) {
 }
 `,
 		}), []string{"app/routes.go:15", "app/routes.go:19"}},
-		// A method may come before its type: earlier in the file, or in a
-		// file that sorts first.
 		{"methods declared before their type", "cached-scope", withCachedApp(map[string]string{
 			"app/docs/actions.go":    "package docs\n\nimport (\n\t\"net/http\"\n\n\t\"github.com/scttymn/gantry/auth\"\n)\n\nfunc (c Controller) Show(w http.ResponseWriter, r *http.Request) error {\n\t_, ok := auth.Current(r)\n\treturn render(w, ok)\n}\n",
 			"app/docs/controller.go": "package docs\n\ntype Controller struct{}\n",
@@ -612,8 +605,6 @@ func (a *App) Router(rt *web.Router) {
 }
 `,
 		}), []string{"app/routes.go:19", "app/routes.go:20"}},
-		// homePage := homePage is the outer one's value, and a range's
-		// expression is read before its variables are declared.
 		{"a name declared again from itself", "cached-scope", withCachedApp(map[string]string{"app/routes.go": `package app
 
 import (
@@ -738,10 +729,6 @@ func (c Controller) Create(w http.ResponseWriter, r *http.Request) error {
 	}
 }
 
-// withCachedApp is files with the controllers the cache rules' cases route
-// to, in their own packages: home's Show reads who's signed in through a
-// method of its own, posts' Index takes the flash through the shared
-// resource controller it embeds, and preferences' Theme sets a cookie.
 func withCachedApp(files map[string]string) map[string]string {
 	app := map[string]string{
 		"app/home/controller.go": `package home
@@ -816,7 +803,6 @@ func remember(w http.ResponseWriter, theme string) {
 	return app
 }
 
-// The rule's message names what was found and the pattern to use instead.
 func TestRuleMessages(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "go.mod", "module example.com/shop\n")
@@ -861,9 +847,6 @@ func (a *App) pages(rt *web.Router) {
 	}
 }
 
-// An app made with gantry new --in-module has no go.mod of its own: its
-// packages are under the enclosing module's path, and the rules that tell
-// the app's own packages still do.
 func TestInModuleApp(t *testing.T) {
 	root := t.TempDir()
 	put(t, root, "go.mod", "module example.com/big\n\ngo 1.27\n")

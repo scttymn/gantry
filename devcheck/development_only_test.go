@@ -11,8 +11,6 @@ import (
 	"github.com/scttymn/gantry/web"
 )
 
-// The map references each function, so renaming or removing one in web stops
-// this compiling.
 func TestDevelopmentOnlyMatchesWeb(t *testing.T) {
 	functions := map[string]any{
 		"Development":          web.Development,
