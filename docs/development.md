@@ -272,9 +272,15 @@ features:
   in a feature that isn't cacheable.
 - a feature's role has no way to sign in (below).
 
-`bin/gantry verify` runs that test alone, verbosely: in the app's container, or
-on this machine with `--local`. A new app's `.github/workflows/ci.yml` runs it
-after `bin/gantry test`. The app runs in the test's process, on a test
+`bin/gantry verify` runs that test alone, verbosely, as `GANTRY_ENV=test`. It
+runs on Houston's test stack, the one `bin/gantry test` uses: the Dockerfile's
+`test` stage, in a throwaway copy of the project. To get there, it runs
+`houston -f` with a copy of `compose.yml` whose `x-houston.commands.test` is
+the `TestFeatures` run, and it removes the copy afterwards. With `--local`, it runs
+on this machine. A new app's `.github/workflows/ci.yml` runs it after
+`bin/gantry test`. `testkit.Verify` refuses `GANTRY_ENV=development`, where
+the reload script takes the page cache's headers off every page. The app runs
+in the test's process, on a test
 database, through testkit's browser. For each feature's visits, as each role
 it can sign in as:
 

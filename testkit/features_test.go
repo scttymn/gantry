@@ -145,6 +145,15 @@ func TestVerify(t *testing.T) {
 	}
 }
 
+func TestVerifyRefusesDevelopment(t *testing.T) {
+	t.Setenv("GANTRY_ENV", "development")
+	r := verify(t, club(&web.PageCache{}), clubMap, roles)
+	got := strings.Join(r.errors, "\n")
+	if !r.fatal || !strings.Contains(got, "GANTRY_ENV=development") || strings.Contains(got, "has no ETag") {
+		t.Errorf("Verify under GANTRY_ENV=development, with a cacheable page:\n%s", got)
+	}
+}
+
 func TestVerifyLeakForOneRole(t *testing.T) {
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Cache = &web.PageCache{Skip: func(*http.Request) bool { return false }}

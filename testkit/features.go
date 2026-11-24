@@ -11,6 +11,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/scttymn/gantry/internal/env"
 	"github.com/scttymn/gantry/internal/featuremap"
 	"github.com/scttymn/gantry/web"
 )
@@ -131,9 +132,14 @@ func rank(r Role) int { return slices.Index(allRoles, r) }
 //     its own copy), and user 1 and a public visitor mustn't be shown
 //     user 0's who there.
 //
-// A feature for a role with no SignIn in roles fails.
+// A feature for a role with no SignIn in roles fails. So does Verify under
+// GANTRY_ENV=development, where the reload script the router adds takes the
+// page cache's headers off every page: run it as GANTRY_ENV=test.
 func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles Roles) {
 	t.Helper()
+	if env.Development() {
+		t.Fatalf("testkit: Verify runs the app as GANTRY_ENV=development, whose reload script takes the page cache's ETag and Last-Modified off every page: run it as GANTRY_ENV=test, as bin/gantry verify does")
+	}
 	features := Features(t, path)
 	for _, r := range routes {
 		if r.Mounted {
