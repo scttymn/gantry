@@ -20,10 +20,6 @@ import (
 	"time"
 )
 
-// releaseServer serves the GitHub release layout bin/gantry downloads, over
-// https: <base>/<version>/<asset>, <base>/<version>/SHA256SUMS and, for
-// gantry, <base>/<version>/provenance.sigstore.json. Its env runs bin/gantry
-// against it, trusting its certificate, with a fake gh (fakeGH) on PATH.
 type releaseServer struct {
 	srv   *httptest.Server
 	dir   string
@@ -31,7 +27,7 @@ type releaseServer struct {
 	hits  map[string]int
 	files map[string][]byte
 	moved map[string]string
-	pause atomic.Int64 // a time.Duration, set with the server already serving
+	pause atomic.Int64
 }
 
 func newReleaseServer(t *testing.T) *releaseServer {
@@ -65,7 +61,6 @@ func newReleaseServer(t *testing.T) *releaseServer {
 	return rs
 }
 
-// gh installs the fake gh, one with --source-ref or one older.
 func (rs *releaseServer) gh(t *testing.T, sourceRef bool) {
 	t.Helper()
 	os.MkdirAll(filepath.Join(rs.dir, "bin"), 0o755)
@@ -74,16 +69,11 @@ func (rs *releaseServer) gh(t *testing.T, sourceRef bool) {
 	}
 }
 
-// ghCalls is the arguments of each gh attestation verify bin/gantry ran.
 func (rs *releaseServer) ghCalls() string {
 	calls, _ := os.ReadFile(filepath.Join(rs.dir, "gh-calls"))
 	return string(calls)
 }
 
-// fakeGH is gh attestation verify as far as bin/gantry uses it. A bundle line
-// "<sha256> <ref>" attests a file with that digest built at that ref by
-// gantry's release workflow, and gh fails on anything else, as the real one
-// does on a digest, signer or ref the attestation doesn't carry.
 func fakeGH(calls string, sourceRef bool) []byte {
 	help := "echo '  -b, --bundle string'\n"
 	if sourceRef {
@@ -127,9 +117,6 @@ func (rs *releaseServer) hitCount() int {
 	return n
 }
 
-// put stores a release asset and a SHA256SUMS line for it. sums, when set,
-// replaces the real digest (a bad checksum, or a lookalike filename). A
-// gantry asset is attested too, as gantry's release workflow does.
 func (rs *releaseServer) put(repo, version, asset string, body []byte, sums string) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -148,7 +135,6 @@ func (rs *releaseServer) put(repo, version, asset string, body []byte, sums stri
 	}
 }
 
-// set replaces (or, with nil, removes) what the server has at path.
 func (rs *releaseServer) set(path string, body []byte) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -165,7 +151,6 @@ func (rs *releaseServer) hitsOn(path string) int {
 	return rs.hits[path]
 }
 
-// env is stubEnv for this server.
 func (rs *releaseServer) env(extra ...string) []string {
 	return stubEnv(rs.srv.URL+"/gantry", rs.srv.URL+"/houston", append([]string{
 		"CURL_CA_BUNDLE=" + filepath.Join(rs.dir, "ca.pem"),
@@ -387,8 +372,6 @@ func TestBinstubRejectsMissingAsset(t *testing.T) {
 	}
 }
 
-// bin/gantry downloads only over https: an overridden base must be https,
-// and no redirect leaves it.
 func TestBinstubRequiresHTTPS(t *testing.T) {
 	osName, arch := platform(t)
 	var plainHits atomic.Int64
@@ -426,9 +409,6 @@ func TestBinstubRequiresHTTPS(t *testing.T) {
 	}
 }
 
-// A gantry release after the last one published without build provenance
-// must carry an attestation from gantry's release workflow at its tag. gh
-// checks it when it can; without gh, SHA256SUMS stands alone, and says so.
 func TestBinstubChecksProvenance(t *testing.T) {
 	osName, arch := platform(t)
 	kept := filepath.Join(".gantry", "bin", "gantry-v0.20.0-"+osName+"-"+arch)
@@ -440,7 +420,7 @@ func TestBinstubChecksProvenance(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		env  func(t *testing.T, rs *releaseServer) []string
-		want string // in the output; a run that fails has no other check
+		want string
 		ok   bool
 	}{
 		{"attested", func(t *testing.T, rs *releaseServer) []string { return rs.env() }, "gantry-ok", true},
@@ -495,8 +475,6 @@ func TestBinstubChecksProvenance(t *testing.T) {
 	})
 }
 
-// A release up to the last unattested one has no provenance to check, so
-// bin/gantry neither asks for it nor warns.
 func TestBinstubSkipsProvenanceBeforeItWasPublished(t *testing.T) {
 	dir, rs, env := appWithCLIs(t, "v0.17.0")
 	code, out := runStub(t, dir, env, "dev")
@@ -508,9 +486,6 @@ func TestBinstubSkipsProvenanceBeforeItWasPublished(t *testing.T) {
 	}
 }
 
-// GANTRY_REQUIRE_PROVENANCE=1 makes each download bin/gantry can't trace to
-// gantry's release workflow a refusal, not a warning: nothing is installed
-// or run.
 func TestBinstubRequiresProvenance(t *testing.T) {
 	osName, arch := platform(t)
 	houston := []byte("#!/bin/sh\necho houston-good\n")
@@ -522,7 +497,7 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 		gantry  []byte
 		env     func(t *testing.T, rs *releaseServer) []string
 		want    string
-		refused string // the CLI not installed: "gantry" or "houston"; "" when it all ran
+		refused string
 	}{
 		{"attested, Houston pinned", "v0.20.0", gantryPinning("v9.9.9", pins), func(t *testing.T, rs *releaseServer) []string {
 			return rs.env("GANTRY_REQUIRE_PROVENANCE=1")
@@ -568,7 +543,6 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 			if (code == 0) != (tc.refused == "") || !strings.Contains(out, tc.want) {
 				t.Fatalf("exit %d\n%s", code, out)
 			}
-			// Houston comes after gantry: refusing gantry installs neither.
 			for kept, want := range map[string]bool{
 				"gantry-" + tc.version: tc.refused != "gantry",
 				"houston-v9.9.9":       tc.refused == "",
@@ -581,7 +555,6 @@ func TestBinstubRequiresProvenance(t *testing.T) {
 			if tc.refused != "" && strings.Contains(out, "gantry-ok") {
 				t.Errorf("ran gantry after refusing a download:\n%s", out)
 			}
-			// What's refused is known before the download, which doesn't happen.
 			release := map[string]string{"gantry": tc.version, "houston": "v9.9.9"}[tc.refused]
 			if asset := "/" + tc.refused + "/" + release + "/" + tc.refused + "-" + osName + "-" + arch; tc.refused != "" && rs.hitsOn(asset) != 0 {
 				t.Errorf("downloaded %s before refusing it:\n%s", asset, out)
@@ -833,8 +806,6 @@ func TestReleasePublishesBinstubAssets(t *testing.T) {
 	if !regexp.MustCompile(`uses: actions/attest@[0-9a-f]{40} `).Match(workflow) {
 		t.Error("workflow doesn't attest the binaries with actions/attest pinned by commit")
 	}
-	// bin/gantry trusts an attestation signed by this workflow file, for the
-	// asset it publishes.
 	for _, needle := range []string{"provenance.sigstore.json", "--signer-workflow scttymn/gantry/.github/workflows/release.yml"} {
 		if !strings.Contains(string(script), needle) {
 			t.Errorf("script missing %q", needle)

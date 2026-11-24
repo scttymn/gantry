@@ -17,14 +17,10 @@ import (
 	"strings"
 )
 
-// googleFonts is Google Fonts' stylesheet API; tests point it, and
-// httpClient, elsewhere.
 var googleFonts = "https://fonts.googleapis.com/css2"
 
-// A browser Google serves WOFF2 to, split by unicode-range.
 const fontsUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0 Safari/537.36"
 
-// fontStyle is one face of a family: a weight, upright or italic.
 type fontStyle struct {
 	italic bool
 	weight int
@@ -35,8 +31,6 @@ type fontFamily struct {
 	styles []fontStyle
 }
 
-// parseFontFamily reads "Work Sans:400,600" and "Instrument Serif:400,400i"
-// ("i" for italic); a family alone is its regular, 400.
 func parseFontFamily(spec string) (fontFamily, error) {
 	name, weights, _ := strings.Cut(spec, ":")
 	name = strings.TrimSpace(name)
@@ -59,7 +53,6 @@ func parseFontFamily(spec string) (fontFamily, error) {
 			f.styles = append(f.styles, s)
 		}
 	}
-	// Google wants them in order: upright first, each by weight.
 	slices.SortFunc(f.styles, func(a, b fontStyle) int {
 		if a.italic != b.italic {
 			if a.italic {
@@ -72,8 +65,6 @@ func parseFontFamily(spec string) (fontFamily, error) {
 	return f, nil
 }
 
-// regular is the face a family's fallback is measured by: the upright one
-// nearest 400 (text's weight, and next/font's), else its first.
 func (f fontFamily) regular() fontStyle {
 	best := f.styles[0]
 	for _, s := range f.styles {
@@ -85,7 +76,6 @@ func (f fontFamily) regular() fontStyle {
 	return best
 }
 
-// query is the family as Google's API asks: "Work Sans:ital,wght@0,400;0,600".
 func (f fontFamily) query() string {
 	var tuples []string
 	for _, s := range f.styles {
@@ -115,15 +105,6 @@ func fontsFlags() (fs *flag.FlagSet, subsets *string, force *bool) {
 	return fs, subsets, force
 }
 
-// generateFonts is`gantry g fonts FAMILY[:WEIGHTS]... [--subsets latin,latin-ext]
-// [--force]`: Google Fonts served from the app itself, so no stylesheet on
-// another host holds up the first paint. It downloads each face's WOFF2
-// files into assets/fonts and writes assets/css/fonts.css, and prints the
-// preloads and the font stacks. The text paints at once (font-display:
-// swap) in a fallback face for each family, a system font sized to the
-// family's measure (next/font's adjustFontFallback), so it keeps its place
-// when the family swaps in: measured from the family's TTF, which Google
-// serves a plain client, and which isn't kept.
 func generateFonts(root string, args []string, out io.Writer) error {
 	fs, subsets, force := fontsFlags()
 	var specs []string
@@ -177,15 +158,12 @@ func generateFonts(root string, args []string, out io.Writer) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		// Google's error is its first line: "Font family not found".
 		msg, _, _ := strings.Cut(strings.TrimSpace(string(body)), "\n")
 		return fmt.Errorf("Google Fonts: %s: %s", resp.Status, msg)
 	}
 
-	// Everything is fetched before anything is written, so a failure leaves
-	// the app as it was.
-	files := map[string][]byte{} // file name → its bytes
-	names := map[string]string{} // Google's URL → file name
+	files := map[string][]byte{}
+	names := map[string]string{}
 	var rules []string
 	for _, m := range fontBlock.FindAllStringSubmatch(string(body), -1) {
 		subset, rule := m[1], m[2]
@@ -244,7 +222,6 @@ func generateFonts(root string, args []string, out io.Writer) error {
 	if err := write(cssPath, []byte(css)); err != nil {
 		return err
 	}
-	// The fonts the old stylesheet used and the new one doesn't.
 	for _, m := range localFont.FindAllStringSubmatch(string(old), -1) {
 		if _, ok := files[m[1]]; !ok {
 			os.Remove(filepath.Join(fontsDir, m[1]))
@@ -280,8 +257,6 @@ Next:
 	return nil
 }
 
-// fallbackFaces are each family's fallback @font-face, measured from its
-// TTF (a plain client's answer from Google), at its regular face.
 func fallbackFaces(families []fontFamily) ([]string, error) {
 	q := url.Values{}
 	for _, f := range families {
@@ -297,7 +272,7 @@ func fallbackFaces(families []fontFamily) ([]string, error) {
 	if err != nil || resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("Google Fonts, for the fallbacks' measure: %s %v", resp.Status, err)
 	}
-	ttf := map[string]string{} // family → its TTF
+	ttf := map[string]string{}
 	for _, block := range regexp.MustCompile(`(?s)@font-face \{.*?\}`).FindAllString(string(body), -1) {
 		fam, u := fontFamRe.FindStringSubmatch(block), ttfURL.FindStringSubmatch(block)
 		if fam != nil && u != nil && ttf[fam[1]] == "" {
@@ -323,7 +298,6 @@ func fallbackFaces(families []fontFamily) ([]string, error) {
 	return faces, nil
 }
 
-// quoteSpecs is the command's arguments again, for the stylesheet's header.
 func quoteSpecs(specs []string, subsets string) string {
 	var out []string
 	for _, s := range specs {

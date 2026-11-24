@@ -12,8 +12,6 @@ import (
 
 var update = flag.Bool("update", false, "rewrite testdata/golden from the generator")
 
-// app is an app's root to generate into: a go.mod, and a sqlc.yaml that
-// renames a column, as the site's does.
 func app(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -66,8 +64,6 @@ func TestResourceRules(t *testing.T) {
 			if strings.Contains(update, "c.DB.Read") || strings.Contains(update, "c.DB.Write") {
 				t.Errorf("%s: Update reads or writes outside its transaction:\n%s", engine, update)
 			}
-			// A PATCH's body isn't read before the handler (MethodOverride
-			// parses only a POST's), so it's read before the lock is taken.
 			if form, tx := strings.Index(update, "resource.Overlay("), strings.Index(update, "c.DB.Tx("); form < 0 || form > tx {
 				t.Errorf("%s: Update reads the form inside its transaction:\n%s", engine, update)
 			}
@@ -123,7 +119,6 @@ func TestResourceRules(t *testing.T) {
 	})
 }
 
-// g resource writes its table's migration too, and it applies and rolls back.
 func TestResourceMigration(t *testing.T) {
 	root := app(t)
 	at(t, "2026-09-29T12:00:00Z")

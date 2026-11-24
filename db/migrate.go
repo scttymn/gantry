@@ -38,11 +38,6 @@ func (d *DB) Migrate(ctx context.Context, fsys fs.FS, table string) error {
 		return fmt.Errorf("migrations (%s): %w", table, err)
 	}
 	if d.Engine == SQLite {
-		// Migrations are writes as big as an app makes: what they left in
-		// the write-ahead log is moved into the database, and the log
-		// emptied, whether or not the app writes again soon (when it
-		// would be cut back anyway: limitLog). A reader in the log keeps
-		// it from being emptied; that's no error.
 		if _, err := d.Write.ExecContext(ctx, `PRAGMA wal_checkpoint(TRUNCATE)`); err != nil {
 			return fmt.Errorf("migrations (%s): the log after them: %w", table, err)
 		}
@@ -94,10 +89,12 @@ func (d *DB) Rollback(ctx context.Context, fsys fs.FS, table string, steps int) 
 
 // Migration is one migration file, and whether it has run.
 type Migration struct {
-	Version   int64
-	Name      string // the file's name
-	Applied   bool
-	AppliedAt time.Time // zero while pending
+	Version int64
+	// the file's name
+	Name    string
+	Applied bool
+	// zero while pending
+	AppliedAt time.Time
 }
 
 // Status is every migration in fsys, oldest version first.
@@ -133,9 +130,6 @@ func (d *DB) migrations(fsys fs.FS, table string) (*goose.Provider, error) {
 	return p, err
 }
 
-// lastApplied is the version applied most recently (0: none), the one goose
-// rolls back next. table is gantry's or the app's own name, never a
-// visitor's.
 func (d *DB) lastApplied(ctx context.Context, table string) (int64, error) {
 	var v int64
 	err := d.Write.QueryRowContext(ctx, `SELECT version_id FROM `+table+` WHERE version_id <> 0 ORDER BY id DESC LIMIT 1`).Scan(&v)
@@ -145,9 +139,6 @@ func (d *DB) lastApplied(ctx context.Context, table string) (int64, error) {
 	return v, err
 }
 
-// downOf is version's file name, and whether it can be undone: its down
-// section has a statement (a line that isn't blank or a comment), or its up
-// has none, so there's nothing to undo.
 func downOf(fsys fs.FS, p *goose.Provider, version int64) (string, bool, error) {
 	for _, s := range p.ListSources() {
 		if s.Version != version {

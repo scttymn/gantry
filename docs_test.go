@@ -12,9 +12,6 @@ import (
 	"unicode"
 )
 
-// The docs readers and agents start from: each must open with its title,
-// keep its table rows in tables, link only to files and headings that exist,
-// and name in a decisions table only modules go.mod requires.
 func TestDocs(t *testing.T) {
 	files := []string{"README.md", "CONTRIBUTING.md", "AGENTS.md", "llms.txt", "cmd/gantry/templates/new/README.md.tmpl", "cmd/gantry/templates/new/AGENTS.md.tmpl"}
 	for _, glob := range []string{"docs/*.md", "docs/plans/*.md"} {
@@ -92,8 +89,7 @@ func check(d doc, read func(string) (doc, bool), required map[string]bool) []pro
 }
 
 type doc struct {
-	path string
-	// lines, with fenced code blanked so that no check reads code as prose
+	path  string
 	lines []string
 }
 
@@ -159,8 +155,6 @@ func isSeparator(l string) bool {
 	return isRow(l)
 }
 
-// tables returns each run of "|" lines as [start, end) line indexes, and
-// whether it is a table: a header row, then a separator row.
 func tables(d doc) (runs [][2]int, isTable func([2]int) bool) {
 	for i := 0; i < len(d.lines); i++ {
 		if !isRow(d.lines[i]) {
@@ -205,8 +199,6 @@ var (
 	onMain   = regexp.MustCompile(`^https://github\.com/scttymn/gantry/(?:blob|tree)/main/(.+)$`)
 )
 
-// linkProblems checks relative links, and links to this repo's main branch
-// (llms.txt's and new apps' READMEs), against the files in this checkout.
 func linkProblems(d doc, read func(string) (doc, bool)) []problem {
 	var problems []problem
 	for i, l := range d.lines {
@@ -226,7 +218,6 @@ func linkProblems(d doc, read func(string) (doc, bool)) []problem {
 				file = path.Join(path.Dir(d.path), file)
 				linked, ok = read(file)
 				if !ok && strings.HasSuffix(d.path, ".tmpl") {
-					// The generator writes X.tmpl as X beside it.
 					linked, ok = read(file + ".tmpl")
 				}
 			}
@@ -242,8 +233,6 @@ func linkProblems(d doc, read func(string) (doc, bool)) []problem {
 	return problems
 }
 
-// anchors are GitHub's: a heading's text, lowercased, with spaces as hyphens
-// and other punctuation dropped; a repeated one gets -1, -2, and so on.
 func anchors(d doc) map[string]bool {
 	seen := map[string]int{}
 	out := map[string]bool{}
@@ -279,9 +268,6 @@ var (
 	majorVersion = regexp.MustCompile(`^v(?:[2-9]|[1-9][0-9]+)$`)
 )
 
-// decisionProblems holds a plan's decisions table to go.mod: a module it
-// names is required there. A Choice marked Superseded is history up to the
-// marker, and only what replaced it, after the marker, is checked.
 func decisionProblems(d doc, required map[string]bool) []problem {
 	runs, isTable := tables(d)
 	var problems []problem
@@ -316,9 +302,6 @@ func headingAbove(d doc, line int) string {
 	return ""
 }
 
-// requires reports whether a module go.mod requires holds pkg. Its path's
-// enclosing modules are tried in turn, but not across a major version:
-// m/v2 is a module of its own, not a package of m.
 func requires(required map[string]bool, pkg string) bool {
 	for p := pkg; p != "."; p = path.Dir(p) {
 		if required[p] {
@@ -331,8 +314,6 @@ func requires(required map[string]bool, pkg string) bool {
 	return false
 }
 
-// goModRequires is this module and what it requires directly; an indirect
-// requirement is another module's choice, not a decision of this one.
 func goModRequires(t *testing.T) map[string]bool {
 	data, err := os.ReadFile("go.mod")
 	if err != nil {

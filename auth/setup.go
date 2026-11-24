@@ -49,8 +49,6 @@ func (a *Auth) FirstUserPending(ctx context.Context) (bool, error) {
 }
 
 func (a *Auth) setupLock(ctx context.Context, tx *db.Tx) (bool, string, error) {
-	// Also serialize with ordinary user inserts, not just setup requests.
-	// SQLite's write transactions already begin IMMEDIATE.
 	if a.DB.Engine == db.Postgres {
 		if _, err := tx.ExecContext(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return false, "", err
@@ -89,6 +87,8 @@ func (a *Auth) completeSetup(ctx context.Context, tx *db.Tx) error {
 // PrepareFirstUser is called at startup before serving requests. A fresh
 // installation gets a random code; restarts preserve it. Existing users close
 // setup permanently. The code is never logged. Missing state is an error.
+// The setup form checks the code before it hashes a password or says what
+// else is wrong with the form.
 func (a *Auth) PrepareFirstUser(ctx context.Context) error {
 	if !a.setupEnabled() {
 		return nil
@@ -200,7 +200,6 @@ func (a *Auth) setupPage(w http.ResponseWriter, r *http.Request, alert, email st
 	if alert != "" {
 		p.Alert = alert
 	}
-	// Views use Page.Status so generated web.Render wrappers preserve 422.
 	p.Status = status
 	return a.views().Setup(w, r, p)
 }
@@ -215,7 +214,6 @@ func (a *Auth) setupUser(w http.ResponseWriter, r *http.Request) error {
 	}
 	code := strings.TrimSpace(r.PostFormValue("setup_code"))
 	email := Normalize(r.PostFormValue("email_address"))
-	// Check the random code before doing password hashing or reporting details.
 	var digest string
 	err := a.DB.Read.QueryRowContext(r.Context(), `SELECT code_digest FROM auth_setup WHERE id=1 AND NOT completed`).Scan(&digest)
 	if errors.Is(err, sql.ErrNoRows) {

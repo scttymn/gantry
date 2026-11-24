@@ -6,8 +6,6 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// SQLite's extended result codes for a refused write (sqlite3.h): the same
-// numbers from either build's driver.
 const (
 	sqliteConstraintForeignKey = 787
 	sqliteConstraintPrimaryKey = 1555

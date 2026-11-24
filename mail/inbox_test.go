@@ -132,7 +132,7 @@ func TestInboxHTTP(t *testing.T) {
 			r.Header.Set("Sec-Fetch-Site", site)
 		}
 		w := httptest.NewRecorder()
-		w.Header().Set("Content-Security-Policy-Report-Only", "default-src 'self'") // the app's, from web.Headers
+		w.Header().Set("Content-Security-Policy-Report-Only", "default-src 'self'")
 		mux.ServeHTTP(w, r)
 		return w
 	}
@@ -147,7 +147,6 @@ func TestInboxHTTP(t *testing.T) {
 	if w.Header().Get("Content-Security-Policy-Report-Only") != "" {
 		t.Fatal("the app's policy reports the inbox's own style")
 	}
-	// The development panel's stylesheet (/_gantry/development.css) is the app's own.
 	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
 		t.Fatalf("the development panel's stylesheet is blocked: %s", csp)
 	}
@@ -243,8 +242,6 @@ func TestAppMailConfiguration(t *testing.T) {
 	}
 }
 
-// The browser and a background worker can open the same capture file. Polling
-// must see those external commits, preserve a reader, and recover after restart.
 func TestInboxUpdates(t *testing.T) {
 	t.Setenv("GANTRY_ENV", "development")
 	filename := filepath.Join(t.TempDir(), "mail.sqlite3")
@@ -334,8 +331,6 @@ func TestInboxUpdates(t *testing.T) {
 	if !strings.Contains(page.Body.String(), "/dev/mail"+script) || !strings.Contains(page.Header().Get("Content-Security-Policy"), "connect-src 'self'") {
 		t.Fatal("polling not wired into page")
 	}
-	// A restarted handler must not confuse a previous connection's counter for
-	// its own, even when no new message has been received.
 	replacement, err := NewInbox(t.Context(), filename)
 	if err != nil {
 		t.Fatal(err)

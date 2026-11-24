@@ -65,7 +65,6 @@ func DefaultViews() Views {
 	}
 }
 
-// forgot links to the password reset, when the app offers one.
 func forgot(p Page) string {
 	if p.Paths.Passwords == "" {
 		return ""

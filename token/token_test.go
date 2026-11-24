@@ -19,7 +19,6 @@ func TestNew(t *testing.T) {
 	if plain, _ := New(""); len(plain) != 43 {
 		t.Errorf("no prefix: %q", plain)
 	}
-	// auth's sessions were made this way: a digest is the same as before.
 	if got := Digest("abc"); got != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" {
 		t.Errorf("Digest(abc) = %s", got)
 	}
@@ -34,7 +33,7 @@ func TestEqual(t *testing.T) {
 		{"s3cret-runner-token-of-32-bytes?", "s3cret-runner-token-of-32-bytes!", false},
 		{"short", "s3cret-runner-token-of-32-bytes!", false},
 		{"", "s3cret-runner-token-of-32-bytes!", false},
-		{"", "", false}, // no secret set isn't a match
+		{"", "", false},
 	} {
 		if got := Equal(tc.given, tc.expected); got != tc.want {
 			t.Errorf("Equal(%q, %q) = %v", tc.given, tc.expected, got)

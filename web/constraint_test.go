@@ -25,7 +25,7 @@ func at(h http.Handler, host, path string) (int, string) {
 }
 
 func TestConstraints(t *testing.T) {
-	base := "example.com" // decided at run time, as an app's setup might
+	base := "example.com"
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Constraint(HostFunc(func(host string) bool { return host == "hooks."+base }), func(s *Scope) {
 		s.Handle("GET /ping", sayp("hooks ping"))
@@ -34,7 +34,7 @@ func TestConstraints(t *testing.T) {
 	rt.Constraint(Subdomain("api"), func(s *Scope) {
 		s.Handle("GET /ping", sayp("api ping"))
 		s.Constraint(func(r *http.Request) bool { return r.Header.Get("X-Beta") != "" }, func(s *Scope) {
-			s.Handle("GET /ping", sayp("beta ping")) // nested: tried before its parent
+			s.Handle("GET /ping", sayp("beta ping"))
 		})
 	})
 	rt.Constraint(Host("admin.example.com"), func(s *Scope) {
@@ -49,14 +49,14 @@ func TestConstraints(t *testing.T) {
 
 	for _, tc := range []struct{ host, path, want string }{
 		{"hooks.example.com", "/ping", "hooks ping"},
-		{"Hooks.Example.COM.:443", "/ping", "hooks ping"},    // the host cleaned: case, port, trailing dot
-		{"hooks.example.com", "/hook/deploy", "hook deploy"}, // path values inside
-		{"hooks.example.com", "/about", "about"},             // no route inside: the rest get a try
+		{"Hooks.Example.COM.:443", "/ping", "hooks ping"},
+		{"hooks.example.com", "/hook/deploy", "hook deploy"},
+		{"hooks.example.com", "/about", "about"},
 		{"api.example.com", "/ping", "api ping"},
-		{"www.example.com", "/ping", "plain ping"},            // no constraint passes
-		{"example.com", "/ping", "plain ping"},                // no subdomain
-		{"api.localhost", "/ping", "plain ping"},              // "api" is the domain there, not a subdomain
-		{"admin.example.com", "/admin/dash", "gate,handler,"}, // a scope inside, with its filters
+		{"www.example.com", "/ping", "plain ping"},
+		{"example.com", "/ping", "plain ping"},
+		{"api.localhost", "/ping", "plain ping"},
+		{"admin.example.com", "/admin/dash", "gate,handler,"},
 		{"www.example.com", "/admin/dash", "404"},
 	} {
 		code, body := at(h, tc.host, tc.path)
@@ -68,7 +68,6 @@ func TestConstraints(t *testing.T) {
 		}
 	}
 
-	// A nested constraint: both checks must pass, and it's tried first.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/ping", nil)
 	r.Host, r.Header = "api.example.com", http.Header{"X-Beta": {"1"}}
@@ -84,7 +83,6 @@ func TestConstraints(t *testing.T) {
 		t.Errorf("the nested check alone passed: %q", got)
 	}
 
-	// Hosts known at run time: the check reads them each time.
 	if _, body := at(h, "hooks.example.org", "/ping"); body != "plain ping" {
 		t.Errorf("before the base changed: %q", body)
 	}
@@ -94,8 +92,6 @@ func TestConstraints(t *testing.T) {
 	}
 }
 
-// A constraint inside a scope: its routes are under the scope's prefix and
-// run the scope's filters.
 func TestConstraintInAScope(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Scope("/v1", Pipeline{trace("outer")}, func(s *Scope) {
@@ -108,7 +104,6 @@ func TestConstraintInAScope(t *testing.T) {
 	}
 }
 
-// Constraints are tried in the order they were declared.
 func TestConstraintOrder(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Constraint(Host("a.example.com", "b.example.com"), func(s *Scope) { s.Handle("GET /x", sayp("first")) })

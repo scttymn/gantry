@@ -14,7 +14,6 @@ import (
 	"time"
 )
 
-// app is a router whose error page names the status, with a few routes.
 func app(t *testing.T) (http.Handler, *bytes.Buffer) {
 	t.Helper()
 	var logs bytes.Buffer
@@ -25,7 +24,7 @@ func app(t *testing.T) (http.Handler, *bytes.Buffer) {
 	})
 	rt.Handle("GET /posts/{id}", func(w http.ResponseWriter, r *http.Request) error {
 		switch ID(r, "id") {
-		case 0: // what a lookup of id 0 gives
+		case 0:
 			return sql.ErrNoRows
 		case 1:
 			io.WriteString(w, "post 1")
@@ -88,7 +87,6 @@ func TestErrors(t *testing.T) {
 		if rec := do(h, "GET", "/posts/2", nil, "Accept", "image/webp"); rec.Code != 404 || rec.Body.Len() != 0 {
 			t.Errorf("an image: %d %q", rec.Code, rec.Body)
 		}
-		// Data is answered as data (docs/plans/mission-control.md, G1 item 8).
 		if rec := do(h, "GET", "/posts/2", nil, "Accept", "application/json"); rec.Code != 404 || rec.Body.String() != "{\"error\":\"Not Found\"}\n" {
 			t.Errorf("JSON: %d %q", rec.Code, rec.Body)
 		}
@@ -97,8 +95,6 @@ func TestErrors(t *testing.T) {
 		}
 	})
 	t.Run("an error after the page started is logged, and the connection cut", func(t *testing.T) {
-		// net/http cuts the connection on this panic (TestFailureMidStream
-		// sees it from a client); called directly, it's the panic itself.
 		defer func() {
 			if v := recover(); v != http.ErrAbortHandler || !strings.Contains(logs.String(), "broke mid-page") {
 				t.Fatalf("recovered %v, logs %s", v, logs)
@@ -192,7 +188,6 @@ func TestProtection(t *testing.T) {
 		if rec := do(h, "POST", "/posts/1", strings.NewReader("_method=DELETE")); rec.Body.String() != "deleted" {
 			t.Errorf("%d %q", rec.Code, rec.Body)
 		}
-		// Only those three: a form can't turn itself into a GET.
 		if rec := do(h, "POST", "/posts/1", strings.NewReader("_method=GET")); rec.Code != 404 {
 			t.Errorf("%d %q", rec.Code, rec.Body)
 		}
@@ -223,7 +218,6 @@ func TestClientIP(t *testing.T) {
 				t.Errorf("%q: %s, want %s", chain, got, want)
 			}
 		}
-		// A visitor talking to the app directly can't forge where they're from.
 		req := httptest.NewRequest("POST", "/leads", nil)
 		req.RemoteAddr = "198.51.100.7:5555"
 		req.Header.Set("X-Forwarded-For", "203.0.113.9")
@@ -261,9 +255,6 @@ func TestLimits(t *testing.T) {
 	}
 }
 
-// An error answer is never cached, whoever writes it: the router's pages,
-// a handler's own status, a mounted handler's 404; and a success keeps its
-// own caching.
 func TestNoStoreOnErrors(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Handle("GET /boom", func(w http.ResponseWriter, r *http.Request) error { return Status(http.StatusConflict, nil) })

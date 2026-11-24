@@ -84,8 +84,6 @@ func (f *FakeHTTP) RoundTrip(r *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-// matches reports whether r is for url: the same URL, or, when url has no
-// query, the same URL but for the query.
 func matches(url string, r *http.Request) bool {
 	if strings.Contains(url, "?") {
 		return url == r.URL.String()

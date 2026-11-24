@@ -48,19 +48,20 @@ type Server struct {
 	// every width of them is on disk (remembered once it is).
 	HasAVIF func(key string) bool
 
-	avifReady sync.Map // key → true, once every AVIF copy is on disk
+	avifReady sync.Map
 }
 
 // Original is an uploaded file the server makes copies of.
 type Original struct {
-	Path        string // on disk
+	// on disk
+	Path        string
 	ContentType string
-	Width       int    // upright; 0 when unknown (every width is served)
-	Filename    string // the name it's downloaded as, when it's served as it is
+	// upright; 0 when unknown (every width is served)
+	Width int
+	// the name it's downloaded as, when it's served as it is
+	Filename string
 }
 
-// year is how long a copy is cached: its address changes with its width,
-// quality and format, so it never goes stale.
 const year = 31556952
 
 func (s *Server) log() *slog.Logger {
@@ -102,7 +103,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if original {
 		path, contentType = o.Path, o.ContentType
 	} else {
-		// The name's extension says the format: WebP, or AVIF.
 		p, avif := s.Pipeline, s.AVIF != nil && strings.HasSuffix(name, s.AVIF.encoder().Ext())
 		if avif {
 			p = s.AVIF
@@ -150,10 +150,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Cache-Control", "public, max-age="+strconv.Itoa(year)+", immutable")
 	if original {
-		// Its type is whatever its uploader made it (a page, an SVG), so it's
-		// a download, and never a document of the app's origin: opened in a
-		// tab, its scripts would run with the visitor's session. An <img>
-		// still shows it.
 		disposition := mime.FormatMediaType("attachment", map[string]string{"filename": o.Filename})
 		if o.Filename == "" || disposition == "" {
 			disposition = "attachment"
@@ -161,8 +157,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.Set("Content-Disposition", disposition)
 		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	}
-	// A large original to a slow client can outlast the server's
-	// WriteTimeout while it's still being read.
 	http.ServeContent(web.Moving(w, r), r, "", info.ModTime(), f)
 }
 
@@ -177,9 +171,12 @@ func (s *Server) OriginalURL(key string) string { return s.Prefix + key + "/orig
 // Photo is an original as a page shows it.
 type Photo struct {
 	Key, ContentType string
-	Width, Height    int    // the original's, upright; 0 when unknown
-	Quality          int    // the copies'; the pipeline's when 0
-	Placeholder      string // a data URI (Pipeline.Placeholder); "" when there's none
+	// the original's, upright; 0 when unknown
+	Width, Height int
+	// the copies'; the pipeline's when 0
+	Quality int
+	// a data URI (Pipeline.Placeholder); "" when there's none
+	Placeholder string
 }
 
 // Img is how a page shows a photo.
@@ -201,7 +198,6 @@ type Img struct {
 	PlaceholderWhen string
 }
 
-// transparent is a 1×1 GIF.
 const transparent = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
 
 // Sources are a resizable photo's src (its largest copy, for a browser that
@@ -219,7 +215,6 @@ func (s *Server) Img(p Photo, o Img) templ.Component {
 	return templ.Raw(s.imgHTML(p, o))
 }
 
-// withAVIF: the photo comes in AVIF (Server.AVIF, HasAVIF).
 func (s *Server) withAVIF(p Photo) bool {
 	if s.AVIF == nil || !s.AVIF.Resizable(p.ContentType) {
 		return false
@@ -239,7 +234,6 @@ func (s *Server) withAVIF(p Photo) bool {
 	return true
 }
 
-// avifSource is the <source> of the photo's AVIF copies.
 func (s *Server) avifSource(p Photo, o Img) string {
 	esc := templ.EscapeString[string]
 	widths := s.AVIF.WidthsFor(p.Width)

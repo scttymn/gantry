@@ -18,10 +18,13 @@ import (
 
 // Recipe is what a recipe's templates are filled with.
 type Recipe struct {
-	Module   string // the app's import path: "example.com/shop", or a module's folder
+	// the app's import path: "example.com/shop", or a module's folder
+	Module   string
 	Postgres bool
-	Signup   bool   // email-code auth: allow signup after verification
-	Prefix   string // api-tokens: what every token starts with
+	// email-code auth: allow signup after verification
+	Signup bool
+	// api-tokens: what every token starts with
+	Prefix string
 }
 
 var tokenPrefix = regexp.MustCompile(`\A[a-z][a-z0-9]{0,15}_\z`)
@@ -32,9 +35,6 @@ func apiTokensFlags() (fs *flag.FlagSet, prefix *string) {
 	return fs, prefix
 }
 
-// generateAPITokens is `gantry g api-tokens [--prefix PREFIX]`: named API
-// tokens, written into the app (the api_tokens table, its queries, the
-// apitokens package with Issue and the Require filter, and their tests).
 func generateAPITokens(root string, args []string, out io.Writer) error {
 	fs, prefix := apiTokensFlags()
 	if err := parseFlags(fs, args); err != nil {
@@ -72,8 +72,6 @@ Next:
 	return nil
 }
 
-// writeRecipe renders a recipe's templates (templates/<dir>) to files,
-// refusing any that's there.
 func writeRecipe(root, dir string, files map[string]string, data any, out io.Writer) error {
 	for path := range files {
 		if _, err := os.Stat(filepath.Join(root, path)); err == nil {
@@ -98,9 +96,6 @@ func writeRecipe(root, dir string, files map[string]string, data any, out io.Wri
 	return nil
 }
 
-// appModule is the app's import path: its go.mod's module, or, for an app
-// in a folder of a module (gantry new --in-module), the module's path and
-// the folder.
 func appModule(root string) (string, error) {
 	if _, err := os.Stat(filepath.Join(root, "cmd")); err != nil {
 		return "", errors.New("no cmd/ here: run gantry at the app's root")
@@ -126,8 +121,6 @@ func authFlags() (fs *flag.FlagSet, emailCode, social, signup *bool) {
 	return fs, emailCode, social, signup
 }
 
-// generateAuth writes app-owned schema and views around shared Gantry Auth,
-// including a one-time first-install setup flow for password authentication.
 func generateAuth(root string, args []string, out io.Writer) error {
 	fs, emailCode, social, signup := authFlags()
 	if err := parseFlags(fs, args); err != nil {
@@ -197,8 +190,6 @@ Documentation: https://github.com/scttymn/gantry/blob/main/docs/auth.md
 	return nil
 }
 
-// generateStorage is `gantry g storage`: Active Storage's tables, as `rails
-// active_storage:install` writes them, for gantry's storage package.
 func generateStorage(root string, args []string, out io.Writer) error {
 	if len(args) > 0 {
 		return fmt.Errorf("g storage takes no arguments (%q)", args[0])
@@ -238,8 +229,6 @@ Next:
 	return nil
 }
 
-// generateEmailCodeAuth writes the app's schema and views, keeping sensitive
-// authentication operations in the shared, tested gantry/auth implementation.
 func generateEmailCodeAuth(root string, signup bool, out io.Writer) error {
 	mod, err := appModule(root)
 	if err != nil {

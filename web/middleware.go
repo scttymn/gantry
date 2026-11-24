@@ -15,9 +15,12 @@ var compressHandler = compress.Handler
 
 // BodyLimits caps what a request body can be.
 type BodyLimits struct {
-	Form      int64 // an urlencoded form, read before any handler
-	Multipart int64 // a form with files, read before any handler
-	InMemory  int64 // how much of a multipart form is kept in memory; the rest goes to temporary files
+	// an urlencoded form, read before any handler
+	Form int64
+	// a form with files, read before any handler
+	Multipart int64
+	// how much of a multipart form is kept in memory; the rest goes to temporary files
+	InMemory int64
 	// Data is any other body (JSON, a webhook's payload): read by its
 	// handler, with a tighter limit of its own (ReadJSONLimit); this is the
 	// most any handler can read.
@@ -118,7 +121,6 @@ func (s Security) Headers(next http.Handler) http.Handler {
 	})
 }
 
-// cspHeader is the header s's policy is sent in.
 func (s Security) cspHeader() string {
 	if s.CSPReportOnly {
 		return "Content-Security-Policy-Report-Only"
@@ -126,9 +128,6 @@ func (s Security) cspHeader() string {
 	return "Content-Security-Policy"
 }
 
-// staticPagePolicy is the app's static error pages' (assets/public's
-// 404.html …), sent in place of its own: plain files, with nothing in them
-// to inject, whose style is inline.
 const staticPagePolicy = "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'self'"
 
 // ContentSecurityPolicy is a policy for an app's pages: everything from the
@@ -149,9 +148,6 @@ func sources(lists ...string) string {
 	return strings.Join(strings.Fields(strings.Join(lists, " ")), " ")
 }
 
-// turboProgressBar is the hash of the <style> Turbo adds to every page for
-// its progress bar (ProgressBar.defaultCSS), in the Turbo gantry's apps are
-// made with: TestTurboProgressBarHash holds it to that file.
 const turboProgressBar = "'sha256-WAyOw4V+FqDc35lQPyRADLBWbuNK8ahvYEaQIYF1+Ps='"
 
 // CrossOrigin refuses a state-changing request sent from another site (the

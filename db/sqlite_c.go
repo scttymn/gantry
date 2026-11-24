@@ -113,21 +113,10 @@ import (
 	"time"
 	"unsafe"
 
-	_ "github.com/mattn/go-sqlite3" // SQLite's C, compiled
+	_ "github.com/mattn/go-sqlite3"
 
 	"github.com/scttymn/gantry/internal/pins"
 )
-
-// SQLite compiled from C, for a build with cgo (sqlite.go): gantry's own
-// binding, a small one, made to answer as the translated build's driver
-// (modernc.org/sqlite) does, so an app sees no difference but the time it
-// takes. Its arguments, scripts, times, values and errors are that driver's,
-// and the tests that pin them run on both builds.
-//
-// What it does that the driver it replaces can't: a connection is opened
-// without SQLite's own lock (database/sql lets one goroutine at a time use
-// a connection), SQLite doesn't count its allocations under a lock all
-// connections share, and a row is read in one call from Go to C.
 
 const (
 	sqliteOK   = 0
@@ -147,15 +136,8 @@ const (
 	sqliteStmtStatusReprepare = 5
 )
 
-// sqliteUncounted is whether SQLite was told, before it started, not to
-// count its allocations.
 var sqliteUncounted = C.gantry_memstatus_off() == sqliteOK
 
-// sqliteCOptions are what SQLite compiled from C must have been compiled
-// with, so an app's SQL means what it means in the translated build. The
-// build tags that select this build have github.com/mattn/go-sqlite3
-// compile in the first four; the rest are CGO_CFLAGS's (pins.SQLiteCFlags),
-// as a gantry app's Dockerfile sets them. A build without them doesn't start.
 var sqliteCOptions = []string{
 	"ENABLE_FTS5", "ENABLE_MATH_FUNCTIONS", "ENABLE_DBSTAT_VTAB", "ENABLE_STAT4",
 	"SOUNDEX", "LIKE_DOESNT_MATCH_BLOBS", "ENABLE_OFFSET_SQL_FUNC", "ENABLE_DBPAGE_VTAB", "ENABLE_GEOPOLY",
@@ -167,7 +149,6 @@ func init() {
 	}
 }
 
-// sqliteMissing is which of sqliteCOptions SQLite wasn't compiled with.
 func sqliteMissing() (missing []string) {
 	for _, o := range sqliteCOptions {
 		name := C.CString(o)
@@ -192,7 +173,7 @@ func sqliteConnector(path string, readOnly bool) (driver.Connector, error) {
 type cConnector struct {
 	path    string
 	pragmas []string
-	begin   string // what a transaction starts with
+	begin   string
 }
 
 func (c cConnector) Connect(ctx context.Context) (driver.Conn, error) {
@@ -217,8 +198,6 @@ func (c cConnector) Connect(ctx context.Context) (driver.Conn, error) {
 
 func (c cConnector) Driver() driver.Driver { return cDriver{} }
 
-// cDriver is what database/sql's DB.Driver says: it opens a database by its
-// path, as gantry's writer would.
 type cDriver struct{}
 
 func (cDriver) Open(path string) (driver.Conn, error) {
@@ -226,8 +205,6 @@ func (cDriver) Open(path string) (driver.Conn, error) {
 	return c.Connect(context.Background())
 }
 
-// sqliteConn and sqliteRows are what the driver's connections and rows
-// are, beyond the least database/sql asks: what a cachingConn passes on.
 type sqliteConn interface {
 	driver.Conn
 	driver.ConnBeginTx
@@ -248,10 +225,6 @@ type sqliteRows interface {
 	driver.RowsColumnTypeScanType
 }
 
-// keepable reports whether a compiled statement can be kept and run again,
-// and that it could tell: not a script of several (each run compiles them
-// all, as the other build's driver does), nor SQL that's only comments.
-// A statement that only wraps one of these says what it wraps (Unwrap).
 func keepable(compiled driver.Stmt) (keep, ok bool) {
 	for {
 		switch s := compiled.(type) {
@@ -265,7 +238,6 @@ func keepable(compiled driver.Stmt) (keep, ok bool) {
 	}
 }
 
-// sqliteCode is err's SQLite result code (extended), if it's SQLite's.
 func sqliteCode(err error) (int, bool) {
 	var e *sqliteError
 	if !errors.As(err, &e) {
@@ -274,7 +246,6 @@ func sqliteCode(err error) (int, bool) {
 	return e.code, true
 }
 
-// sqliteError is SQLite's error, said as the other build's driver says it.
 type sqliteError struct {
 	code int
 	msg  string
@@ -300,8 +271,6 @@ func sqliteErr(db *C.sqlite3, rc C.int) error {
 	return &sqliteError{int(rc), fmt.Sprintf("%s (%v)%s", str, rc, busy)}
 }
 
-// cConn is a connection. database/sql has one goroutine at a time use it,
-// which is what SQLite asks of a connection opened without its lock.
 type cConn struct {
 	db    *C.sqlite3
 	begin string
@@ -309,10 +278,6 @@ type cConn struct {
 
 func (c *cConn) err(rc C.int) error { return sqliteErr(c.db, rc) }
 
-// watch interrupts SQLite's work on the connection when ctx is done, from
-// now until the function it returns is called. That function says whether
-// it did (ctx's error), and doesn't return while an interrupt is being
-// made: none reaches the connection's next statement.
 func (c *cConn) watch(ctx context.Context) (stop func() error, err error) {
 	done := ctx.Done()
 	if done == nil {
@@ -337,8 +302,6 @@ func (c *cConn) watch(ctx context.Context) (stop func() error, err error) {
 	}, nil
 }
 
-// compile compiles query's first statement, and is where the rest begins:
-// s is nil when that part of the SQL is only comments or space.
 func (c *cConn) compile(query string) (s *C.sqlite3_stmt, rest string, err error) {
 	if len(query) > math.MaxInt32 {
 		return nil, "", fmt.Errorf("sqlite: SQL of %d bytes is past SQLite's limit", len(query))
@@ -348,7 +311,7 @@ func (c *cConn) compile(query string) (s *C.sqlite3_stmt, rest string, err error
 		return nil, "", c.err(rc)
 	}
 	if s == nil && tail == 0 {
-		return nil, "", nil // SQLite reads no further than a NUL
+		return nil, "", nil
 	}
 	return s, query[tail:], nil
 }
@@ -364,7 +327,6 @@ func (c *cConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, 
 	}
 	st := &cStmt{c: c, sql: query, s: s, script: strings.TrimSpace(rest) != ""}
 	if st.script && s != nil {
-		// Each run compiles the script's statements as it goes.
 		C.sqlite3_finalize(s)
 		st.s = nil
 	}
@@ -391,7 +353,7 @@ func (c *cConn) QueryContext(ctx context.Context, query string, args []driver.Na
 		st.Close()
 		return nil, err
 	}
-	rows.(*cRows).owns = st // closed with its rows
+	rows.(*cRows).owns = st
 	return rows, nil
 }
 
@@ -402,7 +364,7 @@ func (c *cConn) Begin() (driver.Tx, error) {
 func (c *cConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	begin := c.begin
 	if opts.ReadOnly {
-		begin = "BEGIN" // a reader needn't take the write lock
+		begin = "BEGIN"
 	}
 	if _, err := c.ExecContext(ctx, begin, nil); err != nil {
 		return nil, err
@@ -441,7 +403,7 @@ type cTx struct{ c *cConn }
 func (t cTx) Commit() error {
 	_, err := t.c.ExecContext(context.Background(), "COMMIT", nil)
 	if err != nil && C.sqlite3_get_autocommit(t.c.db) == 0 {
-		_, _ = t.c.ExecContext(context.Background(), "ROLLBACK", nil) // the commit's error is the one to return
+		_, _ = t.c.ExecContext(context.Background(), "ROLLBACK", nil)
 	}
 	return err
 }
@@ -451,36 +413,26 @@ func (t cTx) Rollback() error {
 	return err
 }
 
-// cStmt is a statement: one compiled, or a script compiled a statement at
-// a time each run.
 type cStmt struct {
 	c      *cConn
 	sql    string
-	s      *C.sqlite3_stmt // nil for a script, or SQL that's only comments
+	s      *C.sqlite3_stmt
 	script bool
 
-	cols *C.gantry_col // a row's worth, room for ncol
-	ncol int
-	// The result's columns, as they were when SQLite last compiled it (it
-	// compiles a statement again when the schema changes).
+	cols         *C.gantry_col
+	ncol         int
 	names, decls []string
 	compiled     C.int
-	timeFormat   []int8 // per column, the time format that last fitted
+	timeFormat   []int8
 
-	open *cRows // the rows of its last run, while they're open
+	open *cRows
 }
 
-// errRunAgain and errStmtClosed are what rows say when their statement was
-// run again, or closed, before they were read to their end: their row was
-// SQLite's, and is gone.
 var (
 	errRunAgain   = errors.New("sqlite: the statement was run again before its rows were read")
 	errStmtClosed = errors.New("sqlite: the statement was closed before its rows were read")
 )
 
-// cut ends the rows of the statement's last run, before it runs again or is
-// closed: why is what they say when read, and what ending the run came to
-// (a RETURNING's write, failing at its end) what they say when closed.
 func (s *cStmt) cut(why error) {
 	if r := s.open; r != nil {
 		s.open = nil
@@ -566,8 +518,6 @@ func (s *cStmt) exec(args []driver.NamedValue) (driver.Result, error) {
 	return r, nil
 }
 
-// run binds args to st and steps it to its end, as sqlite3_exec does: a
-// RETURNING's rows, or a SELECT's, are read and dropped.
 func (s *cStmt) run(st *C.sqlite3_stmt, args []driver.NamedValue) (driver.Result, error) {
 	if err := s.bind(st, args); err != nil {
 		return nil, err
@@ -582,8 +532,6 @@ func (s *cStmt) run(st *C.sqlite3_stmt, args []driver.NamedValue) (driver.Result
 	return cResult{int64(C.sqlite3_last_insert_rowid(s.c.db)), int64(C.sqlite3_changes64(s.c.db))}, nil
 }
 
-// reset readies st to run again. Its error is the last step's, or what
-// ending the statement came to (a RETURNING's write, committed then).
 func (s *cStmt) reset(st *C.sqlite3_stmt) error {
 	rc := C.sqlite3_reset(st)
 	C.sqlite3_clear_bindings(st)
@@ -625,9 +573,6 @@ func (s *cStmt) query(args []driver.NamedValue) (*cRows, error) {
 		}
 		return s.first(s.s, args, false)
 	}
-	// As the other build's driver has it: a statement that comes to a row is
-	// the answer, until another does; one that doesn't is, if nothing before
-	// it was; and the statement that ends the SQL is, whatever it comes to.
 	var rows *cRows
 	for rest := s.sql; rest != ""; {
 		st, more, err := s.c.compile(rest)
@@ -644,9 +589,6 @@ func (s *cStmt) query(args []driver.NamedValue) (*cRows, error) {
 			rows.Close()
 			return nil, err
 		}
-		// What isn't the answer is ended now, and a statement that fails
-		// as it ends (a RETURNING's write) fails the script. (The other
-		// build's driver says nothing of it, and gives the next answer.)
 		done := r
 		if !r.done || rows == nil || rest == "" {
 			done, rows = rows, r
@@ -662,8 +604,6 @@ func (s *cStmt) query(args []driver.NamedValue) (*cRows, error) {
 	return rows, nil
 }
 
-// first binds and steps st to its first row; finalize says st is the rows'
-// own, to finalize when they're closed, not to reset.
 func (s *cStmt) first(st *C.sqlite3_stmt, args []driver.NamedValue, finalize bool) (*cRows, error) {
 	if !finalize {
 		s.cut(errRunAgain)
@@ -672,7 +612,7 @@ func (s *cStmt) first(st *C.sqlite3_stmt, args []driver.NamedValue, finalize boo
 		if finalize {
 			C.sqlite3_finalize(st)
 		} else {
-			_ = s.reset(st) // after the error being returned, which reset would repeat
+			_ = s.reset(st)
 		}
 	}
 	if err := s.bind(st, args); err != nil {
@@ -681,7 +621,7 @@ func (s *cStmt) first(st *C.sqlite3_stmt, args []driver.NamedValue, finalize boo
 	}
 	r := &cRows{s: s, st: st, finalize: finalize}
 	if finalize {
-		r.s = &cStmt{c: s.c} // a script's statement has its own columns
+		r.s = &cStmt{c: s.c}
 	}
 	switch rc := r.step(); rc {
 	case sqliteRow:
@@ -703,9 +643,6 @@ func (s *cStmt) first(st *C.sqlite3_stmt, args []driver.NamedValue, finalize boo
 	return r, nil
 }
 
-// bind binds args to st as the other build's driver does: ?NNN and $NNN
-// are the argument of that number, other names the argument of that name,
-// and a ? the argument in its place.
 func (s *cStmt) bind(st *C.sqlite3_stmt, args []driver.NamedValue) error {
 	n := int(C.sqlite3_bind_parameter_count(st))
 	for i := 1; i <= n; i++ {
@@ -745,7 +682,7 @@ func (s *cStmt) bind(st *C.sqlite3_stmt, args []driver.NamedValue) error {
 			}
 			rc = C.sqlite3_bind_int64(st, C.int(i), C.sqlite3_int64(b))
 		case []byte:
-			if x == nil { // NULL, where an empty one is an empty blob
+			if x == nil {
 				rc = C.sqlite3_bind_null(st, C.int(i))
 				break
 			}
@@ -776,20 +713,18 @@ func (s *cStmt) bind(st *C.sqlite3_stmt, args []driver.NamedValue) error {
 	return nil
 }
 
-// cRows are a statement's rows, its first already stepped to.
 type cRows struct {
 	s        *cStmt
 	st       *C.sqlite3_stmt
-	finalize bool   // st is the rows' own: finalized, not reset, when they close
-	owns     *cStmt // a statement that's closed with them
-	pending  bool   // the row stepped to hasn't been read
+	finalize bool
+	owns     *cStmt
+	pending  bool
 	done     bool
-	cut      error // the statement ran again or closed: st isn't the rows' (cut)
-	cutErr   error // what ending their run came to, then
+	cut      error
+	cutErr   error
 	closed   bool
 }
 
-// step steps to the next row and reads it into the statement's columns.
 func (r *cRows) step() C.int {
 	s := r.s
 	var n C.int
@@ -803,8 +738,6 @@ func (r *cRows) step() C.int {
 	return rc
 }
 
-// columns reads the result's columns' names and declared types, if SQLite
-// has compiled the statement since they were last read.
 func (r *cRows) columns() {
 	s := r.s
 	compiled := C.sqlite3_stmt_status(r.st, sqliteStmtStatusReprepare, 0)
@@ -874,7 +807,7 @@ func (r *cRows) Next(dest []driver.Value) error {
 			}
 		case sqliteBlob:
 			if c.n == 0 {
-				dest[i] = []byte(nil) // as the other build's driver has it
+				dest[i] = []byte(nil)
 			} else {
 				dest[i] = C.GoBytes(c.p, c.n)
 			}
@@ -946,7 +879,6 @@ func (r *cRows) ColumnTypeScanType(i int) reflect.Type {
 	return reflect.TypeOf(nil)
 }
 
-// The formats a time is read in, the first of them the one it's written in.
 var parseTimeFormats = []string{
 	"2006-01-02 15:04:05.999999999-07:00",
 	"2006-01-02T15:04:05.999999999-07:00",
@@ -957,10 +889,6 @@ var parseTimeFormats = []string{
 	"2006-01-02",
 }
 
-// parseSQLiteTime reads a column declared as a time as the other build's
-// driver does: as time.Time's String wrote it, or in the first of the
-// formats that fits (the one that last fitted tried first), as UTC when it
-// has no zone; and gives it in UTC. Text that fits none is the text.
 func parseSQLiteTime(s string, hint int) (any, bool, int) {
 	t := s
 	if x := strings.Index(s, "m="); x > 0 {

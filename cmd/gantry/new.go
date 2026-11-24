@@ -26,13 +26,19 @@ import (
 
 // NewApp is what `gantry new` fills its templates with.
 type NewApp struct {
-	Name     string // "myapp": the command, and Houston's project
-	Title    string // "Myapp": for people
-	Module   string // "myapp", or --module's
+	// "myapp": the command, and Houston's project
+	Name string
+	// "Myapp": for people
+	Title string
+	// "myapp", or --module's
+	Module   string
 	Postgres bool
-	Engine   string // sqlc's: "sqlite" or "postgresql"
-	Gantry   string // the gantry release go.mod requires
-	Houston  string // the Houston release bin/gantry downloads
+	// sqlc's: "sqlite" or "postgresql"
+	Engine string
+	// the gantry release go.mod requires
+	Gantry string
+	// the Houston release bin/gantry downloads
+	Houston string
 	// The versions and build flags gantry builds with (internal/pins).
 	Templ, Go, GolangImage, SqlcImage, PostgresImage, SQLiteCFlags, SQLiteTags string
 	// With --gantry: the checkout, relative to the app (go.work and the dev
@@ -42,35 +48,21 @@ type NewApp struct {
 	// it, mounted at /app, so its own folder is Work there.
 	InModule bool
 	Dir, Up  string
-	Work     string // "/app", or "/app/<Dir>"
+	// "/app", or "/app/<Dir>"
+	Work string
 	// Where the dev container has the app: Work, or with --gantry, under /app
 	// beside the checkout (gantryMounts).
 	DevWork string
 }
 
-// latestRelease is what a new app requires when this gantry isn't a release
-// itself (built from a checkout): the newest tag when it was built. It's
-// raised to a release's tag before the tag is pushed, and the release's tests
-// check it was (TestLatestReleaseIsTheTag), so it can't fall behind.
 const latestRelease = "v0.17.0"
 
-// releaseVersion is the release's tag in the CLI binaries a release
-// publishes: the Dockerfile's release-build stage sets it (-X
-// main.releaseVersion). They're built from a checkout, so Go's build info
-// doesn't say which release they are.
 var releaseVersion string
 
 var releaseTag = regexp.MustCompile(`\Av(\d+)\.(\d+)\.(\d+)\z`)
 
-// houstonRelease is the Houston CLI bin/gantry downloads. It is a release
-// that published houston-$os-$arch and SHA256SUMS.
 const houstonRelease = "v0.5.11"
 
-// houstonSHA256SUMS is houstonRelease's SHA256SUMS lines for its CLIs, copied
-// when it was pinned. bin/gantry checks the Houston it downloads against
-// these (gantry houston-release --sha256), not the Houston release's own
-// file: this gantry carries build provenance, the Houston release doesn't.
-// The release workflow checks they're still what that release publishes.
 const houstonSHA256SUMS = `b4e55360b44347fa7ab2c5d61a6e58bc6f5c75dccdc38339a8511798119127c7  houston-darwin-amd64
 43ef77c9b22b088abcb6a6e71a4727bc77293c0a8ed9f2b6db73e5c277bf98f0  houston-darwin-arm64
 182c451d07db313dd28c3e370fafd72fa35484c34bb4563d35168f1703edc4d8  houston-linux-amd64
@@ -79,23 +71,18 @@ const houstonSHA256SUMS = `b4e55360b44347fa7ab2c5d61a6e58bc6f5c75dccdc38339a8511
 
 var appName = regexp.MustCompile(`\A[a-z][a-z0-9-]{0,62}\z`)
 
-// run runs a command in dir, attached to the terminal: houston, go or git.
-// Tests replace it.
 var runIn = func(dir, name string, args ...string) error {
 	cmd := execCommand(name, args...)
 	cmd.Dir = dir
 	return cmd.Run()
 }
 
-// runQuietlyIn is runIn keeping the command's output, which it returns
-// when the command fails. Tests replace it.
 var runQuietlyIn = func(dir, name string, args ...string) ([]byte, error) {
 	cmd := exec.Command(name, args...)
 	cmd.Dir = dir
 	return cmd.CombinedOutput()
 }
 
-// newOptions are gantry new's flags.
 type newOptions struct {
 	db, module, gantry    string
 	skipHouston, inModule bool
@@ -111,10 +98,6 @@ func (o *newOptions) flags(name string) *flag.FlagSet {
 	return fs
 }
 
-// newApp is `gantry new NAME [flags]`: the app's folder, in the main plan's
-// layout, then Houston's files and the generated code. With --in-module the
-// app is a folder of the module it's made in: it has no go.mod of its own,
-// and it's built from the module's root.
 func newApp(root string, args []string, out, errOut io.Writer) error {
 	if len(args) > 0 && helpFlag(args[0]) {
 		return flag.ErrHelp
@@ -202,7 +185,6 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	}
 	steps := [][]string{
 		{houston, "init", "--name", name},
-		// templ's code first, so tidy sees the imports it adds.
 		{houston, "exec", "templ", "generate"},
 		{houston, "exec", "go", "mod", "tidy"},
 	}
@@ -210,13 +192,10 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 		steps = append(steps, []string{"git", "init", "-q"})
 	}
 	for _, step := range steps {
-		// The pinned Houston is a path: it's "houston" to people.
 		shown := strings.Join(append([]string{filepath.Base(step[0])}, step[1:]...), " ")
 		fmt.Fprintln(out, "  run", shown)
 		var err error
 		if step[1] == "init" {
-			// Its own "Next:" would be the wrong one here: its output is
-			// shown only when it fails.
 			var output []byte
 			if output, err = runQuietlyIn(dir, step[0], step[1:]...); err != nil {
 				errOut.Write(output)
@@ -232,8 +211,6 @@ func newApp(root string, args []string, out, errOut io.Writer) error {
 	return nil
 }
 
-// writeApp writes the templates under templates/new into dir: a .tmpl file
-// filled in with a, any other (vendored JavaScript) as it is.
 func writeApp(dir string, a NewApp) error {
 	sub, _ := fs.Sub(templates, "templates/new")
 	err := fs.WalkDir(sub, ".", func(path string, d fs.DirEntry, err error) error {
@@ -247,17 +224,13 @@ func writeApp(dir string, a NewApp) error {
 		case "gantry-check.json":
 			out = ".gantry-check.json"
 		case "github/workflows/ci.yml":
-			// A module's CI is its repository's, at the module's root.
 			if a.InModule {
 				return nil
 			}
 			out = ".github/workflows/ci.yml"
 		case "assets/built/gitkeep":
-			// Kept so the folder is there for go:embed before a build.
 			out = "assets/built/.gitkeep"
 		case "dockerignore":
-			// In a module, the build's context is the module's root, and
-			// BuildKit reads Dockerfile.dockerignore instead.
 			if a.InModule {
 				return nil
 			}
@@ -300,8 +273,6 @@ func writeApp(dir string, a NewApp) error {
 			return err
 		}
 	}
-	// Local only (.env is ignored by git): development's signing key, and the
-	// dev database's password. Production's key is a Houston secret.
 	env := "SECRET_KEY=" + secretKey() + "\n"
 	if a.Postgres {
 		raw := make([]byte, 16)
@@ -311,15 +282,12 @@ func writeApp(dir string, a NewApp) error {
 	return write(filepath.Join(dir, ".env"), []byte(env))
 }
 
-// secretKey is a new SECRET_KEY: 32 random bytes, the least sign.Key takes,
-// in hex.
 func secretKey() string {
 	raw := make([]byte, 32)
 	rand.Read(raw)
 	return hex.EncodeToString(raw)
 }
 
-// printSecret is gantry secret: a key for production's SECRET_KEY.
 func printSecret(_ string, args []string, out, _ io.Writer) error {
 	fs := flagSet("secret")
 	if err := parseFlags(fs, args); err != nil {
@@ -332,14 +300,11 @@ func printSecret(_ string, args []string, out, _ io.Writer) error {
 	return nil
 }
 
-// db/schema.sql before any table: the header db.Schema writes, on each
-// engine.
 const (
 	emptySQLiteSchema   = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations; don't edit it by hand.\n\n"
 	emptyPostgresSchema = "-- The schema as the migrations leave it, for sqlc and for reading. It's\n-- written from the migrations by pg_dump; don't edit it by hand.\n"
 )
 
-// enclosingModule is gomod.Enclosing, its missing go.mod said for --in-module.
 func enclosingModule(dir string) (root, path string, err error) {
 	root, path, err = gomod.Enclosing(dir)
 	if errors.Is(err, gomod.ErrNoModule) {
@@ -348,12 +313,6 @@ func enclosingModule(dir string) (root, path string, err error) {
 	return root, path, err
 }
 
-// gantryMounts is where the dev container has an app made with --gantry and
-// the checkout it builds against: each at its path below the folder they
-// share on the host, under /app. They're as far apart as on the host, so
-// go.work's use finds the checkout there too, and however far up the
-// checkout is, nothing is mounted over the container's own folders: with
-// --gantry ../.. the checkout is /app, and the app /app/<its folder>/<app>.
 func gantryMounts(app, checkout string) (appAt, checkoutAt string) {
 	shared := app
 	rel, _ := filepath.Rel(app, checkout)
@@ -370,8 +329,6 @@ func gantryMounts(app, checkout string) (appAt, checkoutAt string) {
 	return below(app), below(checkout)
 }
 
-// write writes a generated file, a Go one as gofmt would (a template that
-// doesn't parse is written as it is, for the build to report).
 func write(path string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -388,16 +345,11 @@ func write(path string, body []byte) error {
 	return os.WriteFile(path, body, mode)
 }
 
-// title is a name for people: "my-app" is "My app".
 func title(name string) string {
 	s := strings.ReplaceAll(name, "-", " ")
 	return strings.ToUpper(s[:1]) + s[1:]
 }
 
-// houstonFor is the houston gantry new runs in the app at dir: the one on
-// PATH when it's houstonRelease or newer (or says no version: one built from
-// a checkout), else the release the app pins, which its bin/gantry downloads.
-// An older one doesn't know what gantry new asks of it (init --name).
 func houstonFor(dir, name string, errOut io.Writer) (string, error) {
 	found := houstonVersion()
 	if found != "" && !older(found, houstonRelease) {
@@ -415,28 +367,20 @@ func houstonFor(dir, name string, errOut io.Writer) (string, error) {
 	return path, nil
 }
 
-// houstonVersion is the version of the houston on PATH ("v0.5.4", or
-// whatever one built from a checkout says), and "" when there's none.
-// Tests replace it.
 var houstonVersion = func() string {
 	out, err := exec.Command("houston", "--version").Output()
-	fields := strings.Fields(string(out)) // "houston version v0.5.4"
+	fields := strings.Fields(string(out))
 	if err != nil || len(fields) == 0 {
 		return ""
 	}
 	return fields[len(fields)-1]
 }
 
-// pinnedHouston has the app's bin/gantry download the Houston release it
-// pins, and is where that is. GANTRY_BIN keeps bin/gantry from downloading
-// a gantry as well: this one is running. Tests replace it.
 var pinnedHouston = func(dir string) (string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		return "", err
 	}
-	// Absolute: the steps run in the app's folder, where a path relative to
-	// this one isn't the same file.
 	if dir, err = filepath.Abs(dir); err != nil {
 		return "", err
 	}
@@ -452,8 +396,6 @@ var pinnedHouston = func(dir string) (string, error) {
 	return filepath.Join(dir, ".gantry", "bin", "houston"), nil
 }
 
-// older reports whether release tag v is before min; a v that isn't a
-// release tag (a build from a checkout) is not.
 func older(v, min string) bool {
 	a, b := releaseTag.FindStringSubmatch(v), releaseTag.FindStringSubmatch(min)
 	if a == nil || b == nil {
@@ -469,9 +411,6 @@ func older(v, min string) bool {
 	return false
 }
 
-// gantryRelease is this gantry's version when it is a release: one of a
-// release's binaries (releaseVersion), or installed as one (go install
-// .../cmd/gantry@v0.6.0); else "".
 func gantryRelease() string {
 	if releaseTag.MatchString(releaseVersion) {
 		return releaseVersion

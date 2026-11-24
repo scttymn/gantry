@@ -10,8 +10,6 @@ import (
 
 const gantryAuth = "github.com/scttymn/gantry/auth"
 
-// visitorReads tell one visitor from the next: who's signed in, and the
-// request's cookies, the flash's among them.
 var visitorReads = []ref{
 	{gantryAuth, "", "Current"},
 	{gantryAuth, "Auth", "SignedIn"},
@@ -23,8 +21,6 @@ var visitorReads = []ref{
 	{"net/http", "Request", "CookiesNamed"},
 }
 
-// cookieWrites set a cookie: the flash's (Take clears it), or a session's.
-// A Set-Cookie header set by hand is one too (setsCookieHeader).
 var cookieWrites = []ref{
 	{"net/http", "", "SetCookie"},
 	{gantryWeb, "", "SetCookie"},
@@ -35,17 +31,12 @@ var cookieWrites = []ref{
 	{gantryAuth, "Auth", "StartSession"},
 }
 
-// cachedRoute is a route the page cache serves: where it's added, what the
-// message calls it, and the handlers behind it that the program can read.
 type cachedRoute struct {
 	pos      token.Pos
 	route    string
 	handlers []fn
 }
 
-// cachedRoutes are the file's routes the page cache serves: Cached on a
-// router or a scope, PageCache.Handler around an http.Handler, and the GET
-// actions of Resources given the cache's Handler to wrap them in.
 func (p *program) cachedRoutes(f *goFile) []cachedRoute {
 	var routes []cachedRoute
 	for _, d := range f.file.Decls {
@@ -95,8 +86,6 @@ func (p *program) cachedRoutes(f *goFile) []cachedRoute {
 	return routes
 }
 
-// served is the code behind an http.Handler: a function made one with
-// http.HandlerFunc or the router's Wrap, or a type's ServeHTTP.
 func (p *program) served(f *goFile, top *ast.FuncDecl, e ast.Expr, isWeb func(ast.Expr, ...string) bool) []fn {
 	if call, ok := e.(*ast.CallExpr); ok && len(call.Args) == 1 {
 		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
@@ -125,7 +114,6 @@ func quoted(e ast.Expr, otherwise string) string {
 	return otherwise
 }
 
-// setsCookieHeader is a Set-Cookie header set by hand: Header().Set or Add.
 func setsCookieHeader(call *ast.CallExpr) bool {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok || (sel.Sel.Name != "Set" && sel.Sel.Name != "Add") || len(call.Args) != 2 {
@@ -134,9 +122,6 @@ func setsCookieHeader(call *ast.CallExpr) bool {
 	return strings.EqualFold(quoted(call.Args[0], ""), "Set-Cookie")
 }
 
-// checkCached reports each cached route in the file whose handler reaches a
-// call is names, with the way there. A route whose handler the program
-// can't read (another module's, or one a call makes) isn't reported.
 func checkCached(s *Source, report func(int, string), is func(callee, *ast.CallExpr) string, message func(route, way string) string) error {
 	if _, ok := appPackage(s.Path); !ok || s.prog == nil {
 		return nil

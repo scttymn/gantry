@@ -15,7 +15,6 @@ import (
 
 var fonts *testkit.FakeHTTP
 
-// Google's stylesheet, as it answers a browser: a face per subset.
 const googleCSS = `/* cyrillic */
 @font-face {
   font-family: 'Work Sans';
@@ -73,8 +72,6 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 			return f.Response(400, "Font family not found\nmore"), nil
 		}
 		if !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
-			// A plain client gets TTF, one a family: what the fallbacks are
-			// measured by.
 			var css strings.Builder
 			for _, fam := range r.URL.Query()["family"] {
 				name, _, _ := strings.Cut(fam, ":")
@@ -83,7 +80,6 @@ func fakeGoogle(t *testing.T) *[]*http.Request {
 			return f.Response(200, css.String()), nil
 		}
 		asked = append(asked, r)
-		// As Google does: font-display is what was asked for.
 		return f.Response(200, strings.ReplaceAll(googleCSS, "font-display: block", "font-display: "+r.URL.Query().Get("display"))), nil
 	})
 	for _, name := range []string{"WorkSans", "InstrumentSerif"} {
@@ -110,14 +106,12 @@ func TestGenerateFonts(t *testing.T) {
 		t.Fatalf("%d %s", code, errOut.String())
 	}
 	r := (*asked)[0]
-	// In Google's order: upright, then italic, each by weight.
 	if got := r.URL.Query()["family"]; strings.Join(got, "|") != "Work Sans:ital,wght@0,400;0,600|Instrument Serif:ital,wght@0,400;1,400" {
 		t.Errorf("asked for %v", got)
 	}
 	if r.URL.Query().Get("display") != "swap" || !strings.Contains(r.Header.Get("User-Agent"), "Chrome") {
 		t.Errorf("display %q, agent %q", r.URL.Query().Get("display"), r.Header.Get("User-Agent"))
 	}
-	// A file two faces share is fetched once.
 	latin := 0
 	for _, r := range fonts.Requests() {
 		if strings.HasSuffix(r.URL.Path, "/worksans/latin.woff2") {
@@ -133,8 +127,6 @@ func TestGenerateFonts(t *testing.T) {
 	for _, f := range fontFiles {
 		names = append(names, f.Name())
 	}
-	// latin and latin-ext kept, cyrillic not; one file for the two weights
-	// Google serves from it.
 	if len(names) != 3 || !strings.HasPrefix(names[0], "instrument-serif-latin-") || !strings.HasPrefix(names[1], "work-sans-latin-") || !strings.HasPrefix(names[2], "work-sans-latin-ext-") {
 		t.Errorf("fonts: %v", names)
 	}
@@ -153,14 +145,11 @@ func TestGenerateFonts(t *testing.T) {
 		}
 	}
 
-	// Again: refused without --force; with it, the stylesheet replaced and
-	// the fonts it no longer uses removed (latin-ext, here; the fake Google
-	// answers with every family whatever it's asked for).
 	errOut.Reset()
 	if code := run([]string{"g", "fonts", "Work Sans"}, root, &out, &errOut); code == 0 || !strings.Contains(errOut.String(), "--force") {
 		t.Errorf("%d %s", code, errOut.String())
 	}
-	os.WriteFile(filepath.Join(root, "assets", "fonts", "mine.woff2"), []byte("x"), 0o644) // not the stylesheet's
+	os.WriteFile(filepath.Join(root, "assets", "fonts", "mine.woff2"), []byte("x"), 0o644)
 	if code := run([]string{"g", "fonts", "Work Sans", "--subsets", "latin", "--force"}, root, &out, &errOut); code != 0 {
 		t.Fatalf("%d %s", code, errOut.String())
 	}
@@ -215,9 +204,6 @@ func TestGenerateFontsRules(t *testing.T) {
 	}
 }
 
-// A fallback is sized to its family's measure: Go Regular's, against Arial,
-// as next/font's adjustFontFallback computes it (checked against next/font
-// by hand: Inter 107.28% here, 107.12% there, a newer Inter).
 func TestFallbackFace(t *testing.T) {
 	m, err := measure(goregular.TTF)
 	if err != nil {
@@ -232,7 +218,6 @@ func TestFallbackFace(t *testing.T) {
 			t.Errorf("no %q in\n%s", want, face)
 		}
 	}
-	// The overrides are the family's, in the fallback's resized units.
 	size := (m.xWidth / 2048) / (904.0 / 2048)
 	if want := fmt.Sprintf("size-adjust: %.2f%%;\n  ascent-override: %.2f%%;", size*100, 1935/2048.0/size*100); !strings.Contains(face, want) {
 		t.Errorf("want %q in\n%s", want, face)

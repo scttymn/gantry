@@ -12,10 +12,8 @@ import (
 	"github.com/scttymn/gantry/db"
 )
 
-// recurring is a job enqueued on a schedule (Solid Queue's recurring.yml,
-// in code).
 type recurring struct {
-	task     string // the job, its schedule and its arguments: one tick each
+	task     string
 	name     string
 	queue    string
 	priority int
@@ -42,7 +40,7 @@ func (j *Job[A]) Cron(expr string, loc *time.Location, a A) error {
 	j.recur(fmt.Sprintf("cron %s %s", expr, loc), a, func(after time.Time) time.Time {
 		next, err := gronx.NextTickAfter(expr, after.In(loc), false)
 		if err != nil {
-			return after.Add(24 * time.Hour * 366) // never, in practice
+			return after.Add(24 * time.Hour * 366)
 		}
 		return next.UTC()
 	})
@@ -67,11 +65,6 @@ func (j *Job[A]) recur(schedule string, a A, next func(time.Time) time.Time) {
 	j.q.mu.Unlock()
 }
 
-// tick enqueues each recurring job that's due, once however many processes
-// tick: its run is recorded with its job, in one transaction, and only the
-// process that records it enqueues it. Runs missed while nothing ticked
-// aren't made up: the next is the next after now (Solid Queue's). A run
-// older than Keep isn't enqueued at all, as its tick may be cleared.
 func (q *Queue) tick(ctx context.Context) error {
 	now := q.now()
 	type run struct {

@@ -14,8 +14,6 @@ type rule struct {
 	with string
 }
 
-// Rails' inflections (ActiveSupport's inflections.rb), tried newest first
-// as Rails does: the irregulars last, so they win.
 var plurals, singulars []rule
 
 var uncountable = []string{"equipment", "information", "rice", "money", "species", "series", "fish", "sheep", "jeans", "police"}
@@ -25,7 +23,6 @@ func singular(re, with string) {
 	singulars = append(singulars, rule{regexp.MustCompile("(?i)" + re), with})
 }
 
-// irregular is Rails' irregular: the first letters kept, the rest swapped.
 func irregular(one, many string) {
 	s0, srest, prest := one[:1], one[1:], many[1:]
 	plural("("+s0+")"+srest+"$", "${1}"+prest)
@@ -116,7 +113,6 @@ func inflect(word string, rules []rule) string {
 	return word
 }
 
-// isUncountable is Rails' check: the word, or its last word, is one.
 func isUncountable(word string) bool {
 	lower := strings.ToLower(word)
 	for _, u := range uncountable {

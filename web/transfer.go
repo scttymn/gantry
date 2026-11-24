@@ -6,26 +6,15 @@ import (
 	"time"
 )
 
-// minRate is the pace a transfer must keep to outlast the server's
-// ReadTimeout or WriteTimeout: 16 KiB a second, slower than a phone on a
-// poor connection.
 const minRate = 16 << 10
 
-// pace is when a transfer (a request's body, or an answer) is cut off. The
-// server's timeouts bound a whole request from its start, and a 25 MB
-// photo from a phone, or a large file to one, can outlast them while still
-// moving. So it gets the timeout from its start, and a second more for each
-// minRate bytes it has moved, but never more than the timeout from now: one
-// that keeps up minRate goes on, and one that stops, or trickles in a byte
-// at a time to hold the connection, is cut off as the timeout alone would.
 type pace struct {
 	start   time.Time
-	timeout time.Duration // the server's; none when it's 0 or less
+	timeout time.Duration
 	moved   int64
 }
 
 func (p *pace) deadline(now time.Time) time.Time {
-	// Whole seconds first: moved*time.Second overflows past 8.6 GiB.
 	earned := p.start.Add(p.timeout + time.Duration(p.moved/minRate)*time.Second + time.Duration(p.moved%minRate)*time.Second/minRate)
 	if idle := now.Add(p.timeout); idle.Before(earned) {
 		return idle
@@ -33,7 +22,6 @@ func (p *pace) deadline(now time.Time) time.Time {
 	return earned
 }
 
-// timeouts are the ReadTimeout and WriteTimeout of the server r came to.
 func timeouts(r *http.Request) (read, write time.Duration) {
 	if srv, ok := r.Context().Value(http.ServerContextKey).(*http.Server); ok {
 		return srv.ReadTimeout, srv.WriteTimeout
@@ -41,9 +29,6 @@ func timeouts(r *http.Request) (read, write time.Duration) {
 	return 0, 0
 }
 
-// movingBody is a request's body, paced by the server's ReadTimeout. The
-// answer has the WriteTimeout from when the body is cut off, so a slow
-// upload can still be answered, and one cut off told why.
 type movingBody struct {
 	io.ReadCloser
 	rc    *http.ResponseController
@@ -92,7 +77,7 @@ type movingWriter struct {
 // body in one write.
 func (w *movingWriter) Write(p []byte) (n int, err error) {
 	for len(p) > 0 && err == nil {
-		_ = w.rc.SetWriteDeadline(w.pace.deadline(time.Now())) // as movingBody's
+		_ = w.rc.SetWriteDeadline(w.pace.deadline(time.Now()))
 		var m int
 		m, err = w.ResponseWriter.Write(p[:min(len(p), 32<<10)])
 		n += m

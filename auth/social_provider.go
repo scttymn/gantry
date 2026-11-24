@@ -38,17 +38,20 @@ type SocialIdentity struct {
 
 type GoogleConfig struct {
 	ClientID, ClientSecret, RedirectURL string
-	HTTPClient                          *http.Client // optional transport; requests still have a 10s timeout
+	// optional transport; requests still have a 10s timeout
+	HTTPClient *http.Client
 }
 
 type AppleConfig struct {
 	ClientID, TeamID, KeyID, RedirectURL string
-	PrivateKey                           []byte // PKCS#8 .p8 key, from private configuration (never source)
-	HTTPClient                           *http.Client
+	// PKCS#8 .p8 key, from private configuration (never source)
+	PrivateKey []byte
+	HTTPClient *http.Client
 }
 
 // SocialProvider is immutable after construction. Its OIDC keys are cached and
-// refreshed by go-oidc. Constructors do not contact the provider.
+// refreshed by go-oidc. Constructors do not contact the provider. A failed
+// token exchange's error never includes the provider's response body.
 type SocialProvider struct {
 	name, label, issuer string
 	config              oauth2.Config
@@ -135,7 +138,6 @@ func (p *SocialProvider) authorization(state, nonce, verifier string) string {
 	return p.config.AuthCodeURL(state, opts...)
 }
 
-// boolClaim supports Apple's JSON string and Google's boolean claim formats.
 type boolClaim bool
 
 func (b *boolClaim) UnmarshalJSON(raw []byte) error {
@@ -167,7 +169,7 @@ func (p *SocialProvider) exchange(ctx context.Context, code, nonce, verifier str
 	tok, err := config.Exchange(ctx, code, opts...)
 	if err != nil {
 		return SocialIdentity{}, ErrSocialUnavailable
-	} // never surface token response bodies
+	}
 	raw, ok := tok.Extra("id_token").(string)
 	if !ok || len(raw) > 32768 {
 		return SocialIdentity{}, ErrSocialProof
@@ -196,5 +198,4 @@ func (p *SocialProvider) exchange(ctx context.Context, code, nonce, verifier str
 	return SocialIdentity{Provider: p.name, Subject: checked.Subject, Email: email, EmailVerified: bool(claims.Verified), AuthoritativeEmail: authoritative}, nil
 }
 
-// Keep the claim parser exercised independently of remote provider IO.
 var _ json.Unmarshaler = (*boolClaim)(nil)

@@ -15,6 +15,9 @@ import (
 // development. root is the app source directory. Each HTML GET rescans it so
 // edits are reflected on reload without a separate watcher or background work.
 // Render DevelopmentWarnings in the layout to display the request's findings.
+// The panel's style is a stylesheet the middleware serves from the app
+// itself, not style attributes, so it works under the app's
+// Content-Security-Policy.
 func Development(next http.Handler, root string, log *slog.Logger) http.Handler {
 	return DevelopmentWithRules(next, root, log, devcheck.DefaultRules())
 }
@@ -26,7 +29,7 @@ func DevelopmentWithRules(next http.Handler, root string, log *slog.Logger, rule
 		if r.URL.Path == developmentStyles && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
 			w.Header().Set("Content-Type", "text/css; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-store")
-			_, _ = io.WriteString(w, developmentCSS) // as ResponseWriter.Write's, excluded in .golangci.yml
+			_, _ = io.WriteString(w, developmentCSS)
 			return
 		}
 		if r.Method == http.MethodGet && WantsHTML(r) {

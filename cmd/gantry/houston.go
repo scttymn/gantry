@@ -11,25 +11,18 @@ import (
 	"strings"
 )
 
-// execCommand is a command attached to this terminal.
 func execCommand(name string, args ...string) *exec.Cmd {
 	cmd := exec.Command(name, args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd
 }
 
-// appFlags are the app's commands' own: --local, anywhere in them.
 func appFlags() (fs *flag.FlagSet, local *bool) {
 	fs = flagSet("app")
 	local = fs.Bool("local", false, "on this machine, not in the app's container")
 	return fs, local
 }
 
-// appCommand is `gantry db ...`, `gantry task ...` and `gantry tasks`: the
-// app's own command (`myapp db migrate`), run in its dev container by
-// houston exec, as bin/rails runs in the app's environment. With --local,
-// on this machine instead (go, and the app's tools, installed here). The
-// rest of its arguments are the app's, flags too.
 func appCommand(command string) func(root string, args []string, out, errOut io.Writer) error {
 	return func(root string, args []string, _, errOut io.Writer) error {
 		if len(args) > 0 && helpFlag(args[0]) {
@@ -50,8 +43,6 @@ func appCommand(command string) func(root string, args []string, out, errOut io.
 	}
 }
 
-// runApp runs the app's command with args (`myapp routes`) in its dev
-// container, or with local on this machine.
 func runApp(root string, args []string, local bool, errOut io.Writer) error {
 	name, err := appBinary(root)
 	if err != nil {
@@ -64,8 +55,6 @@ func runApp(root string, args []string, local bool, errOut io.Writer) error {
 	return houston(root, append([]string{"exec"}, run...), errOut)
 }
 
-// houston runs houston with args in root: gantry dev, test, console, deploy
-// and the rest are Houston's commands.
 func houston(root string, args []string, errOut io.Writer) error {
 	if _, err := lookPath("houston"); err != nil {
 		fmt.Fprintln(errOut, "gantry runs apps with Houston, which isn't installed (or isn't on PATH).\n"+
@@ -77,7 +66,6 @@ func houston(root string, args []string, errOut io.Writer) error {
 
 var lookPath = exec.LookPath
 
-// appBinary is the app's command, cmd/<name>: the one folder under cmd/.
 func appBinary(root string) (string, error) {
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
@@ -95,12 +83,10 @@ func appBinary(root string) (string, error) {
 	return dirs[0], nil
 }
 
-// errExit is an exit code to pass on: a command that ran and failed.
 type errExit int
 
 func (e errExit) Error() string { return fmt.Sprintf("exit %d", int(e)) }
 
-// exitError turns a command's failure into its exit code.
 func exitError(err error) error {
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {

@@ -49,7 +49,6 @@ func picture(w, h int) []byte {
 	return b.Bytes()
 }
 
-// withOrientation puts an EXIF orientation into a JPEG, as a phone does.
 func withOrientation(jpg []byte, o uint16) []byte {
 	tiff := []byte("MM\x00\x2a\x00\x00\x00\x08")
 	entry := make([]byte, 2+12+4)
@@ -67,7 +66,6 @@ func withOrientation(jpg []byte, o uint16) []byte {
 	return append(out, jpg[2:]...)
 }
 
-// claims is a format whose header says it's w×h, whatever its bytes.
 type claims struct{ w, h int }
 
 func (claims) ContentType() string                   { return "image/x-claims" }
@@ -77,8 +75,6 @@ func (c claims) DecodeConfig(io.Reader) (image.Config, error) {
 	return image.Config{Width: c.w, Height: c.h}, nil
 }
 
-// bomb is a GIF's 13-byte header claiming 65535×65535: 4.3 billion pixels,
-// 17 GB decoded.
 var bomb = []byte("GIF89a\xff\xff\xff\xff\x00\x00\x00")
 
 func TestResize(t *testing.T) {
@@ -91,7 +87,6 @@ func TestResize(t *testing.T) {
 		if b := decodeWebP(t, out).Bounds(); b.Dx() != 100 || b.Dy() != 50 {
 			t.Errorf("%v", b)
 		}
-		// A tall photo is limited by twice the width.
 		out, _ = p.Resize(picture(100, 1000), 100, 80)
 		if b := decodeWebP(t, out).Bounds(); b.Dx() != 20 || b.Dy() != 200 {
 			t.Errorf("tall: %v", b)
@@ -112,7 +107,6 @@ func TestResize(t *testing.T) {
 		if _, err := p.Resize(bomb, 100, 80); !errors.Is(err, ErrTooManyPixels) {
 			t.Errorf("resized a bomb: %v", err)
 		}
-		// The limit is the pipeline's, and its AVIF's, and its child's.
 		small := &Pipeline{MaxPixels: 400 * 200}
 		if _, _, _, err := small.Dimensions(picture(400, 200)); err != nil {
 			t.Errorf("at the limit: %v", err)
@@ -130,7 +124,6 @@ func TestResize(t *testing.T) {
 		if a := AVIFFor(small); a.MaxPixels != small.MaxPixels {
 			t.Errorf("AVIF's limit: %d", a.MaxPixels)
 		}
-		// A product past int64 would wrap to a small number.
 		huge := 1 << (strconv.IntSize / 2)
 		claiming := &Pipeline{Decoders: []Decoder{claims{huge, huge}}}
 		if w, h, _, err := claiming.Dimensions([]byte("claims")); !errors.Is(err, ErrTooManyPixels) {
@@ -157,8 +150,6 @@ func TestResize(t *testing.T) {
 	})
 
 	t.Run("a rotated phone photo comes out upright", func(t *testing.T) {
-		// Stored sideways: red on the left, blue on the right. Orientation 6
-		// means turn it 90° clockwise, so red ends up on top.
 		data := withOrientation(picture(40, 20), 6)
 		w, h, contentType, err := p.Dimensions(data)
 		if err != nil || w != 20 || h != 40 || contentType != "image/jpeg" {
@@ -252,9 +243,6 @@ func TestNames(t *testing.T) {
 func TestWidths(t *testing.T) {
 	p := &Pipeline{}
 	t.Run("a photo comes in each width up to its own, never enlarged", func(t *testing.T) {
-		// The phones' widths are there: 414 CSS pixels at 2× (828), and at 3×
-		// (1242: 1200), and PageSpeed's phone (412 at 1.75×, 721: 828), so
-		// none is sent a copy half again too big.
 		for original, want := range map[int][]int{
 			800:  {160, 240, 320, 480, 720},
 			720:  {160, 240, 320, 480, 720},
@@ -262,8 +250,8 @@ func TestWidths(t *testing.T) {
 			1000: {160, 240, 320, 480, 720, 828},
 			2400: {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
 			6000: {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
-			200:  {160}, // below 240: just the smallest
-			100:  {160}, // the smallest, at its own size
+			200:  {160},
+			100:  {160},
 			0:    {160, 240, 320, 480, 720, 828, 1080, 1200, 1600, 1920, 2400},
 		} {
 			if got := p.WidthsFor(original); !slices.Equal(got, want) {
@@ -340,7 +328,6 @@ func TestHEIC(t *testing.T) {
 	})
 }
 
-// counting makes copies in process and counts them; fail makes it fail.
 type counting struct {
 	n    atomic.Int32
 	fail bool
@@ -353,7 +340,7 @@ func (c *counting) Make(ctx context.Context, src, dst string, width, quality int
 		<-c.gate
 	}
 	if c.fail {
-		os.WriteFile(dst, []byte("half"), 0o644) // a partial file, then the failure
+		os.WriteFile(dst, []byte("half"), 0o644)
 		return errors.New("broken")
 	}
 	return InProcess{}.Make(ctx, src, dst, width, quality)
@@ -437,11 +424,8 @@ func TestCopies(t *testing.T) {
 	})
 }
 
-// The test binary stands in for an app's: `resize` runs the child.
 func TestMain(m *testing.M) {
 	if IsChild(os.Args) {
-		// A good neighbour: one thread, a memory limit for its format, and,
-		// once started, the lowest CPU priority.
 		want := ChildMemory
 		if strings.HasSuffix(os.Args[3], ".avif") {
 			want = AVIFMemory
@@ -476,20 +460,18 @@ func TestChild(t *testing.T) {
 	})
 }
 
-// Prepare makes what's missing, once, for the originals given, and clears
-// away every other key's copies.
 func TestPrepare(t *testing.T) {
 	ctx := context.Background()
 	maker := &counting{gate: make(chan struct{})}
 	close(maker.gate)
 	dir := t.TempDir()
 	p := &Pipeline{Dir: dir, Maker: maker}
-	src := source(t) // 1600 wide: 160 to 1600, nine widths
+	src := source(t)
 	os.MkdirAll(filepath.Join(dir, "gone"), 0o755)
 	os.WriteFile(filepath.Join(dir, "gone", "160w-q80.webp"), []byte("x"), 0o644)
 	originals := map[string]Original{
 		"photo": {Path: src, ContentType: "image/jpeg", Width: 1600},
-		"doc":   {Path: src, ContentType: "application/pdf"}, // not resizable: skipped
+		"doc":   {Path: src, ContentType: "application/pdf"},
 	}
 	made, err := p.Prepare(ctx, originals, 0)
 	if err != nil || made != 9 || maker.n.Load() != 9 {
@@ -503,23 +485,18 @@ func TestPrepare(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "gone")); err == nil {
 		t.Error("another key's copies kept")
 	}
-	// Again: all there, nothing made.
 	if made, err := p.Prepare(ctx, originals, 0); err != nil || made != 0 || maker.n.Load() != 9 {
 		t.Errorf("again: made %d, maker %d (%v)", made, maker.n.Load(), err)
 	}
-	// Another quality is other copies.
 	if made, _ := p.Prepare(ctx, originals, 60); made != 9 || !p.Has("photo", 160, 60) || !p.Has("photo", 1600, 60) {
 		t.Errorf("at 60: made %d", made)
 	}
-	// A failure says which.
 	p2 := &Pipeline{Dir: t.TempDir(), Maker: &counting{fail: true, gate: maker.gate}}
 	if _, err := p2.Prepare(ctx, map[string]Original{"photo": originals["photo"]}, 0); err == nil || !strings.Contains(err.Error(), "photo at 160w") {
 		t.Errorf("a failure: %v", err)
 	}
 }
 
-// A child is a good neighbour: not started without the memory for it,
-// resting as long as it worked, at the lowest priority (TestMain checks).
 func TestChildPolite(t *testing.T) {
 	ctx := context.Background()
 	src := source(t)
@@ -554,8 +531,6 @@ func TestChildPolite(t *testing.T) {
 	if len(rested) != 1 || rested[0] <= 0 || rested[0] > took {
 		t.Errorf("rested %v after a copy that took %v", rested, took)
 	}
-	// The default rest waits, and ends with its context (the server
-	// stopping).
 	s := time.Now()
 	restFor(ctx, 30*time.Millisecond)
 	if time.Since(s) < 30*time.Millisecond {
@@ -583,12 +558,11 @@ func TestMemoryRoom(t *testing.T) {
 	if free, known := memoryRoom(); !known || free != 1<<30 {
 		t.Errorf("the machine's: %d %v", free, known)
 	}
-	write("memory.max", "402653184\n") // 384 MiB
+	write("memory.max", "402653184\n")
 	write("memory.current", "104857600\n")
 	if free, _ := memoryRoom(); free != 402653184-104857600 {
 		t.Errorf("the container's: %d", free)
 	}
-	// Its file cache not in use is its to drop: not counted.
 	write("memory.stat", "anon 52428800\nfile 62914560\ninactive_file 41943040\n")
 	if free, _ := memoryRoom(); free != 402653184-(104857600-41943040) {
 		t.Errorf("less the inactive cache: %d", free)
@@ -598,7 +572,7 @@ func TestMemoryRoom(t *testing.T) {
 	if free, _ := memoryRoom(); free != 1<<30 {
 		t.Errorf("no container limit: %d", free)
 	}
-	write("memory.max", "8589934592\n") // more than the machine has free
+	write("memory.max", "8589934592\n")
 	if free, _ := memoryRoom(); free != 1<<30 {
 		t.Errorf("the lesser: %d", free)
 	}

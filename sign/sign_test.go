@@ -10,7 +10,6 @@ import (
 	"github.com/scttymn/gantry/db"
 )
 
-// key is a test's key, 32 bytes and more: a Signer needs at least 32.
 func key(s string) []byte { return []byte(s + strings.Repeat("k", 32)) }
 
 func TestSigner(t *testing.T) {
@@ -35,10 +34,7 @@ func TestSigner(t *testing.T) {
 	}
 }
 
-// A key under 32 bytes is a mistake, not a key: signing or checking with one
-// panics, whatever the token, rather than hand out tokens anyone could forge
-// or pass its tests until a real token turns up.
-func TestShortKey(t *testing.T) {
+func TestShortKeyPanicsRatherThanSignForgeableTokens(t *testing.T) {
 	genuine := Signer{Key: key("k")}.Sign("p", "v")
 	for _, k := range [][]byte{nil, []byte("k"), key("")[1:]} {
 		s := Signer{Key: k}
@@ -82,8 +78,6 @@ func TestKey(t *testing.T) {
 			t.Error(env, ": a restart made a new key")
 		}
 	}
-	// A stored key that isn't 32 bytes (emptied, cut short) is refused,
-	// saying how to start over, rather than panic at the first signature.
 	for _, stored := range []string{"", "abcd", hex.EncodeToString(key(""))[2:]} {
 		if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_settings SET value = $1 WHERE name = 'signing_key'`, stored); err != nil {
 			t.Fatal(err)
@@ -110,8 +104,6 @@ func TestKey(t *testing.T) {
 	}
 }
 
-// Outside development and test (and GANTRY_ENV unset is production), the
-// key can't be the database's, where a copy of the data is a copy of it.
 func TestKeyInProduction(t *testing.T) {
 	d := openDB(t)
 	for _, env := range []string{"production", "", "staging"} {
@@ -128,8 +120,6 @@ func TestKeyInProduction(t *testing.T) {
 	}
 }
 
-// A value whose encoding has "--" in it, as the separator does, still
-// verifies: "\xfb\xef\xbe" is "----" in base64url.
 func TestSeparatorInValue(t *testing.T) {
 	s := Signer{Key: key("k")}
 	for _, v := range []string{"\xfb\xef\xbe", "a\xfb\xef\xbeb", `["é>?"]`, ""} {

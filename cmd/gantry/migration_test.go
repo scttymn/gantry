@@ -63,7 +63,6 @@ DROP TABLE "posts";
 
 	at(t, "2026-09-29T12:05:00Z")
 	migration(t, root, "add_email_to_posts", "email:string", "age:int")
-	// Both run, and roll back, on a real database.
 	testkit.Migrations(t, testkit.DB(t, nil), os.DirFS(filepath.Join(root, "db", "migrations")), "app_migrations")
 	at(t, "2026-09-29T12:10:00Z")
 	migration(t, root, "backfill_titles")
@@ -122,7 +121,6 @@ func TestErrorPages(t *testing.T) {
 			t.Errorf("%d: %v\n%s", p.Status, err, b)
 		}
 	}
-	// A page the app changed is kept, unless --force.
 	mine := filepath.Join(root, "assets", "public", "404.html")
 	os.WriteFile(mine, []byte("mine"), 0o644)
 	os.Remove(filepath.Join(root, "assets", "public", "500.html"))

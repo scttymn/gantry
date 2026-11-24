@@ -21,7 +21,6 @@ type Filter = Handler
 //	rt.Scope("/api/v1", api, func(s *web.Scope) { ... })
 type Pipeline []Filter
 
-// then is h behind the pipeline's filters.
 func (p Pipeline) then(h Handler) Handler {
 	if len(p) == 0 {
 		return h
@@ -32,7 +31,7 @@ func (p Pipeline) then(h Handler) Handler {
 				return err
 			}
 			if tw, ok := w.(*trackingWriter); ok && tw.wrote {
-				return nil // the filter answered
+				return nil
 			}
 		}
 		return h(w, r)
@@ -57,7 +56,7 @@ type Scope struct {
 	mux     *http.ServeMux
 	prefix  string
 	filters Pipeline
-	check   Check // a constraint's, nil outside one
+	check   Check
 }
 
 // Scope adds routes under prefix ("/api/v1", or "" or "/" for none) that
@@ -102,8 +101,6 @@ func (s *Scope) Cached(pattern string, h Handler) {
 	s.mount(pattern, s.rt.Cache.Handler(s.rt.Wrap(h)), Route{Cached: true})
 }
 
-// pattern is a route's pattern under the scope's prefix: "GET /posts" in
-// "/admin" is "GET /admin/posts".
 func (s *Scope) pattern(pattern string) string {
 	if s.prefix == "" {
 		return pattern
@@ -122,8 +119,6 @@ func (s *Scope) pattern(pattern string) string {
 	}
 	return method + " " + p
 }
-
-// The router's routes are its root scope's.
 
 // Scope adds routes under prefix that run pipeline's filters first.
 func (rt *Router) Scope(prefix string, pipeline Pipeline, routes func(s *Scope)) {

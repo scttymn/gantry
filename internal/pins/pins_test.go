@@ -9,18 +9,13 @@ import (
 	"testing"
 )
 
-// A pin is one version or flag set: where it's changed (its owner), and the
-// copies kept by hand that must say the same. What gantry new writes isn't
-// here: TestGolden and TestBenchFeedIsANewApp (cmd/gantry) hold that.
 type pin struct {
-	what   string // "sqlc's image"
+	what   string
 	value  string
-	owner  string // where to change it
+	owner  string
 	copies []handCopy
 }
 
-// A handCopy is a file of the repository's and where in it the pin is: the
-// regexp's first group.
 type handCopy struct {
 	file string
 	re   string
@@ -37,7 +32,6 @@ func read(t *testing.T, file string) string {
 	return string(b)
 }
 
-// find is the regexp's first group in file.
 func find(t *testing.T, file, re string) string {
 	t.Helper()
 	m := regexp.MustCompile(re).FindStringSubmatch(read(t, file))
@@ -102,8 +96,6 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 	}
 }
 
-// An image is pinned by its digest, which is what's pulled; its tag is for
-// people. Go's image is go.mod's Go series.
 func TestImagesArePinned(t *testing.T) {
 	pinned := regexp.MustCompile(`\A[\w./-]+:([\w.-]+)@sha256:[0-9a-f]{64}\z`)
 	for name, image := range map[string]string{"GolangImage": GolangImage, "SqlcImage": SqlcImage, "PostgresImage": PostgresImage} {
@@ -118,7 +110,6 @@ func TestImagesArePinned(t *testing.T) {
 	}
 }
 
-// The build tags that select db's C build are an app's.
 func TestSQLiteTagsSelectTheCBuild(t *testing.T) {
 	build := find(t, "db/sqlite_c.go", `(?m)^//go:build (.+)$`)
 	tags := strings.Split(SQLiteTags, ",")

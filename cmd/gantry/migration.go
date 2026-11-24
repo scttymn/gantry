@@ -10,13 +10,8 @@ import (
 	"time"
 )
 
-// now is when a migration is generated, for its file name; tests set it.
 var now = time.Now
 
-// A column's SQL on each engine. Text is NOT NULL with an empty default, so sqlc gives
-// it a plain string (the gym site's plain columns); a number, a position or
-// a date may be unset, as the resource generator's forms expect; required
-// makes it NOT NULL.
 var columnTypes = map[string]struct{ sqlite, postgres string }{
 	"string":   {"text NOT NULL DEFAULT ''", "text NOT NULL DEFAULT ''"},
 	"text":     {"text NOT NULL DEFAULT ''", "text NOT NULL DEFAULT ''"},
@@ -27,7 +22,6 @@ var columnTypes = map[string]struct{ sqlite, postgres string }{
 	"datetime": {"datetime", "timestamptz"},
 }
 
-// column is one column's definition, for engine ("sqlite" or "postgresql").
 func column(engine, name, typ string, required bool) (string, error) {
 	t, ok := columnTypes[typ]
 	if !ok {
@@ -43,10 +37,6 @@ func column(engine, name, typ string, required bool) (string, error) {
 	return fmt.Sprintf("%q %s", name, sql), nil
 }
 
-// generateMigration writes db/migrations/<timestamp>_<name>.sql. As Rails',
-// the name shapes it: create_posts makes the table (with id, created_at and
-// updated_at), add_email_to_users adds the fields as columns, and anything
-// else is an empty up and down to fill in.
 func generateMigration(root string, args []string, out io.Writer) error {
 	if len(args) < 1 || !columnName.MatchString(args[0]) {
 		return errors.New("a migration name in snake_case: create_posts, add_email_to_users")
@@ -104,7 +94,6 @@ func generateMigration(root string, args []string, out io.Writer) error {
 	return nil
 }
 
-// sqlcEngine is the engine sqlc.yaml names: "sqlite" when there's none.
 func sqlcEngine(root string) string {
 	data, _ := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
 	for _, line := range strings.Split(string(data), "\n") {

@@ -25,7 +25,6 @@ import (
 	"github.com/scttymn/gantry/web"
 )
 
-// The tables as an app's migration makes them (gantry g auth, later).
 var schema = fstest.MapFS{"00001_auth.sql": {Data: []byte(`-- +goose Up
 CREATE TABLE users (id integer PRIMARY KEY, email_address text NOT NULL UNIQUE, password_digest text NOT NULL,
   created_at datetime NOT NULL, updated_at datetime NOT NULL);
@@ -84,8 +83,6 @@ func newApp(t *testing.T) *app {
 	return a
 }
 
-// do sends a request with the jar's cookies (as a browser would, same site),
-// and keeps what the response sets.
 func (a *app) do(method, path string, form url.Values) *httptest.ResponseRecorder {
 	a.t.Helper()
 	var body io.Reader
@@ -253,7 +250,6 @@ func TestSessions(t *testing.T) {
 	})
 }
 
-// sent is the email sent so far, once every reset asked for is sent.
 func (a *app) sent() []mail.Message {
 	a.auth.Wait()
 	a.mail.mu.Lock()
@@ -261,7 +257,6 @@ func (a *app) sent() []mail.Message {
 	return a.mail.sent
 }
 
-// resetLink is the path in the last reset email.
 func (a *app) resetLink() string {
 	a.t.Helper()
 	sent := a.sent()
@@ -485,8 +480,6 @@ func TestPasswords(t *testing.T) {
 	})
 }
 
-// slowMail holds each email until free, and records whether the context it
-// was given had ended by then.
 type slowMail struct {
 	fakeMail
 	release chan struct{}
@@ -494,8 +487,6 @@ type slowMail struct {
 	ended   []error
 }
 
-// slowMail makes the app's sender a slowMail, freed when the test ends if
-// not before, so Wait can't hang.
 func (a *app) slowMail() *slowMail {
 	s := &slowMail{release: make(chan struct{})}
 	a.auth.Mail = s
@@ -601,7 +592,6 @@ func TestPaths(t *testing.T) {
 	})
 }
 
-// Required guards a scope as Require guards a handler.
 func TestRequired(t *testing.T) {
 	a := newApp(t)
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
@@ -627,7 +617,6 @@ func TestRequired(t *testing.T) {
 	}
 }
 
-// An app that sends no email offers no reset: no pages, and no link.
 func TestNoMail(t *testing.T) {
 	a := newApp(t)
 	a.auth.Mail = nil
@@ -647,8 +636,6 @@ func TestNoMail(t *testing.T) {
 	}
 }
 
-// Sign-in's pages in a scope run its filters first: an app that sends
-// every page to first-run setup until its admin exists.
 func TestRoutesInAScope(t *testing.T) {
 	a := newApp(t)
 	setUp := false
@@ -688,8 +675,6 @@ func TestDefaultRules(t *testing.T) {
 	}
 }
 
-// Idle and Lifetime end a session: unused too long, or signed in too long
-// ago. An ended one is deleted when it's shown.
 func TestSessionEnds(t *testing.T) {
 	t.Run("idle", func(t *testing.T) {
 		a := newApp(t)
@@ -699,7 +684,7 @@ func TestSessionEnds(t *testing.T) {
 		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
 			t.Fatal("ended within its idle time")
 		}
-		a.now = a.now.Add(47 * time.Hour) // used an hour-plus ago, it was written
+		a.now = a.now.Add(47 * time.Hour)
 		if rec := a.do("GET", "/admin", nil); rec.Code != 200 {
 			t.Fatal("use didn't keep it")
 		}
@@ -770,7 +755,6 @@ func TestSessionEnds(t *testing.T) {
 	})
 }
 
-// Bind: a session works only the way it was made.
 func TestSessionBind(t *testing.T) {
 	a := newApp(t)
 	way := "lan"
@@ -785,7 +769,7 @@ func TestSessionBind(t *testing.T) {
 	if rec := a.do("GET", "/admin", nil); rec.Code != 302 {
 		t.Fatal("worked another way")
 	}
-	if a.count("sessions") != 1 { // it isn't ended: it still works the way it was made
+	if a.count("sessions") != 1 {
 		t.Error("deleted")
 	}
 	way = "lan"
@@ -794,7 +778,6 @@ func TestSessionBind(t *testing.T) {
 	}
 }
 
-// Attempt and Failed are an app's own sign-in policy.
 func TestSignInPolicy(t *testing.T) {
 	a := newApp(t)
 	var failed []string

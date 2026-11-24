@@ -12,18 +12,23 @@ import (
 // what `gantry routes` lists, and what an app's feature map is checked
 // against. Its JSON field names are stable.
 type Route struct {
-	Method string `json:"method"` // "GET"; "" for any
+	// "GET"; "" for any
+	Method string `json:"method"`
 	// Path is the route's whole path, its scopes' prefixes and its host
 	// included: "/admin/posts/{id}", "api.example.com/v1/".
-	Path  string `json:"path"`
-	Scope string `json:"scope"` // its scope's prefix, "/admin"; "" outside one
+	Path string `json:"path"`
+	// its scope's prefix, "/admin"; "" outside one
+	Scope string `json:"scope"`
 	// Filters run before it, in order, named by their functions:
 	// "auth.(*Auth).Required"; a closure's name is the compiler's, after the
 	// function it's in. A Resources wrap is first.
-	Filters     []string `json:"filters"`
-	Cached      bool     `json:"cached"`      // served through the router's page cache
-	Mounted     bool     `json:"mounted"`     // a plain http.Handler (Mount): files, a mounted package
-	Constrained bool     `json:"constrained"` // there only for requests a Constraint passes
+	Filters []string `json:"filters"`
+	// served through the router's page cache
+	Cached bool `json:"cached"`
+	// a plain http.Handler (Mount): files, a mounted package
+	Mounted bool `json:"mounted"`
+	// there only for requests a Constraint passes
+	Constrained bool `json:"constrained"`
 }
 
 // String is the route on a line: "GET /admin/deep/{$}  [app.signedIn] cached".
@@ -60,8 +65,6 @@ func (rt *Router) Routes() []Route {
 	return routes
 }
 
-// add routes pattern, under the scope's prefix, to h, and lists it (Routes)
-// with the scope's filters after r's own.
 func (s *Scope) add(pattern string, h http.Handler, r Route) {
 	full := s.pattern(pattern)
 	s.mux.Handle(full, h)
@@ -79,14 +82,12 @@ func (s *Scope) add(pattern string, h http.Handler, r Route) {
 	s.rt.routes = append(s.rt.routes, r)
 }
 
-// funcNames are fns' names, their package's path trimmed:
-// "auth.(*Auth).Required".
 func funcNames[F any](fns []F) []string {
 	names := make([]string, 0, len(fns))
 	for _, f := range fns {
 		name := "?"
 		if fn := runtime.FuncForPC(reflect.ValueOf(f).Pointer()); fn != nil {
-			name = strings.TrimSuffix(fn.Name(), "-fm") // a method value's
+			name = strings.TrimSuffix(fn.Name(), "-fm")
 			name = name[strings.LastIndex(name, "/")+1:]
 		}
 		names = append(names, name)

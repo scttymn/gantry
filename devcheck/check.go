@@ -48,7 +48,7 @@ type Rule struct {
 // rule can tell the app's own packages by import path.
 type Source struct {
 	Path, Text, Module string
-	prog               *program // the scan's packages, for a rule that follows a name out of the file
+	prog               *program
 	parsed             bool
 	set                *token.FileSet
 	file               *ast.File

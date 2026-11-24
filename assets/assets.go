@@ -45,25 +45,20 @@ const Year = 31556952
 
 type asset struct {
 	body        []byte
-	gzipped     []byte // text files, compressed once; nil otherwise
-	digested    string // "site-1a2b3c4d.css"
+	gzipped     []byte
+	digested    string
 	contentType string
 }
 
 // Assets is an app's files, digested.
 type Assets struct {
-	byName   map[string]*asset // logical name → asset
-	byDigest map[string]*asset // digested name → asset
-	public   map[string]*asset // root name → asset ("robots.txt")
-	images   *Images           // the pictures' copies, once Images is called
-	// copies are built/images/<key>/<name>: the pictures' copies the build
-	// made (Precompile), embedded with the rest.
-	copies map[string]map[string][]byte
-	// minified are built/js/<source's hash>.js: each script as the build
-	// minified it, found by its source, so an edited script is never
-	// shadowed by an old build's.
+	byName   map[string]*asset
+	byDigest map[string]*asset
+	public   map[string]*asset
+	images   *Images
+	copies   map[string]map[string][]byte
 	minified map[string][]byte
-	sources  map[string][]byte // each script as it is, for Precompile
+	sources  map[string][]byte
 }
 
 var cssURL = regexp.MustCompile(`url\(\s*["']?([^"')]+?)["']?\s*\)`)
@@ -79,7 +74,7 @@ func New(fsys fs.FS) (*Assets, error) {
 		}
 		top, name, ok := strings.Cut(p, "/")
 		if !ok {
-			return nil // a file at the root isn't an asset (assets.go, say)
+			return nil
 		}
 		body, err := fs.ReadFile(fsys, p)
 		if err != nil {
@@ -118,7 +113,6 @@ func New(fsys fs.FS) (*Assets, error) {
 		switch path.Ext(name) {
 		case ".css":
 		case ".js":
-			// The build's minified copy, when there's one of this source.
 			body := f.body
 			a.sources[name] = body
 			if min, ok := a.minified[sourceHash(body)]; ok {
@@ -129,14 +123,12 @@ func New(fsys fs.FS) (*Assets, error) {
 			*f = *a.digest(name, f.body)
 		}
 	}
-	// Stylesheets last, once everything they point at has its name.
 	sort.Strings(css)
 	minifier := minify.New()
 	minifier.AddFunc("text/css", cssmin.Minify)
 	for _, name := range css {
 		f := a.byName[name]
 		body := cssURL.ReplaceAllFunc(f.body, func(m []byte) []byte {
-			// "oswald.woff2", or "/oswald.woff2" as Propshaft also takes it.
 			ref := strings.TrimPrefix(string(cssURL.FindSubmatch(m)[1]), "/")
 			if target, ok := a.byName[ref]; ok && target.digested != "" {
 				return []byte(`url("/assets/` + target.digested + `")`)
@@ -266,8 +258,6 @@ func (a *Assets) Routes(mount func(pattern string, h http.Handler)) {
 	}
 }
 
-// serve writes a file: its gzipped bytes for a client that takes them, so a
-// text file is compressed once rather than on every request.
 func serve(w http.ResponseWriter, r *http.Request, f *asset) {
 	h := w.Header()
 	h.Set("Content-Type", f.contentType)
@@ -287,7 +277,6 @@ func serve(w http.ResponseWriter, r *http.Request, f *asset) {
 	w.Write(body)
 }
 
-// sourceHash names a script's minified copy in built/js/.
 func sourceHash(body []byte) string {
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])[:16]

@@ -9,9 +9,6 @@ import (
 	"testing"
 )
 
-// system is a /proc/self/cgroup, a /proc/self/mountinfo and a /proc/meminfo,
-// and the cgroup filesystems they name, made of these files under a new
-// directory; "@" in mountinfo is that directory, where it's mounted.
 func system(t *testing.T, files map[string]string) memoryFiles {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,16 +27,10 @@ func system(t *testing.T, files map[string]string) memoryFiles {
 const (
 	gib     = 1 << 30
 	machine = "MemTotal:       16000000 kB\nMemFree:  1 kB\n"
-	// cgroup2 mounted with its root at /, and cgroup v1's memory controller.
-	v2Root = "30 25 0:26 / @/cg rw,nosuid - cgroup2 cgroup2 rw\n"
-	v1Root = "40 25 0:30 / @/cg/memory rw - cgroup cgroup rw,memory\n41 25 0:31 / @/cg/cpu rw - cgroup cgroup rw,cpu\n"
+	v2Root  = "30 25 0:26 / @/cg rw,nosuid - cgroup2 cgroup2 rw\n"
+	v1Root  = "40 25 0:30 / @/cg/memory rw - cgroup cgroup rw,memory\n41 25 0:31 / @/cg/cpu rw - cgroup cgroup rw,cpu\n"
 )
 
-// The runtime is told four fifths of the least the process may have: its
-// cgroup's limit (memory.max, or memory.high when lower), every one's above
-// it that the mount shows, on cgroup v2 or v1; and the machine's memory,
-// which bounds them all, and is the limit where there's no other (a server
-// of its own).
 func TestMemoryLimit(t *testing.T) {
 	for name, tc := range map[string]struct {
 		files     map[string]string
@@ -84,8 +75,6 @@ func TestMemoryLimit(t *testing.T) {
 	}
 }
 
-// Where there's nothing to read, nothing that's a limit, or a cgroup the
-// mount doesn't show, none is set.
 func TestMemoryLimitNone(t *testing.T) {
 	for name, files := range map[string]map[string]string{
 		"not Linux":       {},
@@ -104,7 +93,6 @@ func TestMemoryLimitNone(t *testing.T) {
 	}
 }
 
-// GOMEMLIMIT is the operator's: with it set, gantry sets nothing.
 func TestMemoryLimitLeavesGOMEMLIMIT(t *testing.T) {
 	files := system(t, map[string]string{"self": "0::/\n", "mountinfo": v2Root, "cg/memory.max": "2147483648\n"})
 	var set []int64
@@ -120,7 +108,6 @@ func TestMemoryLimitLeavesGOMEMLIMIT(t *testing.T) {
 	}
 }
 
-// The router says what was set, once, however many handlers are built.
 func TestMemoryLimitLogged(t *testing.T) {
 	was := memory
 	t.Cleanup(func() { memory = was })

@@ -7,11 +7,6 @@ import (
 	"path/filepath"
 )
 
-// verify is `gantry verify`: the app's TestFeatures (testkit.Verify), which
-// checks test/features.yaml has every route and visits each feature as each
-// role, the app in the test's process. It runs in the app's dev container,
-// where a Postgres app's TEST_DATABASE_URL is, or with --local on this
-// machine.
 func verify(root string, args []string, _, errOut io.Writer) error {
 	fs, local := appFlags()
 	if err := parseFlags(fs, args); err != nil {

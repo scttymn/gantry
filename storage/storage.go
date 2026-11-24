@@ -80,14 +80,16 @@ type Storage struct {
 	server     *images.Server
 	warm       sync.Mutex
 	background sync.WaitGroup
-	queued     atomic.Bool // a warming is waiting to start
+	queued     atomic.Bool
 }
 
 // Ref names an attachment: a record's file under a name.
 type Ref struct {
-	RecordType string // the record's type, as Rails names it: "Clip"
+	// the record's type, as Rails names it: "Clip"
+	RecordType string
 	RecordID   int64
-	Name       string // "thumbnail"
+	// "thumbnail"
+	Name string
 }
 
 // File is a file to store: what a form sent.
@@ -103,9 +105,11 @@ type Blob struct {
 	Filename    string
 	ContentType string
 	ByteSize    int64
-	Checksum    string // base64 MD5, as Rails'
-	Width       int    // a picture's, upright; 0 when unknown
-	Height      int
+	// base64 MD5, as Rails'
+	Checksum string
+	// a picture's, upright; 0 when unknown
+	Width  int
+	Height int
 }
 
 // FileFrom is the file a multipart form sent in field, if one was chosen.
@@ -207,8 +211,6 @@ func (s *Storage) AttachBlob(ctx context.Context, ref Ref, key string) (Blob, er
 	return b, nil
 }
 
-// replace attaches blobID at ref, and purges the blobs ref had, once the
-// transaction commits.
 func (s *Storage) replace(ctx context.Context, tx *db.Tx, ref Ref, blobID int64) error {
 	old, err := s.detach(ctx, tx, ref)
 	if err != nil {
@@ -288,15 +290,10 @@ func (s *Storage) PurgeBlob(ctx context.Context, key string) error {
 	})
 }
 
-// deleteBlob removes a blob's row (and any attachment still naming it:
-// another record's), and its files once the transaction commits.
 func (s *Storage) deleteBlob(ctx context.Context, tx *db.Tx, b Blob) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM active_storage_attachments WHERE blob_id = $1`, b.ID); err != nil {
 		return err
 	}
-	// Rails' variant records name the blob too, in a database Rails made.
-	// Inside a savepoint, so where the table is missing only this statement
-	// is undone (on Postgres a failed statement would abort the transaction).
 	if _, err := tx.ExecContext(ctx, `SAVEPOINT variant_records`); err != nil {
 		return err
 	}
@@ -388,7 +385,6 @@ const blobColumns = `b.id, b.key, b.filename, COALESCE(b.content_type, ''), COAL
 
 type scanner interface{ Scan(dest ...any) error }
 
-// scanBlob reads blobColumns, after any leading columns into before.
 func scanBlob(row scanner, before ...any) (Blob, error) {
 	var b Blob
 	var metadata string
@@ -428,8 +424,6 @@ func (s *Storage) blobs(ctx context.Context, q db.Querier, where string, args ..
 	return out, rows.Err()
 }
 
-// find is the images server's lookup: only a blob attached to something is
-// served.
 func (s *Storage) find(ctx context.Context, key string) (images.Original, bool, error) {
 	b, err := s.blob(ctx, s.DB.Read, `b.key = $1 AND EXISTS (SELECT 1 FROM active_storage_attachments a WHERE a.blob_id = b.id)`, key)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -487,7 +481,7 @@ func (s *Storage) Img(b Blob, o images.Img) templ.Component {
 func (s *Storage) Warm(ctx context.Context) (made int, err error) {
 	s.setup()
 	s.warm.Lock()
-	s.queued.Store(false) // from here, a new attachment queues a warming of its own
+	s.queued.Store(false)
 	defer s.warm.Unlock()
 	defer func() {
 		s.Log.Info(fmt.Sprintf("[storage] made %d cop%s", made, map[bool]string{true: "y", false: "ies"}[made == 1]))
@@ -573,15 +567,12 @@ func (s *Storage) WarmLater() {
 	if !s.queued.CompareAndSwap(false, true) {
 		return
 	}
-	s.background.Go(func() { _, _ = s.Warm(context.Background()) }) // Warm logs what it made and why it stopped
+	s.background.Go(func() { _, _ = s.Warm(context.Background()) })
 }
 
 // Wait waits for the background warmings to finish.
 func (s *Storage) Wait() { s.background.Wait() }
 
-// analyze records a picture's type and size in its blob's metadata, as
-// Active Storage's identify and analyze do: for a Rails blob not analysed
-// yet.
 func (s *Storage) analyze(ctx context.Context, b *Blob) error {
 	data, err := os.ReadFile(s.Path(b.Key))
 	if err != nil {
@@ -590,14 +581,14 @@ func (s *Storage) analyze(ctx context.Context, b *Blob) error {
 	width, height, contentType, err := s.Images.Dimensions(data)
 	if err != nil {
 		if !strings.HasPrefix(b.ContentType, "image/") {
-			return nil // not a picture: nothing to record
+			return nil
 		}
 		return err
 	}
 	var raw string
 	var metadata map[string]any
 	if err := s.DB.Write.QueryRowContext(ctx, `SELECT COALESCE(metadata, '') FROM active_storage_blobs WHERE id = $1`, b.ID).Scan(&raw); err != nil {
-		return err // else the update below would replace the blob's metadata with ours alone
+		return err
 	}
 	if json.Unmarshal([]byte(raw), &metadata) != nil || metadata == nil {
 		metadata = map[string]any{}
@@ -612,7 +603,6 @@ func (s *Storage) analyze(ctx context.Context, b *Blob) error {
 	return nil
 }
 
-// newKey is an Active Storage key: 28 random lowercase letters and digits.
 func newKey() string {
 	const alphabet = "0123456789abcdefghijklmnopqrstuvwxyz"
 	out := make([]byte, 28)
@@ -626,8 +616,6 @@ func newKey() string {
 	return string(out)
 }
 
-// writeAtomically writes data beside path and renames it into place, so a
-// reader never sees half a file.
 func writeAtomically(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err

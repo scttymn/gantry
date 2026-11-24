@@ -32,7 +32,6 @@ func text(s string) templ.Component {
 
 var signer = sign.Signer{Key: []byte(strings.Repeat("test", 8))}
 
-// serve is a hub behind a router, as an app routes it, on a real server.
 func serve(t *testing.T, o Options) (*Hub, *httptest.Server) {
 	t.Helper()
 	h := New(signer, o)
@@ -45,7 +44,6 @@ func serve(t *testing.T, o Options) (*Hub, *httptest.Server) {
 	return h, srv
 }
 
-// listener reads a stream's events.
 type listener struct {
 	resp   *http.Response
 	events chan string
@@ -136,24 +134,20 @@ func TestBroadcast(t *testing.T) {
 	}
 	c.quiet(t, 50*time.Millisecond)
 
-	// Lines of a message are each a data line.
 	h.Broadcast(ctx, "project:2", turbo.Update("log", text("line one\nline two")))
 	if got := c.next(t); got != "data: <turbo-stream action=\"update\" target=\"log\"><template>line one\ndata: line two</template></turbo-stream>" {
 		t.Errorf("c got %q", got)
 	}
 	b.next(t)
 
-	// A broadcast to no one is fine.
 	if err := h.Broadcast(ctx, "nobody", turbo.Refresh()); err != nil {
 		t.Error(err)
 	}
 
-	// Leaving unsubscribes.
 	a.resp.Body.Close()
 	waitFor(t, h, "project:1", 1)
 }
 
-// Only names the app signed can be listened to.
 func TestSigned(t *testing.T) {
 	h, srv := serve(t, Options{})
 	other := New(sign.Signer{Key: []byte(strings.Repeat("another app", 3))}, Options{})
@@ -167,7 +161,6 @@ func TestSigned(t *testing.T) {
 			t.Errorf("%s: %d", path, resp.StatusCode)
 		}
 	}
-	// A name signed for another purpose isn't a stream's.
 	resp, _ := http.Get(srv.URL + "/live?s=" + signer.Sign("flash", `["project:1"]`))
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
@@ -188,7 +181,6 @@ func TestSource(t *testing.T) {
 	}
 }
 
-// An idle stream gets a comment now and then, so proxies don't close it.
 func TestKeepAlive(t *testing.T) {
 	h, srv := serve(t, Options{KeepAlive: 30 * time.Millisecond})
 	l := listen(t, srv, h, "s")
@@ -200,8 +192,6 @@ func TestKeepAlive(t *testing.T) {
 	}
 }
 
-// A client that stops reading (a phone gone into a tunnel) doesn't hold its
-// stream open: once a write waits WriteTimeout, the stream ends.
 func TestStalledClient(t *testing.T) {
 	h := New(signer, Options{WriteTimeout: 100 * time.Millisecond, Buffer: 1000})
 	ended := make(chan struct{})
@@ -234,8 +224,6 @@ func TestStalledClient(t *testing.T) {
 	}
 }
 
-// A stream outlives the server's WriteTimeout (an app's is 60 s), which
-// would otherwise cut it off.
 func TestServerWriteTimeout(t *testing.T) {
 	h := New(signer, Options{})
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
@@ -256,7 +244,6 @@ func TestServerWriteTimeout(t *testing.T) {
 	}
 }
 
-// A subscriber too far behind is dropped, and the others carry on.
 func TestSlowSubscriber(t *testing.T) {
 	ctx := context.Background()
 	h := New(signer, Options{Buffer: 2})
@@ -281,7 +268,6 @@ func TestSlowSubscriber(t *testing.T) {
 		t.Error("the default buffer isn't 64")
 	}
 
-	// Its stream ends, so the browser reconnects.
 	h2, srv := serve(t, Options{Buffer: 1})
 	l := listen(t, srv, h2, "s")
 	waitFor(t, h2, "s", 1)
@@ -291,7 +277,7 @@ func TestSlowSubscriber(t *testing.T) {
 	}
 	h2.mu.Unlock()
 	h2.mu.Lock()
-	h2.remove(s) // as send does to one behind
+	h2.remove(s)
 	h2.mu.Unlock()
 	for ev := range l.events {
 		_ = ev
@@ -299,8 +285,6 @@ func TestSlowSubscriber(t *testing.T) {
 	waitFor(t, h2, "s", 0)
 }
 
-// Refreshes close together are one, after the last; a request's own is
-// marked so its page skips it.
 func TestRefresh(t *testing.T) {
 	h, srv := serve(t, Options{Debounce: 100 * time.Millisecond})
 	l := listen(t, srv, h, "board")
@@ -321,7 +305,6 @@ func TestRefresh(t *testing.T) {
 	}
 	l.quiet(t, 200*time.Millisecond)
 
-	// Different requests' refreshes aren't merged.
 	h.Refresh("board", "req-1")
 	h.Refresh("board", "req-2")
 	got := []string{l.next(t), l.next(t)}
@@ -333,8 +316,6 @@ func TestRefresh(t *testing.T) {
 	}
 }
 
-// Broadcasts in a transaction wait for its commit, and a rollback's never
-// go.
 func TestBroadcastTx(t *testing.T) {
 	ctx := context.Background()
 	d := testkit.DB(t, func(context.Context, *db.DB) error { return nil })
@@ -374,7 +355,6 @@ func TestBroadcastTx(t *testing.T) {
 		t.Errorf("a rollback's broadcast: %q", m)
 	case <-time.After(50 * time.Millisecond):
 	}
-	// A component that fails to draw is the caller's error, then and there.
 	boom := templ.ComponentFunc(func(context.Context, io.Writer) error { return errors.New("boom") })
 	d.Tx(ctx, func(tx *db.Tx) error {
 		if err := h.BroadcastTx(ctx, tx, "s", boom); err == nil {
@@ -387,8 +367,6 @@ func TestBroadcastTx(t *testing.T) {
 	}
 }
 
-// Closing the hub ends every stream, so a server's shutdown doesn't wait
-// on them.
 func TestClose(t *testing.T) {
 	h, srv := serve(t, Options{})
 	l := listen(t, srv, h, "s")
@@ -404,7 +382,6 @@ func TestClose(t *testing.T) {
 	}
 	for range l.events {
 	}
-	// A new listener after closing is turned away.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", h.URL("s"), nil)
 	if err := h.Serve(w, r); web.StatusOf(err) != http.StatusServiceUnavailable {
@@ -412,8 +389,6 @@ func TestClose(t *testing.T) {
 	}
 }
 
-// The app can listen as a page does: what's broadcast and refreshed
-// arrives, until it stops.
 func TestListen(t *testing.T) {
 	ctx := context.Background()
 	h := New(sign.Signer{Key: []byte(strings.Repeat("k", 32))}, Options{Debounce: time.Millisecond})
@@ -445,7 +420,6 @@ func TestListen(t *testing.T) {
 		t.Error("still subscribed after stop")
 	}
 
-	// After Close, a listener gets a closed channel.
 	h.Close()
 	if _, open := <-first(h.Listen("x")); open {
 		t.Error("listening to a closed hub")

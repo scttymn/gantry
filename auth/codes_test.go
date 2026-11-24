@@ -358,8 +358,6 @@ func TestEmailCodeValidation(t *testing.T) {
 	}
 }
 
-// independentAuth opens a second connection pool to the same data. In
-// particular SQLite must rely on its database locks, not one pool's mutex.
 func independentAuth(t *testing.T, a *Auth) *Auth {
 	t.Helper()
 	other := *a

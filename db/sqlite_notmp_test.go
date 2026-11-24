@@ -14,11 +14,6 @@ import (
 
 const noTempDirEnv = "GANTRY_TEST_NO_TEMP_DIR"
 
-// A production image is FROM scratch and runs as a user who can write /data.
-// With no /tmp, /var/tmp or /usr/tmp in it, and a working directory that user
-// can't write, SQLite can't name a temporary file, so nothing it does may
-// need one. The dev and test images have a /tmp, so only a root like that
-// one shows it: this runs the test again in one (chroot), as that user.
 func TestSQLiteWithoutTempDir(t *testing.T) {
 	if os.Getenv(noTempDirEnv) != "" {
 		sqliteWithoutTempDir(t)
@@ -28,7 +23,7 @@ func TestSQLiteWithoutTempDir(t *testing.T) {
 		t.Skip("chroot needs root (bin/go runs the tests as root)")
 	}
 	root := t.TempDir()
-	const uid = 65532 // the production image's USER
+	const uid = 65532
 	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +68,6 @@ func copyTestBinary(t *testing.T, to string) {
 	}
 }
 
-// sqliteWithoutTempDir is the test's body, run where there's no temporary
-// directory: what SQLite keeps in a temporary file, unless told otherwise.
 func sqliteWithoutTempDir(t *testing.T) {
 	for _, dir := range []string{"/tmp", "/var/tmp", "/usr/tmp"} {
 		if _, err := os.Stat(dir); err == nil {
@@ -91,8 +84,6 @@ func sqliteWithoutTempDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer d.Close()
-	// 3000 bytes a row is a page a row, and 8 MB of keys is more than a sort
-	// holds before it writes them out.
 	for _, q := range []string{
 		`CREATE TABLE users (id integer PRIMARY KEY)`,
 		`CREATE TABLE posts (id integer PRIMARY KEY, user_id integer NOT NULL REFERENCES users (id), body text NOT NULL, created_at datetime NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
@@ -119,9 +110,6 @@ func sqliteWithoutTempDir(t *testing.T) {
 			t.Errorf("id %d, %v", id, err)
 		}
 	})
-	// In a transaction, a statement that can fail partway keeps the pages it
-	// changes in a statement journal, to undo itself alone: past 64 KB (16
-	// pages) the journal is a temporary file.
 	t.Run("a statement in a Tx that changes more than 64 KB of pages", func(t *testing.T) {
 		err := d.Tx(ctx, func(tx *Tx) error {
 			_, err := tx.ExecContext(ctx, `UPDATE pages SET n = n + 1`)

@@ -45,9 +45,6 @@ func (d *DB) Schema(ctx context.Context, skip ...string) (string, error) {
 	return b.String(), rows.Err()
 }
 
-// pgSchema is pg_dump's schema, without what changes from run to run or
-// machine to machine (its comments, SET lines, and pg_dump 17's \restrict
-// keys), so db/schema.sql only changes when the schema does.
 func (d *DB) pgSchema(ctx context.Context, skip []string) (string, error) {
 	args := []string{"--schema-only", "--no-owner", "--no-privileges", "--no-comments", "--exclude-table=gantry_*"}
 	for _, s := range skip {

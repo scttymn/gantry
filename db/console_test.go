@@ -21,10 +21,10 @@ SELECT count(*) AS n FROM posts;
 	}
 	for _, want := range []string{
 		"sqlite console",
-		"sql> ok\n", // CREATE
-		"...> ok\n", // the INSERT, over two lines
-		"id  title\n1   first\n2   NULL\n(2 rows)\n", // rows under their columns
-		"error: ", // a bad statement, and it goes on
+		"sql> ok\n",
+		"...> ok\n",
+		"id  title\n1   first\n2   NULL\n(2 rows)\n",
+		"error: ",
 		"n\n2\n(1 rows)\n",
 	} {
 		if !strings.Contains(out.String(), want) {

@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// recorder is a test that records whether it was skipped or failed, and
-// stops there as a test does.
 type recorder struct {
 	testing.TB
 	skipped, failed string

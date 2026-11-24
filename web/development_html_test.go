@@ -19,7 +19,6 @@ import (
 func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)
-	// A real source finding ensures the router must scan; no template hook.
 	if err := os.WriteFile(filepath.Join(root, "page.html"), []byte(`<script src="/app.js"></script>`), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -57,9 +56,6 @@ func TestRouterAutomaticallyInjectsDevelopmentPanel(t *testing.T) {
 	}
 }
 
-// The panel keeps working under the app's Content-Security-Policy, which
-// allows styles from the app itself and by hash: its style is a stylesheet
-// the middleware serves, not style attributes.
 func TestDevelopmentPanelUnderCSP(t *testing.T) {
 	t.Chdir(t.TempDir())
 	if err := os.WriteFile("page.html", []byte(`<script src="/app.js"></script>`), 0644); err != nil {

@@ -44,7 +44,6 @@ func (d *DB) Console(ctx context.Context, in io.Reader, out io.Writer) error {
 	return lines.Err()
 }
 
-// run runs one statement and prints its result.
 func (d *DB) run(ctx context.Context, sql string, out io.Writer) error {
 	rows, err := d.Write.QueryContext(ctx, sql)
 	if err != nil {
@@ -56,7 +55,6 @@ func (d *DB) run(ctx context.Context, sql string, out io.Writer) error {
 		return err
 	}
 	if len(cols) == 0 {
-		// A statement that returns no columns (INSERT, CREATE, ...).
 		fmt.Fprintln(out, "ok")
 		return rows.Err()
 	}

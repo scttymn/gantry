@@ -97,8 +97,6 @@ func TestStatus(t *testing.T) {
 	}
 }
 
-// Rails runs any pending migration, older than the newest applied or not:
-// a branch's migration merged after main's still runs.
 func TestMigrateOutOfOrder(t *testing.T) {
 	ctx := context.Background()
 	d := openTemp(t)

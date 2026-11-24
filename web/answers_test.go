@@ -13,7 +13,6 @@ import (
 	"testing"
 )
 
-// public is an app's public folder with a 404 page, and no 403.
 type public map[string]string
 
 func (p public) Public(name string) ([]byte, bool) {
@@ -67,8 +66,8 @@ func TestJSONAnswers(t *testing.T) {
 		want string
 	}{
 		{"/nope", 404, `{"error":"Not Found"}`},
-		{"/busy", 409, `{"error":"already deploying"}`},       // the handler's own message
-		{"/broken", 500, `{"error":"Internal Server Error"}`}, // never the detail
+		{"/busy", 409, `{"error":"already deploying"}`},
+		{"/broken", 500, `{"error":"Internal Server Error"}`},
 		{"/forbidden", 403, `{"error":"Forbidden"}`},
 		{"/invalid", 422, `{"errors":{"email":["is taken"],"name":["can't be blank"]}}`},
 		{"/panic", 500, `{"error":"Internal Server Error"}`},
@@ -81,7 +80,6 @@ func TestJSONAnswers(t *testing.T) {
 	if !strings.Contains(logs.String(), "disk full at /var/lib/secret") {
 		t.Error("a 500's detail wasn't logged")
 	}
-	// A .json path is a JSON client too.
 	if w := ask(h, "GET", "/nope.json", "", ""); !strings.Contains(w.Body.String(), `"error"`) {
 		t.Errorf("/nope.json = %q", w.Body)
 	}
@@ -92,18 +90,14 @@ func TestErrorPagesStatic(t *testing.T) {
 	if w := ask(h, "GET", "/nope", "text/html", ""); w.Code != 404 || w.Body.String() != "<h1>static 404</h1>" || !strings.HasPrefix(w.Header().Get("Content-Type"), "text/html") {
 		t.Errorf("the app's 404.html: %d %q", w.Code, w.Body)
 	}
-	// No 403.html: the router's own page, naming the status.
 	if w := ask(h, "GET", "/forbidden", "text/html", ""); w.Code != 403 || !strings.Contains(w.Body.String(), "Forbidden") {
 		t.Errorf("a generic page: %d %q", w.Code, w.Body)
 	}
-	// Neither a page nor data (an image): the bare status, as before.
 	if w := ask(h, "GET", "/nope", "image/png", ""); w.Code != 404 || w.Body.Len() != 0 {
 		t.Errorf("an image request: %d %q", w.Code, w.Body)
 	}
 }
 
-// With neither a public folder nor a page of its own, a browser still gets
-// a page, the router's.
 func TestErrorPageBare(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	if w := ask(rt.Handler(), "GET", "/nope", "text/html", ""); w.Code != 404 || !strings.Contains(w.Body.String(), "<h1>Not Found</h1>") {
@@ -111,7 +105,6 @@ func TestErrorPageBare(t *testing.T) {
 	}
 }
 
-// The app's own error page comes first; if it fails, the static page.
 func TestErrorPageFallsBack(t *testing.T) {
 	h, _ := answersApp(t, func(w http.ResponseWriter, r *http.Request, status int) {
 		io.WriteString(w, "the app's own page")
@@ -137,10 +130,10 @@ func TestReadJSON(t *testing.T) {
 		code int
 		want string
 	}{
-		{`{"name":"sam","extra":1}`, 201, `{"hello":"sam"}`}, // unknown fields ignored
+		{`{"name":"sam","extra":1}`, 201, `{"hello":"sam"}`},
 		{`{"name":`, 400, `"error"`},
 		{``, 400, `the request has no JSON`},
-		{`{"name":"` + strings.Repeat("x", 100) + `"}`, 413, `"error"`}, // over its limit
+		{`{"name":"` + strings.Repeat("x", 100) + `"}`, 413, `"error"`},
 	} {
 		w := ask(h, "POST", "/echo", "application/json", tc.body)
 		if w.Code != tc.code || !strings.Contains(w.Body.String(), tc.want) {
@@ -167,15 +160,12 @@ type conflict struct{}
 func (conflict) Error() string   { return "someone else changed it" }
 func (conflict) HTTPStatus() int { return http.StatusConflict }
 
-// An error may say its own status (db.ErrStale's 409), wrapped or not.
 func TestStatusOfItsOwn(t *testing.T) {
 	if got := StatusOf(fmt.Errorf("saving: %w", conflict{})); got != http.StatusConflict {
 		t.Errorf("= %d", got)
 	}
 }
 
-// An API's pipeline starts with AcceptJSON: its errors are JSON whatever
-// the client's Accept says (a CLI often sends none).
 func TestAcceptJSON(t *testing.T) {
 	rt := NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Scope("/api", Pipeline{AcceptJSON}, func(s *Scope) {

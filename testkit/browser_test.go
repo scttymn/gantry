@@ -15,8 +15,6 @@ import (
 	"github.com/scttymn/gantry/web"
 )
 
-// site is a small app: a sign-in form, a page behind it, an API, and a
-// PATCH form (method override).
 func signInSite() http.Handler {
 	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
 	rt.Handle("GET /login", func(w http.ResponseWriter, r *http.Request) error {
@@ -76,24 +74,20 @@ func TestBrowser(t *testing.T) {
 		t.Fatalf("the sign-in page: %d %s", page.Code, page.Body)
 	}
 
-	// Submit fills the form it finds, keeping what the page set (the
-	// hidden token, the checked box, the selected option, the text).
 	page = page.Submit("form", map[string]string{"email": "sam@example.com", "password": "secret"})
 	if page.Code != 303 {
 		t.Fatalf("signing in: %d %s", page.Code, page.Body)
 	}
-	page = page.Follow() // the session cookie goes with it
+	page = page.Follow()
 	want := "token=t0k3n email=sam@example.com password=secret remember=yes spam= plan=b note=hello"
 	if got := page.Text("h1.who"); got != want {
 		t.Errorf("signed in as\n %q\nwant %q", got, want)
 	}
 
-	// A form that PATCHes through _method.
 	if page = page.Submit("form", map[string]string{"name": "new"}); page.Code != 200 || page.Body != "patched 1 to new" {
 		t.Errorf("a PATCH form: %d %q", page.Code, page.Body)
 	}
 
-	// Headers go with every request: a bearer token, for an API.
 	b.Header.Set("Authorization", "Bearer hou_abc")
 	var got struct {
 		Token string
@@ -108,8 +102,6 @@ func TestBrowser(t *testing.T) {
 	}
 }
 
-// SubmitFiles sends a form with its file, multipart, keeping what the page
-// set, as a browser does.
 func TestSubmitFiles(t *testing.T) {
 	h := http.NewServeMux()
 	h.HandleFunc("GET /form", func(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +125,6 @@ func TestSubmitFiles(t *testing.T) {
 	}
 }
 
-// failures runs f with a recorder, as a test would, and is what it reported.
 func failures(t *testing.T, f func(tb testing.TB)) *recorder {
 	r := &recorder{TB: t}
 	done := make(chan struct{})
@@ -160,7 +151,7 @@ func TestBrowserReports(t *testing.T) {
 
 func TestClock(t *testing.T) {
 	c := Clock(time.Date(2026, 9, 29, 12, 0, 0, 0, time.UTC))
-	now := c.Now // what a gantry part is handed
+	now := c.Now
 	c.Advance(14 * 24 * time.Hour)
 	if got := now(); !got.Equal(time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)) {
 		t.Errorf("after two weeks: %v", got)
@@ -183,7 +174,7 @@ func TestHTTP(t *testing.T) {
 	})
 	client := fake.Client()
 
-	resp, err := client.Get("https://api.example.com/v1/zones?page=2") // any query, when the script has none
+	resp, err := client.Get("https://api.example.com/v1/zones?page=2")
 	if err != nil || resp.StatusCode != 200 || read(resp) != `{"zones":["a"]}` {
 		t.Fatalf("GET: %v %v", resp, err)
 	}
@@ -196,8 +187,6 @@ func TestHTTP(t *testing.T) {
 	}
 }
 
-// A request the test didn't script fails the test, and the code gets an
-// error, as WebMock's default.
 func TestHTTPUnscripted(t *testing.T) {
 	var err error
 	r := failures(t, func(tb testing.TB) {
@@ -207,7 +196,6 @@ func TestHTTPUnscripted(t *testing.T) {
 	if err == nil || !errors.Is(err, ErrUnscripted) || len(r.errors) != 1 || !strings.Contains(r.errors[0], "GET https://evil.example.com/steal") {
 		t.Errorf("err %v, reported %q", err, r.errors)
 	}
-	// Scripted for GET is not scripted for DELETE.
 	r = failures(t, func(tb testing.TB) {
 		fake := HTTP(tb)
 		fake.On("GET", "https://api.example.com/v1/dns", 200, "{}")

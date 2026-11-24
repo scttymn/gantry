@@ -36,14 +36,19 @@ var migrations embed.FS
 type Options struct {
 	// Queues is each queue's workers, how many of its jobs run at once:
 	// {"default": 3} when nil.
-	Queues    map[string]int
-	Log       *slog.Logger
-	Now       func() time.Time
-	Poll      time.Duration // how often workers look for jobs that came due: 1 s
-	Grace     time.Duration // on shutdown, what running jobs get before their contexts end: 5 s
-	Heartbeat time.Duration // how often this process says it's alive: 60 s
-	Dead      time.Duration // a process silent this long crashed, and its jobs go back: 5 min
-	Keep      time.Duration // how long finished jobs are kept: a day
+	Queues map[string]int
+	Log    *slog.Logger
+	Now    func() time.Time
+	// how often workers look for jobs that came due: 1 s
+	Poll time.Duration
+	// on shutdown, what running jobs get before their contexts end: 5 s
+	Grace time.Duration
+	// how often this process says it's alive: 60 s
+	Heartbeat time.Duration
+	// a process silent this long crashed, and its jobs go back: 5 min
+	Dead time.Duration
+	// how long finished jobs are kept: a day
+	Keep time.Duration
 }
 
 // Queue is an app's jobs: the ones it defines, and the workers that run
@@ -90,7 +95,6 @@ func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 
 func (q *Queue) now() time.Time { return q.o.Now().UTC() }
 
-// runner is a defined job, whatever its argument type.
 type runner interface {
 	queue() string
 	perform(ctx context.Context, args []byte) error
@@ -136,11 +140,14 @@ type Limit[A any] struct {
 
 // Opts are a job's settings.
 type Opts[A any] struct {
-	Queue    string // "default" when empty
-	Priority int    // lower runs first; 0 by default
+	// "default" when empty
+	Queue string
+	// lower runs first; 0 by default
+	Priority int
 	Retry    Retry
-	Timeout  time.Duration // the job's context ends after it; none by default
-	Limit    *Limit[A]
+	// the job's context ends after it; none by default
+	Timeout time.Duration
+	Limit   *Limit[A]
 	// OnExhausted runs when the last attempt fails (Rails' retry_on block).
 	OnExhausted func(ctx context.Context, a A, err error)
 }
@@ -196,7 +203,7 @@ func (j *Job[A]) exhausted(ctx context.Context, raw []byte, err error) {
 		return
 	}
 	var a A
-	_ = json.Unmarshal(raw, &a) // arguments that don't read reach it as A's zero value
+	_ = json.Unmarshal(raw, &a)
 	j.opts.OnExhausted(ctx, a, err)
 }
 
@@ -248,7 +255,6 @@ func (j *Job[A]) insert(ctx context.Context, x db.Querier, a A, at time.Time) (i
 	return id, err
 }
 
-// signal wakes queue's workers, when they're waiting.
 func (q *Queue) signal(queue string) {
 	if ch, ok := q.wake[queue]; ok {
 		select {
@@ -258,7 +264,6 @@ func (q *Queue) signal(queue string) {
 	}
 }
 
-// discarded is a failure not to try again.
 type discarded struct{ err error }
 
 func (d discarded) Error() string { return d.err.Error() }
@@ -276,8 +281,9 @@ type Entry struct {
 	Args     json.RawMessage
 	RunAt    time.Time
 	Attempts int
-	State    string // ready, claimed, finished or failed
-	Error    string
+	// ready, claimed, finished or failed
+	State string
+	Error string
 }
 
 // Pending is the jobs waiting or running, in the order they'll run.

@@ -20,20 +20,12 @@ import (
 
 func main() { os.Exit(run(os.Args[1:], ".", os.Stdout, os.Stderr)) }
 
-// command is one of gantry's commands. The table of them, commands, is what
-// run dispatches, what the usage says, and what the docs' examples are
-// checked against (TestDocsCommands), so none of them can say a command or
-// a flag gantry doesn't have.
 type command struct {
-	name  string // "new", "g resource"
-	args  string // what it takes but flags: "NAME"
-	about string
-	// flags is its flags, as it parses them (nil: none). Its usage lists
-	// them, a flag with a value named by its usage's `quoted` word.
-	flags func() *flag.FlagSet
-	run   func(root string, args []string, out, errOut io.Writer) error
-	// houston: Houston's command, which gantry runs with every argument as
-	// it is, so its flags are Houston's.
+	name    string
+	args    string
+	about   string
+	flags   func() *flag.FlagSet
+	run     func(root string, args []string, out, errOut io.Writer) error
 	houston bool
 }
 
@@ -64,7 +56,6 @@ var commands = []command{
 	{name: "routes", about: "the app's routes, as its router has them", flags: func() *flag.FlagSet { fs, _, _ := routesFlags(); return fs }, run: routes},
 	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: localFlag, run: verify},
 	{name: "dev", houston: true, run: func(root string, args []string, _, errOut io.Writer) error {
-		// Advice must never prevent the development server from starting.
 		if err := developmentCheck(root, nil, errOut); err != nil {
 			fmt.Fprintln(errOut, "gantry check:", err)
 		}
@@ -79,7 +70,6 @@ var commands = []command{
 
 func localFlag() *flag.FlagSet { fs, _ := appFlags(); return fs }
 
-// helpArgs ask for the usage.
 var helpArgs = map[string]bool{"help": true, "-h": true, "--help": true}
 
 const usageNotes = `
@@ -89,8 +79,6 @@ g migration: NAME shapes it (create_posts, add_email_to_users); TYPE is
 string, text, int, position, bool, date or datetime.
 `
 
-// usage is every command's synopsis, then Houston's, which gantry runs:
-// any command it doesn't have is Houston's.
 func usage() string {
 	var b strings.Builder
 	b.WriteString("usage:\n")
@@ -118,8 +106,6 @@ func usage() string {
 	return b.String()
 }
 
-// synopsis is the command as its usage shows it: its arguments, then its
-// flags.
 func (c command) synopsis() string {
 	s := "gantry " + c.name
 	if c.args != "" {
@@ -137,8 +123,6 @@ func (c command) synopsis() string {
 	return s
 }
 
-// lookup is the command args name ("g resource posts ..." is g resource's),
-// and its arguments.
 func lookup(args []string) (command, []string, bool) {
 	name, rest := args[0], args[1:]
 	if name == "generate" {
@@ -155,15 +139,12 @@ func lookup(args []string) (command, []string, bool) {
 	return command{}, nil, false
 }
 
-// flagSet is a command's flags, which run reports the errors of.
 func flagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	return fs
 }
 
-// usageError is a command given what it doesn't take: run says why, when
-// there's more to say than its usage, then shows its usage.
 type usageError struct{ why error }
 
 func (e usageError) Unwrap() error { return e.why }
@@ -175,12 +156,8 @@ func (e usageError) Error() string {
 	return "usage: " + e.why.Error()
 }
 
-// helpFlag asks a command for its usage where its flags aren't parsed:
-// gantry new --help, gantry db -h. A word ("help") may be an app's name or
-// its command's own argument, so only the flags are.
 func helpFlag(arg string) bool { return arg == "-h" || arg == "--help" }
 
-// parseFlags is fs.Parse, its errors a usage error.
 func parseFlags(fs *flag.FlagSet, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return usageError{err}
@@ -194,9 +171,6 @@ func run(args []string, root string, out, errOut io.Writer) int {
 		return 0
 	}
 	if args[0] == "houston-release" {
-		// What bin/gantry asks: the Houston release this gantry runs apps
-		// with, and with --sha256 its CLIs' digests. Nothing else happens
-		// first.
 		if len(args) > 1 && args[1] == "--sha256" {
 			fmt.Fprint(out, houstonSHA256SUMS)
 			return 0
@@ -216,7 +190,6 @@ func run(args []string, root string, out, errOut io.Writer) int {
 		fmt.Fprint(errOut, usage())
 		return 2
 	default:
-		// Everything else is Houston's: gantry test is houston test.
 		err = houston(root, args, errOut)
 	}
 	var exit errExit

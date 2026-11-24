@@ -8,7 +8,7 @@ import (
 func TestBearerToken(t *testing.T) {
 	for header, want := range map[string]string{
 		"Bearer hou_abc123":   "hou_abc123",
-		"bearer hou_abc123":   "hou_abc123", // the scheme's case doesn't matter
+		"bearer hou_abc123":   "hou_abc123",
 		"BEARER  hou_abc123 ": "hou_abc123",
 		"Bearer ":             "",
 		"Bearer":              "",

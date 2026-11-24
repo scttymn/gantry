@@ -12,28 +12,21 @@ import (
 	"github.com/scttymn/gantry/devcheck"
 )
 
-// goldenCase is a generator's output, pinned: what its command writes or
-// changes, in an app the commands before it made.
 type goldenCase struct {
-	golden string                    // its folder in testdata/golden
-	app    func(t *testing.T) string // the folder it runs in
-	before [][]string                // gantry's arguments, run first and not pinned
-	args   []string                  // gantry's arguments: the command pinned
-	next   string                    // what its next steps must say
-	// split is the folder a file is pinned in instead of golden, one that
-	// cases share, and whether it is.
-	split func(rel string) (string, bool)
+	golden string
+	app    func(t *testing.T) string
+	before [][]string
+	args   []string
+	next   string
+	split  func(rel string) (string, bool)
 }
 
-// gymPostgres is app's bare module, on Postgres.
 func gymPostgres(t *testing.T) string {
 	root := app(t)
 	os.WriteFile(filepath.Join(root, "sqlc.yaml"), []byte("version: \"2\"\nsql:\n  - engine: postgresql\n"), 0o644)
 	return root
 }
 
-// resourceShared pins the helpers in app/shared, the same for every
-// resource, once.
 func resourceShared(rel string) (string, bool) {
 	return "resource-shared", strings.HasPrefix(rel, "app/shared/")
 }
@@ -66,10 +59,6 @@ func goldenCases() []goldenCase {
 	return cases
 }
 
-// What every generator writes is pinned, on each engine: a change to it is a
-// change to every app made or generated into next, so it shows up here, and
-// in review. Every template is rendered by a case, so none changes unseen,
-// and what each case writes passes Strict.
 func TestGolden(t *testing.T) {
 	opened := &openedFS{FS: templates, names: map[string]bool{}}
 	templates = opened
@@ -104,11 +93,9 @@ func TestGolden(t *testing.T) {
 					got[rel] = b
 				}
 			}
-			// Random keys, checked by TestNewEnv.
 			delete(got, ".env")
 			for rel, b := range got {
 				if strings.HasPrefix(rel, "assets/js/vendor/") {
-					// Vendored JavaScript is copied as it is, not kept twice.
 					if want, err := fs.ReadFile(templates, "templates/new/"+rel); err != nil || !bytes.Equal(want, b) {
 						t.Errorf("%s isn't gantry's copy", rel)
 					}
@@ -129,8 +116,6 @@ func TestGolden(t *testing.T) {
 				}
 			}
 			compareTree(t, got, filepath.Join("testdata", "golden", c.golden))
-			// Scanned where it's written: devcheck skips testdata, and a
-			// .golden file matches no rule's extension.
 			warnings, err := devcheck.Scan(dir)
 			if err != nil {
 				t.Fatal(err)
@@ -141,7 +126,7 @@ func TestGolden(t *testing.T) {
 		})
 	}
 	if ran < len(cases) {
-		return // -run chose some cases: the rest render the other templates
+		return
 	}
 	fs.WalkDir(opened.FS, "templates", func(path string, d fs.DirEntry, err error) error {
 		if err == nil && !d.IsDir() && !opened.names[path] {
@@ -151,7 +136,6 @@ func TestGolden(t *testing.T) {
 	})
 }
 
-// openedFS records the files read from FS.
 type openedFS struct {
 	fs.FS
 	names map[string]bool
@@ -167,7 +151,6 @@ func (o *openedFS) Open(name string) (fs.File, error) {
 	return f, err
 }
 
-// readTree is the files under dir, by their slash path.
 func readTree(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
 	files := map[string][]byte{}
@@ -186,10 +169,6 @@ func readTree(t *testing.T, dir string) map[string][]byte {
 	return files
 }
 
-// compareTree checks got, generated files by their slash path, against
-// golden, which pins each as <path>.golden: a file that differs, a file with
-// no golden, and a golden no file has any more each fail. With -update it
-// rewrites golden from got instead.
 func compareTree(t *testing.T, got map[string][]byte, golden string) {
 	t.Helper()
 	var names []string

@@ -28,8 +28,9 @@ type Sender interface {
 // SMTP sends through a server, over TLS unless TLS says otherwise,
 // authenticating with the strongest mechanism both sides support.
 type SMTP struct {
-	Host               string
-	Port               int // 587 when zero
+	Host string
+	// 587 when zero
+	Port               int
 	Username, Password string
 	TLS                TLS
 }
@@ -48,7 +49,6 @@ const (
 	TLSNone
 )
 
-// implicitTLSPort is a variable so tests can serve it on an unprivileged port.
 var implicitTLSPort = 465
 
 func (s SMTP) Send(ctx context.Context, m Message) error {

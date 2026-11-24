@@ -30,11 +30,16 @@ const ContentType = "text/vnd.turbo-stream.html"
 // it. The functions below make the usual ones; any other (a custom
 // action) is an Action too.
 type Action struct {
-	Name    string          // "append", "replace", "remove", "refresh"...
-	Target  string          // the element's id
-	Targets string          // or a CSS selector, for every element it matches
-	Method  string          // "morph", for replace and update (Turbo 8)
-	Content templ.Component // what goes in its <template>; nil for none
+	// "append", "replace", "remove", "refresh"...
+	Name string
+	// the element's id
+	Target string
+	// or a CSS selector, for every element it matches
+	Targets string
+	// "morph", for replace and update (Turbo 8)
+	Method string
+	// what goes in its <template>; nil for none
+	Content templ.Component
 	// RequestID is a refresh's: the page whose request made the change
 	// (RequestID(r)) skips it, having its own answer.
 	RequestID string

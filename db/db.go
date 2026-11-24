@@ -6,6 +6,33 @@
 // read-only connections that WAL lets run beside the writer. On Postgres both
 // are the same pool. Queries say which they need: models.New(d.Read) for a
 // page, d.Tx for a change.
+//
+// A build with cgo, as an app's is, has SQLite compiled from C through
+// gantry's own small binding, made to answer as the translated build's
+// driver (modernc.org/sqlite) does: its arguments, scripts, times, values
+// and errors are that driver's, and the tests that pin them run on both
+// builds. It opens a connection without SQLite's own lock (database/sql
+// lets one goroutine at a time use a connection), has SQLite count no
+// allocations under a lock all connections share, and reads a row in one
+// call from Go to C. It needs SQLite compiled with the options an app's
+// Dockerfile sets (the build tags and CGO_CFLAGS in internal/pins), so an
+// app's SQL means the same in both builds; without them it doesn't start.
+// Any other build (the gantry CLI, a cgo build without the options) has
+// SQLite translated from C to Go, which has them all.
+//
+// On SQLite, every connection has WAL (readers never wait for the writer),
+// a busy timeout (a connection waits for a lock instead of failing),
+// foreign keys enforced, synchronous NORMAL and temp_store MEMORY (a
+// production image has no /tmp for SQLite's temporary files), and the read
+// pool's are query_only: a write there is an error. Each connection's
+// transactions are BEGIN IMMEDIATE: one takes
+// the write lock when it starts, not part-way through when it first writes.
+// Times are written in UTC, as "2006-01-02 15:04:05.999999999+00:00": text
+// that sorts in time order, and that SQLite's date functions read. Text
+// without a zone (Rails' "2006-01-02 15:04:05.000000") reads as UTC, and
+// sorts correctly among these. The same instant in the two formats isn't
+// the same text, though: compare such columns by range, or with
+// julianday(), not with =.
 package db
 
 import (
@@ -31,7 +58,7 @@ type DB struct {
 	Write  *sql.DB
 
 	versioner *versioner
-	url       string // for pg_dump (Schema, on Postgres)
+	url       string
 }
 
 // Querier is a pool or a transaction: what a query needs to run.
@@ -98,9 +125,6 @@ func (d *DB) Tx(ctx context.Context, fn func(*Tx) error) error {
 	if err != nil {
 		return err
 	}
-	// After a commit it does nothing. Before one, it frees the write pool,
-	// which a recovered panic would otherwise leave held: on SQLite, its one
-	// connection, and so every write after.
 	defer sqlTx.Rollback()
 	tx := &Tx{Tx: sqlTx}
 	if err := fn(tx); err != nil {
@@ -128,7 +152,6 @@ type Tx struct {
 // so f can't undo it; it logs its own failure.
 func (t *Tx) AfterCommit(f func()) { t.after = append(t.after, f) }
 
-// redact hides a URL's password, for errors and logs.
 func redact(url string) string {
 	scheme, rest, ok := strings.Cut(url, "://")
 	if !ok {
