@@ -267,7 +267,7 @@ func routed(testCase string) func(t *testing.T, dir, out string) {
 		if _, err := os.Stat(path); err != nil {
 			os.WriteFile(path, []byte(resourcesTest), 0o644)
 		}
-		edit(t, path, "\t\t// cases\n", testCase[1:]+"\n\t\t// cases\n")
+		edit(t, path, "\t}{\n", "\t}{\n"+testCase[1:]+"\n")
 	}
 }
 
@@ -339,16 +339,14 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-// Each resource's pages, as a person uses them, so its queries run.
 func TestResources(t *testing.T) {
 	for _, tc := range []struct {
 		path           string
 		create, update map[string]string
-		listed         []string          // the new record, in the list
-		editing        map[string]string // its edit form's values
-		blank          map[string]string // a form missing what's required
+		listed         []string
+		editing        map[string]string
+		blank          map[string]string
 	}{
-		// cases
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			b := testkit.Browser(t, handler(t))
