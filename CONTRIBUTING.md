@@ -78,13 +78,16 @@ versions [`ci.yml`](.github/workflows/ci.yml) pins.
 golangci-lint's linters ([`.golangci.yml`](.golangci.yml)) are staticcheck's
 checks (`staticcheck.conf`'s, which gopls reads) and one for each bug class
 gantry has had: errors dropped (errcheck), `rows.Err` and `Close`
-(rowserrcheck, sqlclosecheck) and response bodies left open (bodyclose), none
-of them in tests yet, and three calls with one right place (forbidigo).
+(rowserrcheck, sqlclosecheck) and response bodies left open (bodyclose), with
+`rowserrcheck`, `sqlclosecheck` and `bodyclose` on tests too, and three calls
+with one right place (forbidigo).
 GANTRY_ENV is read by `env.Development` and `env.Test` (`internal/env`),
 forwarding headers by `web/proxies.go`, and HTTP goes through a client with a
 timeout, never `http.DefaultClient`.
-depguard keeps `devcheck` out of the packages an app links (#34) and holds
-`bench/feed` to an app's import boundaries (#33). An exception names the
+depguard keeps `devcheck` out of the packages an app links (#34), and new apps'
+own `.golangci.yml` (including `bench/feed`'s) holds an app to its import
+boundaries (#33) alongside `errcheck`, `bodyclose`, `rowserrcheck`,
+`sqlclosecheck` and `staticcheck`. An exception names the
 file, the linter and why, in `.golangci.yml` or a `//nolint:<linter> // why`.
 
 `bin/ci` runs those checks here, step by step under the workflow's names, and

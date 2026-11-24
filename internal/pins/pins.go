@@ -9,6 +9,8 @@ const (
 	Go = "1.27.4"
 	// Templ is go.mod's templ, so an app generates with the one gantry builds with.
 	Templ = "v0.3.1118"
+	// GolangciLint is the golangci-lint release CI and generated apps' CI run.
+	GolangciLint = "v2.15.0"
 	// GolangImage is the toolchain stage's base: gantry's (bin/go) and an app's.
 	// The images are tag@digest, the multi-arch index's: the digest is what's
 	// pulled. They're bumped by hand, with their copies (CONTRIBUTING.md).

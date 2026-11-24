@@ -1,0 +1,61 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - bodyclose
+    - depguard
+    - errcheck
+    - rowserrcheck
+    - sqlclosecheck
+    - staticcheck
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - (net/http.ResponseWriter).Write
+        - (*database/sql.Tx).Rollback
+    staticcheck:
+      checks: ["all", "-QF*", "-ST1000", "-ST1003", "-ST1005", "-ST1016", "-ST1020", "-ST1021", "-ST1022", "-ST1023"]
+    depguard:
+      rules:
+        app-models:
+          files: ["**/app/models/**"]
+          deny:
+            - pkg: net/http
+              desc: models know the database, not requests; take values from the controller
+            - pkg: github.com/scttymn/gantry/web
+              desc: models know the database, not requests; take values from the controller
+            - pkg: github.com/a-h/templ
+              desc: models return values that views render, not views
+            - pkg: feed/app
+              desc: models are the bottom layer and import no other app package
+        app-services:
+          files: ["**/app/services/**"]
+          list-mode: lax
+          deny:
+            - pkg: github.com/scttymn/gantry/web
+              desc: services are called by resources, not by requests; take values from the controller
+            - pkg: feed/app
+              desc: services may import models and shared, never a resource
+          allow:
+            - feed/app/models
+            - feed/app/shared
+            - feed/app/services
+        app-shared:
+          files: ["**/app/shared/**"]
+          list-mode: lax
+          deny:
+            - pkg: feed/app
+              desc: shared code is imported by resources, never the other way
+          allow:
+            - feed/app/models
+            - feed/app/shared
+            - feed/app/services
+  exclusions:
+    presets: [std-error-handling]
+    rules:
+      - path: _test\.go$
+        linters: [errcheck]
+      - linters: [errcheck]
+        source: JSON\(w, status,

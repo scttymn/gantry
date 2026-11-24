@@ -72,13 +72,19 @@ func TestTxPanicRollsBack(t *testing.T) {
 		t.Fatalf("the next write: %v", err)
 	}
 	var bodies []string
-	rows, _ := d.Read.QueryContext(ctx, `SELECT body FROM notes`)
+	rows, err := d.Read.QueryContext(ctx, `SELECT body FROM notes`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
 	for rows.Next() {
 		var b string
 		rows.Scan(&b)
 		bodies = append(bodies, b)
 	}
-	rows.Close()
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
 	if len(bodies) != 1 || bodies[0] != "kept" {
 		t.Errorf("notes are %q, want only the second write's", bodies)
 	}

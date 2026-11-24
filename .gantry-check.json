@@ -5,6 +5,21 @@
       "rule": "raw-html",
       "file": "images/server.go",
       "reason": "Img writes the <img> tag itself, so a photo is one component, and imgHTML escapes every value in it with templ.EscapeString (#33)."
+    },
+    {
+      "rule": "js-timer",
+      "file": "mail/js/inbox.js",
+      "reason": "The development mail inbox polls /updates with backoff and request timeouts outside Turbo (#112)."
+    },
+    {
+      "rule": "raw-dom-html",
+      "file": "mail/js/inbox.js",
+      "reason": "The development mail inbox swaps same-origin server-escaped template fragments returned by mail.Inbox (#112)."
+    },
+    {
+      "rule": "js-timer",
+      "file": "web/reload.js",
+      "reason": "web.Reload uses exponential backoff to reconnect EventSource while the dev server restarts (#112)."
     }
   ]
 }

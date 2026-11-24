@@ -190,7 +190,11 @@ func TestHTTP(t *testing.T) {
 func TestHTTPUnscripted(t *testing.T) {
 	var err error
 	r := failures(t, func(tb testing.TB) {
-		_, err = HTTP(tb).Client().Get("https://evil.example.com/steal")
+		var resp *http.Response
+		resp, err = HTTP(tb).Client().Get("https://evil.example.com/steal")
+		if resp != nil {
+			resp.Body.Close()
+		}
 		runtime.Goexit()
 	})
 	if err == nil || !errors.Is(err, ErrUnscripted) || len(r.errors) != 1 || !strings.Contains(r.errors[0], "GET https://evil.example.com/steal") {
@@ -200,7 +204,11 @@ func TestHTTPUnscripted(t *testing.T) {
 		fake := HTTP(tb)
 		fake.On("GET", "https://api.example.com/v1/dns", 200, "{}")
 		req, _ := http.NewRequest("DELETE", "https://api.example.com/v1/dns", nil)
-		_, err = fake.Client().Do(req)
+		var resp *http.Response
+		resp, err = fake.Client().Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
 		runtime.Goexit()
 	})
 	if !errors.Is(err, ErrUnscripted) || len(r.errors) != 1 {

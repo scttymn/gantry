@@ -64,6 +64,10 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 			{"internal/pins/pins.go", `\bTempl\s*=\s*"([^"]*)"`},
 			{"Dockerfile", `templ/cmd/templ@(\S+)`},
 		}},
+		{"golangci-lint", GolangciLint, "internal/pins/pins.go (GolangciLint)", []handCopy{
+			{".github/workflows/ci.yml", `golangci-lint/v2/cmd/golangci-lint@(v[\d.]+)`},
+			{"bin/ci", `golangci-lint/v2/cmd/golangci-lint@(v[\d.]+)`},
+		}},
 		{"Go's image", GolangImage, "internal/pins/pins.go (GolangImage)", []handCopy{
 			{"Dockerfile", `(?m)^FROM (golang:\S+)`},
 		}},
