@@ -3,29 +3,65 @@
 # multi-arch JRE container and a SHA-256-verified tla2tools.jar cached in
 # Gantry's shared cache directory.
 #
-#   bin/tlc          model-check every spec/*.tla
-#   bin/tlc --list   name them, one a line
+#   bin/tlc               model-check every spec/*.tla
+#   bin/tlc SPEC...       model-check only the named spec/*.tla files
+#   bin/tlc --list        name them, one a line
+#
+# A spec's configs are spec/<Name>.cfg and every spec/<Name>.*.cfg, all run
+# in one container. Each one's first line says what TLC must find:
+#
+#   \* expect: pass                 no error: TLC exits 0
+#   \* expect: violates <Invariant> TLC exits 12 and reports "Invariant
+#                                   <Invariant> is violated"
+#
+# A control config (a Mut* constant that puts a fix back) or a reachability
+# witness (Reach*) expects its invariant violated, so a pass that checks
+# nothing fails. bin/tlc prints a line per config and fails on a config that
+# doesn't do what it expects, one without a valid expect line, or one whose
+# spec isn't there. It parses with bash's built-ins only.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 list=
-case "${1:-}" in
-	"") ;;
-	--list) list=1 ;;
-	*) echo "usage: bin/tlc [--list]" >&2; exit 2 ;;
-esac
-
 specs=()
-for spec in spec/*.tla; do
-	[ -f "$spec" ] || continue
-	specs+=("$spec")
-done
+if [ "${1:-}" = "--list" ]; then
+	[ $# -eq 1 ] || { echo "usage: bin/tlc [--list | SPEC...]" >&2; exit 2; }
+	list=1
+elif [ $# -gt 0 ]; then
+	for arg in "$@"; do
+		case "$arg" in
+			-*) echo "usage: bin/tlc [--list | SPEC...]" >&2; exit 2 ;;
+		esac
+		[ -f "$arg" ] || { echo "bin/tlc: spec not found: $arg" >&2; exit 1; }
+		specs+=("$arg")
+	done
+fi
+
+if [ "${#specs[@]}" -eq 0 ]; then
+	for spec in spec/*.tla; do
+		[ -f "$spec" ] || continue
+		specs+=("$spec")
+	done
+fi
 [ "${#specs[@]}" -gt 0 ] || { echo "bin/tlc: no spec/*.tla files found" >&2; exit 1; }
 
 if [ -n "$list" ]; then
 	printf '%s\n' "${specs[@]}"
 	exit
 fi
+
+expectation='^\\\* expect: (pass|violates [A-Za-z_][A-Za-z0-9_]*)$'
+bad=0
+for cfg in spec/*.cfg; do
+	[ -f "$cfg" ] || continue
+	name=${cfg#spec/}
+	[ -f "spec/${name%%.*}.tla" ] || { echo "bin/tlc: $cfg has no spec (spec/${name%%.*}.tla)" >&2; bad=1; }
+	first=
+	IFS= read -r first <"$cfg" || true
+	[[ $first =~ $expectation ]] ||
+		{ echo "bin/tlc: $cfg's first line isn't \\* expect: pass or \\* expect: violates <Invariant>: $first" >&2; bad=1; }
+done
+[ "$bad" = 0 ] || exit 1
 
 tla_version=v1.7.4
 tla_sha256=936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88
@@ -59,16 +95,75 @@ if [ ! -f "$jar" ] || ! verify_sha256 "$jar"; then
 	trap - EXIT
 fi
 
+# In the container: each config in turn, between lines that say which it is,
+# how it ended and when, each with a state directory of its own. Its shell,
+# not this one, expands the variables.
+# shellcheck disable=SC2016
+run='jar=$1 tla=$2; shift 2
+for cfg; do
+	echo "@@ start $cfg $(date +%s%N)"
+	java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
+		-deadlock -cleanup -metadir "/tmp/states/$cfg" -workers auto -config "/spec/$cfg" "/spec/$tla" 2>&1
+	echo "@@ end $cfg $? $(date +%s%N)"
+done'
+
+out=$(mktemp) container=gantry-tlc-$$
+# A timeout or ^C ends the docker client, not the container: remove it.
+trap 'timeout 30 docker rm -f "$container" >/dev/null 2>&1 || true; rm -f "$out"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+failed=0 total=0
 for spec in "${specs[@]}"; do
 	base=$(basename "$spec" .tla)
-	cfg="spec/$base.cfg"
-	[ -f "$cfg" ] || { echo "bin/tlc: missing $cfg for $spec" >&2; exit 1; }
-	echo "== TLC $spec"
-	timeout 300 docker run --rm \
+	cfgs=()
+	for cfg in "spec/$base.cfg" "spec/$base".*.cfg; do
+		if [ -f "$cfg" ]; then cfgs+=("${cfg#spec/}"); fi
+	done
+	[ "${#cfgs[@]}" -gt 0 ] || { echo "bin/tlc: missing spec/$base.cfg for $spec" >&2; exit 1; }
+	echo "== TLC $spec (${#cfgs[@]} configs)"
+	status=0
+	timeout 300 docker run --rm --init --name "$container" \
 		-v "$PWD/spec:/spec:ro" \
 		-v "$cache:/cache:ro" \
 		-w /tmp \
 		"$image" \
-		java -XX:+UseParallelGC -cp "/cache/tla2tools-$tla_version.jar" tlc2.TLC \
-		-deadlock -cleanup -metadir /tmp/tlc-states -workers auto -config "/spec/$base.cfg" "/spec/$base.tla"
+		sh -c "$run" tlc "/cache/tla2tools-$tla_version.jar" "$base.tla" "${cfgs[@]}" >"$out" &
+	wait $! || status=$?
+	if [ "$status" != 0 ]; then
+		timeout 30 docker rm -f "$container" >/dev/null 2>&1 || true
+		echo "bin/tlc: TLC's container for $spec exited $status" >&2
+		failed=1
+	fi
+
+	cfg='' text=() states='?' violated='' began=0
+	while IFS= read -r line; do
+		if [[ $line =~ ^@@\ start\ ([^ ]+)\ ([0-9]+)$ ]]; then
+			cfg=${BASH_REMATCH[1]} began=${BASH_REMATCH[2]} text=() states='?' violated=''
+			continue
+		fi
+		if [[ $line =~ ^@@\ end\ ([^ ]+)\ ([0-9]+)\ ([0-9]+)$ ]]; then
+			code=${BASH_REMATCH[2]} tenths=$(((BASH_REMATCH[3] - began) / 100000000))
+			total=$((total + tenths))
+			IFS= read -r first <"spec/$cfg"
+			want=${first#'\* expect: '}
+			got="exit $code"
+			if [ "$code" = 0 ]; then
+				got=pass
+			elif [ "$code" = 12 ] && [ -n "$violated" ]; then
+				got="violates $violated"
+			fi
+			mark=ok
+			[ "$got" = "$want" ] || { mark=MISMATCH; failed=1; }
+			printf '%-8s %-44s %-36s %-36s %12s states %4d.%ds\n' "$mark" "$cfg" "expect $want" "got $got" "$states" $((tenths / 10)) $((tenths % 10))
+			[ "$mark" = ok ] || printf '    %s\n' "${text[@]}"
+			cfg=
+			continue
+		fi
+		text+=("$line")
+		if [[ $line =~ ([0-9]+)\ distinct\ states\ found ]]; then states=${BASH_REMATCH[1]}; fi
+		if [[ $line =~ Invariant\ ([A-Za-z_0-9]+)\ is\ violated ]]; then violated=${BASH_REMATCH[1]}; fi
+	done <"$out"
+	[ -z "$cfg" ] || { echo "bin/tlc: TLC stopped in $cfg" >&2; printf '    %s\n' "${text[@]}"; failed=1; }
 done
+printf 'bin/tlc: %d.%ds in TLC\n' $((total / 10)) $((total % 10))
+exit "$failed"

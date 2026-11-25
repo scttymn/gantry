@@ -138,16 +138,28 @@ The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plan
   `images`, `devcheck` and `internal/featuremap` carry fuzz targets. `bin/ci` runs
   each for `-fuzztime=1s`; for a longer local run, pass e.g.
   `bin/go go test -fuzz=^FuzzPageCache$ -fuzztime=30s ./web`.
-- **TLA+ specifications (`spec/`):** `spec/Jobs.tla` (fenced settles, lease expiry,
-  bounded retries, atomic recurring ticks), `spec/PageCache.tla` (no personalized
+- **TLA+ specifications (`spec/`):** `spec/Jobs.tla` (the queue as `jobs` runs
+  it: fenced claims and settles, a failed settle saved on the heartbeat, a
+  process's own orphaned claims put back, crash recovery and its bound,
+  shutdown, failed and ambiguous commits), `spec/Ticks.tla` (a recurring job's
+  ticks against maintenance), `spec/PageCache.tla` (no personalized
   entries stored, no cross-visitor leak, no stale version served) and
   `spec/Auth.tla` (single-use first-install setup, no unverified social takeover,
   bounded concurrent reset sends, no revoked session active). Run `bin/tlc` to
-  model-check every `spec/*.tla` (with its paired `spec/*.cfg`) in the pinned
+  model-check every `spec/*.tla`, or `bin/tlc spec/Jobs.tla` for one, each
+  with `spec/<Name>.cfg` and every `spec/<Name>.*.cfg`, in the pinned
   JRE container (`internal/pins.TemurinImage`) using the SHA-256-verified
-  `tla2tools.jar` (`internal/pins.TLAVersion` / `TLASHA256`). Adding a new
-  `spec/<Name>.tla` and `spec/<Name>.cfg` is picked up automatically by `bin/tlc`
-  and CI.
+  `tla2tools.jar` (`internal/pins.TLAVersion` / `TLASHA256`). A config's first
+  line says what TLC must find: `\* expect: pass`, or `\* expect: violates
+  <Invariant>` for a control (`<Name>.Mut<Fix>.cfg` sets a `Mut*` constant
+  that puts a fix back, and the invariant guarding it must fail) or a
+  reachability witness (`<Name>.Reach<State>.cfg`: the state is reached, so
+  a pass isn't vacuous). `bin/tlc` fails on a config that does otherwise, and
+  `TestSpecConfigsSayWhatTheyExpect` on one without a valid expect line or
+  its spec. Keep every config small (the whole run takes under 20 s on a
+  24-core machine); a longer exploration goes in its spec's header as a
+  command, not in a config. A new `spec/<Name>.tla` and its configs are
+  picked up automatically by `bin/tlc` and CI.
 
 ## Features and Gantry Strict
 
