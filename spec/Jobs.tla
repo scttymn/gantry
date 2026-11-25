@@ -21,7 +21,7 @@
 \* Assumptions: one discrete clock for every host; every live process beats
 \* within HB (< Dead) and puts back an orphaned claim at its next beat; Grace
 \* is under one tick (5 s against Heartbeat's 60 s); limits, discards and
-\* Drain are left out (TestLimit*, TestSettleFails). The row may have
+\* Drain are left out (TestLimits, TestSettleFails). The row may have
 \* crashed before the model starts (crashes in Init), so one crash reaches
 \* both the put-back and the failure.
 \*
