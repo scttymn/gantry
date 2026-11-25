@@ -4,10 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/scttymn/gantry/db"
 )
 
 func TestCrashLoopFailsAfterMaxCrashes(t *testing.T) { onEngines(t, testCrashLoopFailsAfterMaxCrashes) }
@@ -126,4 +129,25 @@ func TestTickNotRerunAtKeepBoundaryControl(t *testing.T) {
 			t.Errorf("maintenance before the stalled tick read its clock: the 13:00 sweep ran %d times; want 1", runs.Load())
 		}
 	})
+}
+
+func TestNewRejectsHeartbeatAtOrPastDead(t *testing.T) {
+	ctx := context.Background()
+	d, err := db.Open(ctx, "sqlite://"+filepath.Join(t.TempDir(), "jobs.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	for name, o := range map[string]Options{
+		"Heartbeat at Dead":               {Heartbeat: time.Minute, Dead: time.Minute},
+		"Heartbeat past the default Dead": {Heartbeat: 6 * time.Minute},
+		"the default Heartbeat past Dead": {Dead: 30 * time.Second},
+	} {
+		if _, err := New(ctx, d, o); err == nil {
+			t.Errorf("%s: New took Heartbeat %v and Dead %v; a process would be dead between its beats", name, o.Heartbeat, o.Dead)
+		}
+	}
+	if _, err := New(ctx, d, Options{Heartbeat: time.Minute, Dead: 2 * time.Minute}); err != nil {
+		t.Errorf("Heartbeat under Dead: %v", err)
+	}
 }

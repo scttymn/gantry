@@ -51,7 +51,7 @@ type Options struct {
 	Poll time.Duration
 	// on shutdown, what running jobs get before their contexts end: 5 s
 	Grace time.Duration
-	// how often this process says it's alive: 60 s
+	// how often this process says it's alive: 60 s, and shorter than Dead
 	Heartbeat time.Duration
 	// a process silent this long crashed, and its jobs go back (or fail, the
 	// third time their process died): 5 min
@@ -81,7 +81,8 @@ const (
 
 var errCrashed = fmt.Errorf("its process died %d times", maxCrashes)
 
-// New is a queue set on d, its tables brought up to date.
+// New is a queue set on d, its tables brought up to date. It refuses a
+// Heartbeat that isn't shorter than Dead.
 func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 	if o.Queues == nil {
 		o.Queues = map[string]int{"default": 3}
@@ -96,6 +97,9 @@ func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 		if *p == 0 {
 			*p = v
 		}
+	}
+	if o.Heartbeat >= o.Dead {
+		return nil, fmt.Errorf("jobs: Heartbeat (%s) must be shorter than Dead (%s): a process would look dead between its beats, and its running jobs go to another", o.Heartbeat, o.Dead)
 	}
 	engine := "sqlite"
 	if d.Engine == db.Postgres {
