@@ -38,12 +38,15 @@
 \* crashed before the model starts (crashes in Init), so one crash reaches
 \* both the put-back and the failure.
 \*
-\* A longer run, not in CI: three processes of one slot, two crashes from a
-\* clean row (MaxTime 7). It passed with 32,616,691 distinct states in 85 s on
-\* 24 cores:
+\* A longer run, not in CI: three processes of one slot, Retry.Attempts 2,
+\* MaxTime 6 (a crash recovery, then more claims, failures and retries). On
+\* this model it passed with 137,031,343 distinct states in 7 min 35 s on 24
+\* cores. With MaxTime 7 (two crashes from a clean row) it ran 9 min, to
+\* 191,586,915 distinct states and depth 37, with no violation, unfinished:
 \*   docker run --rm -v "$PWD/spec:/spec:ro" -v ~/.cache/gantry:/cache:ro <bin/tlc's image> sh -c '
-\*     sed -e "s/MaxTime = 4/MaxTime = 7/" -e "s/Procs = {a, b}/Procs = {a, b, c}/" \
-\*       -e "s/Slots = {1, 2}/Slots = {1}/" /spec/Jobs.cfg >/tmp/Long.cfg && cp /spec/Jobs.tla /tmp &&
+\*     sed -e "s/MaxTime = 4/MaxTime = 6/" -e "s/MaxAttempts = 1/MaxAttempts = 2/" \
+\*       -e "s/Procs = {a, b}/Procs = {a, b, c}/" -e "s/Slots = {1, 2}/Slots = {1}/" \
+\*       /spec/Jobs.cfg >/tmp/Long.cfg && cp /spec/Jobs.tla /tmp &&
 \*     java -cp /cache/tla2tools-v1.7.4.jar tlc2.TLC -deadlock -workers auto -config /tmp/Long.cfg /tmp/Jobs.tla'
 EXTENDS Naturals, FiniteSets, TLC
 
