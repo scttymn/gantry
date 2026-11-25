@@ -38,7 +38,7 @@
 \* clean row (MaxTime 7). It passed with 32,616,691 distinct states in 85 s on
 \* 24 cores:
 \*   docker run --rm -v "$PWD/spec:/spec:ro" -v ~/.cache/gantry:/cache:ro <bin/tlc's image> sh -c '
-\*     sed -e "s/MaxTime = 5/MaxTime = 7/" -e "s/Procs = {a, b}/Procs = {a, b, c}/" \
+\*     sed -e "s/MaxTime = 4/MaxTime = 7/" -e "s/Procs = {a, b}/Procs = {a, b, c}/" \
 \*       -e "s/Slots = {1, 2}/Slots = {1}/" /spec/Jobs.cfg >/tmp/Long.cfg && cp /spec/Jobs.tla /tmp &&
 \*     java -cp /cache/tla2tools-v1.7.4.jar tlc2.TLC -deadlock -workers auto -config /tmp/Long.cfg /tmp/Jobs.tla'
 EXTENDS Naturals, FiniteSets, TLC
@@ -97,8 +97,11 @@ Start(p) ==
     /\ proc' = [proc EXCEPT ![p] = "up"] /\ row' = [row EXCEPT ![p] = TRUE] /\ hb' = [hb EXCEPT ![p] = now]
     /\ UNCHANGED <<rowVars, stalled, wVars, fly, pend, now, history>>
 
+\* Only a stall with something in flight can end in a stale settle.
 Stall(p) ==
-    /\ Stalls /\ Live(p) /\ \A q \in Procs : stalled[q] = "no" /\ stalled' = [stalled EXCEPT ![p] = "yes"]
+    /\ Stalls /\ Live(p) /\ \A q \in Procs : stalled[q] = "no"
+    /\ (\E s \in Slots : pc[<<p, s>>] # "idle") \/ pend[p] # {}
+    /\ stalled' = [stalled EXCEPT ![p] = "yes"]
     /\ UNCHANGED <<rowVars, proc, row, hb, wVars, fly, pend, now, history>>
 Resume(p) ==
     /\ stalled[p] = "yes" /\ stalled' = [stalled EXCEPT ![p] = "was"]
