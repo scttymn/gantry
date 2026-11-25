@@ -222,18 +222,22 @@ func orphan(t *testing.T, d *db.DB, work *Job[string], by string, at time.Time) 
 func TestStopReleasesOwnOrphanedClaim(t *testing.T) { onEngines(t, testStopReleasesOwnOrphanedClaim) }
 
 func testStopReleasesOwnOrphanedClaim(t *testing.T, engine string) {
-	ctx := context.Background()
-	q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
-		Heartbeat: time.Minute, Dead: 2 * time.Minute})
-	work := Define(q, "work", func(ctx context.Context, s string) error { return nil }, Opts[string]{})
-	runCtx, stop := context.WithCancel(ctx)
-	stopped := make(chan error, 1)
-	go func() { stopped <- q.Run(runCtx) }()
-	orphan(t, d, work, process(t, d), time.Now().UTC())
-	stop()
-	<-stopped
-	if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "ready" || p[0].Attempts != 0 {
-		t.Errorf("Run stopped within a Heartbeat of a claim of its own that no worker ran: %+v; want it put back, its attempt undone, not left for another process to count as a crash", p)
+	for name, ahead := range map[string]time.Duration{"just claimed": 0, "claimed before the clock stepped back": time.Hour} {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
+				Heartbeat: time.Minute, Dead: 2 * time.Minute})
+			work := Define(q, "work", func(ctx context.Context, s string) error { return nil }, Opts[string]{})
+			runCtx, stop := context.WithCancel(ctx)
+			stopped := make(chan error, 1)
+			go func() { stopped <- q.Run(runCtx) }()
+			orphan(t, d, work, process(t, d), time.Now().UTC().Add(ahead))
+			stop()
+			<-stopped
+			if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "ready" || p[0].Attempts != 0 {
+				t.Errorf("Run stopped with a claim of its own that no worker ran, claimed_at %v from now: %+v; want it put back, its attempt undone, not left for another process to count as a crash", ahead, p)
+			}
+		})
 	}
 }
 

@@ -368,9 +368,13 @@ func (q *Queue) resettle(ctx context.Context, t *tracker) {
 
 func (q *Queue) release(ctx context.Context, process string, t *tracker, upTo time.Time) error {
 	ids := t.ids()
-	args := []any{process, upTo}
+	args := []any{process}
 	query := `UPDATE gantry_jobs SET state = 'ready', attempts = attempts - 1, claimed_by = '', claimed_at = NULL
-		WHERE state = 'claimed' AND claimed_by = $1 AND claimed_at <= $2`
+		WHERE state = 'claimed' AND claimed_by = $1`
+	if !upTo.IsZero() {
+		args = append(args, upTo)
+		query += ` AND claimed_at <= $2`
+	}
 	if len(ids) > 0 {
 		in := ""
 		for i := range ids {
@@ -533,7 +537,7 @@ func (q *Queue) Run(ctx context.Context) error {
 	endBeats()
 	<-beating
 	q.resettle(bg, t)
-	if err := q.release(bg, process, t, q.now()); err != nil {
+	if err := q.release(bg, process, t, time.Time{}); err != nil {
 		q.o.Log.Error("jobs: putting back claims", "err", err)
 	}
 	t.hooks.Wait()
