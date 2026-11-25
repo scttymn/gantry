@@ -11,6 +11,14 @@
 // name, not the Go type, identifies it, so renaming code doesn't strand the
 // jobs queued. Defaults are Rails': no retries unless asked, three workers
 // a queue, finished jobs kept a day.
+//
+// A job runs at least once. When a process dies running jobs (a kill, the
+// OOM killer, a panic outside a job), another process puts them back once
+// the dead one has been silent for Dead. A job whose process died 3 times
+// fails instead ("its process died 3 times"), and its OnExhausted runs: a job
+// that kills its process can't take down one worker after another forever.
+// A crash counts against every job the dead process was running, and never
+// against Retry.Attempts.
 package jobs
 
 import (
@@ -45,7 +53,8 @@ type Options struct {
 	Grace time.Duration
 	// how often this process says it's alive: 60 s
 	Heartbeat time.Duration
-	// a process silent this long crashed, and its jobs go back: 5 min
+	// a process silent this long crashed, and its jobs go back (or fail, the
+	// third time their process died): 5 min
 	Dead time.Duration
 	// how long finished jobs are kept: a day
 	Keep time.Duration
@@ -60,7 +69,12 @@ type Queue struct {
 	defs  map[string]runner
 	recur []*recurring
 	wake  map[string]chan struct{}
+	hooks sync.WaitGroup
 }
+
+const maxCrashes = 3
+
+var errCrashed = fmt.Errorf("its process died %d times", maxCrashes)
 
 // New is a queue set on d, its tables brought up to date.
 func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
@@ -148,7 +162,9 @@ type Opts[A any] struct {
 	// the job's context ends after it; none by default
 	Timeout time.Duration
 	Limit   *Limit[A]
-	// OnExhausted runs when the last attempt fails (Rails' retry_on block).
+	// OnExhausted runs when the last attempt fails (Rails' retry_on block),
+	// and when the job's process died 3 times running it: then in whichever
+	// process puts it away, and only if that process defines the job.
 	OnExhausted func(ctx context.Context, a A, err error)
 }
 
@@ -315,10 +331,10 @@ func (q *Queue) list(ctx context.Context, where string) ([]Entry, error) {
 	return out, rows.Err()
 }
 
-// Retry puts a failed job back in the queue, to run now with its attempts
-// counted afresh.
+// Retry puts a failed job back in the queue, to run now with its attempts,
+// and the times its process died, counted afresh.
 func (q *Queue) Retry(ctx context.Context, id int64) error {
-	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, error = '', finished_at = NULL, run_at = $1
+	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, crashes = 0, error = '', finished_at = NULL, run_at = $1
 		WHERE id = $2 AND state = 'failed'`, q.now(), id)
 	if err != nil {
 		return err

@@ -359,6 +359,7 @@ func (q *Queue) Run(ctx context.Context) error {
 		endJobs()
 		<-done
 	}
+	q.hooks.Wait()
 	return nil
 }
 
@@ -370,13 +371,20 @@ func (q *Queue) beat(ctx context.Context, process string) error {
 
 func (q *Queue) maintain(ctx context.Context) error {
 	now := q.now()
-	return q.d.Tx(ctx, func(tx *db.Tx) error {
+	var failed []claimed
+	err := q.d.Tx(ctx, func(tx *db.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM gantry_job_processes WHERE heartbeat_at < $1`, now.Add(-q.o.Dead)); err != nil {
+			return err
+		}
+		var err error
+		if failed, err = q.failCrashed(ctx, tx, now); err != nil {
+			return err
+		}
 		for _, stmt := range []struct {
 			query string
 			args  []any
 		}{
-			{`DELETE FROM gantry_job_processes WHERE heartbeat_at < $1`, []any{now.Add(-q.o.Dead)}},
-			{`UPDATE gantry_jobs SET state = 'ready', attempts = attempts - 1, claimed_by = '', claimed_at = NULL
+			{`UPDATE gantry_jobs SET state = 'ready', attempts = attempts - 1, crashes = crashes + 1, claimed_by = '', claimed_at = NULL
 				WHERE state = 'claimed' AND claimed_by <> 'drain' AND claimed_by NOT IN (SELECT id FROM gantry_job_processes)
 				AND claimed_at < $1`, []any{now.Add(-q.o.Dead)}},
 			{`DELETE FROM gantry_jobs WHERE state = 'finished' AND finished_at < $1`, []any{now.Add(-q.o.Keep)}},
@@ -388,4 +396,40 @@ func (q *Queue) maintain(ctx context.Context) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	bg := context.WithoutCancel(ctx)
+	for _, c := range failed {
+		q.o.Log.Error("job failed", "job", c.Name, "id", c.ID, "err", errCrashed)
+		q.mu.Lock()
+		r, ok := q.defs[c.Name]
+		q.mu.Unlock()
+		if ok {
+			q.hooks.Go(func() { r.exhausted(bg, c.Args, errCrashed) })
+		}
+	}
+	return nil
+}
+
+func (q *Queue) failCrashed(ctx context.Context, tx *db.Tx, now time.Time) ([]claimed, error) {
+	rows, err := tx.QueryContext(ctx, `UPDATE gantry_jobs SET state = 'failed', attempts = attempts - 1, crashes = crashes + 1, error = $1, finished_at = $2
+		WHERE state = 'claimed' AND claimed_by <> 'drain' AND claimed_by NOT IN (SELECT id FROM gantry_job_processes)
+		AND claimed_at < $3 AND crashes + 1 >= $4
+		RETURNING id, name, args`, errCrashed.Error(), now, now.Add(-q.o.Dead), maxCrashes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []claimed
+	for rows.Next() {
+		var c claimed
+		var raw string
+		if err := rows.Scan(&c.ID, &c.Name, &raw); err != nil {
+			return nil, err
+		}
+		c.Args = []byte(raw)
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
