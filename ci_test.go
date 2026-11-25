@@ -83,6 +83,7 @@ case "$*" in *tlc2.TLC*)
 		read -r expect <"spec/$cfg"
 		[ -z "${FAKE_TLC_PASSES:-}" ] || expect=pass
 		echo "@@ start $cfg 1000000000"
+		[ -z "${FAKE_TLC_SILENT:-}" ] || { echo "@@ end $cfg 255 1500000000"; continue; }
 		case "$expect" in
 		*violates*) echo "Error: Invariant ${expect##* } is violated."; echo "9 states generated, 5 distinct states found, 2 states left on queue."; echo "@@ end $cfg 12 1500000000" ;;
 		*) echo "7 states generated, 5 distinct states found, 0 states left on queue."; echo "@@ end $cfg 0 1500000000" ;;
@@ -432,6 +433,12 @@ func TestBinTLC(t *testing.T) {
 		out, _, err := tlc(t, nil, []string{"FAKE_TLC_PASSES=1"})
 		if err == nil || !regexp.MustCompile(`(?m)^MISMATCH +M\.MutX\.cfg +expect violates Safe +got pass`).MatchString(out) {
 			t.Errorf("bin/tlc with a control that found nothing: err %v\n%s", err, out)
+		}
+	})
+	t.Run("TLC that prints nothing", func(t *testing.T) {
+		out, _, err := tlc(t, nil, []string{"FAKE_TLC_SILENT=1"})
+		if err == nil || !regexp.MustCompile(`(?m)^MISMATCH +M\.cfg +expect pass +got exit 255`).MatchString(out) || !strings.Contains(out, "in TLC") {
+			t.Errorf("bin/tlc whose TLC said nothing: err %v\n%s", err, out)
 		}
 	})
 	t.Run("a config with no expect line", func(t *testing.T) {

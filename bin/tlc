@@ -135,10 +135,10 @@ for spec in "${specs[@]}"; do
 		failed=1
 	fi
 
-	cfg='' text=() states='?' violated='' began=0
+	cfg='' text='' states='?' violated='' began=0
 	while IFS= read -r line; do
 		if [[ $line =~ ^@@\ start\ ([^ ]+)\ ([0-9]+)$ ]]; then
-			cfg=${BASH_REMATCH[1]} began=${BASH_REMATCH[2]} text=() states='?' violated=''
+			cfg=${BASH_REMATCH[1]} began=${BASH_REMATCH[2]} text='' states='?' violated=''
 			continue
 		fi
 		if [[ $line =~ ^@@\ end\ ([^ ]+)\ ([0-9]+)\ ([0-9]+)$ ]]; then
@@ -155,15 +155,15 @@ for spec in "${specs[@]}"; do
 			mark=ok
 			[ "$got" = "$want" ] || { mark=MISMATCH; failed=1; }
 			printf '%-8s %-44s %-36s %-36s %12s states %4d.%ds\n' "$mark" "$cfg" "expect $want" "got $got" "$states" $((tenths / 10)) $((tenths % 10))
-			[ "$mark" = ok ] || printf '    %s\n' "${text[@]}"
-			cfg=
+			[ "$mark" = ok ] || printf '%s' "$text"
+			cfg=''
 			continue
 		fi
-		text+=("$line")
+		text+="    $line"$'\n'
 		if [[ $line =~ ([0-9]+)\ distinct\ states\ found ]]; then states=${BASH_REMATCH[1]}; fi
 		if [[ $line =~ Invariant\ ([A-Za-z_0-9]+)\ is\ violated ]]; then violated=${BASH_REMATCH[1]}; fi
 	done <"$out"
-	[ -z "$cfg" ] || { echo "bin/tlc: TLC stopped in $cfg" >&2; printf '    %s\n' "${text[@]}"; failed=1; }
+	[ -z "$cfg" ] || { echo "bin/tlc: TLC stopped in $cfg" >&2; printf '%s' "$text"; failed=1; }
 done
 printf 'bin/tlc: %d.%ds in TLC\n' $((total / 10)) $((total % 10))
 exit "$failed"
