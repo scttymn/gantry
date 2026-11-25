@@ -72,7 +72,6 @@ type Queue struct {
 	recur []*recurring
 	wake  map[string]chan struct{}
 	runs  map[string]*tracker
-	hooks sync.WaitGroup
 }
 
 const (
@@ -344,7 +343,7 @@ func (q *Queue) list(ctx context.Context, where string) ([]Entry, error) {
 // Retry puts a failed job back in the queue, to run now with its attempts,
 // and the times its process died, counted afresh.
 func (q *Queue) Retry(ctx context.Context, id int64) error {
-	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, crashes = 0, error = '', finished_at = NULL, run_at = $1
+	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, crashes = 0, error = '', finished_at = NULL, run_at = $1, claimed_by = '', claimed_at = NULL
 		WHERE id = $2 AND state = 'failed'`, q.now(), id)
 	if err != nil {
 		return err

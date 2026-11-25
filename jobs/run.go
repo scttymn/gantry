@@ -42,6 +42,15 @@ type tracker struct {
 	mu      sync.Mutex
 	claims  map[claimKey]bool
 	pending []pendingSettle
+	hooks   sync.WaitGroup
+}
+
+func (t *tracker) later(hook func()) {
+	if t == nil {
+		hook()
+		return
+	}
+	t.hooks.Go(hook)
 }
 
 func (t *tracker) add(c claimed) {
@@ -306,8 +315,8 @@ func (q *Queue) execute(runCtx context.Context, c claimed) {
 
 func (q *Queue) settle(ctx context.Context, c claimed, state string, then func(), set string, args ...any) {
 	n := len(args)
-	p := pendingSettle{c: c, then: then, args: append(args, state, c.ID, c.By, c.At),
-		query: fmt.Sprintf(`UPDATE gantry_jobs SET state = $%d, %s WHERE id = $%d AND state IN ('claimed', $%d) AND claimed_by = $%d AND claimed_at = $%d`, n+1, set, n+2, n+1, n+3, n+4)}
+	update := fmt.Sprintf(`UPDATE gantry_jobs SET state = $%d, %s WHERE id = $%d AND claimed_by = $%d AND claimed_at = $%d AND `, n+1, set, n+2, n+3, n+4)
+	p := pendingSettle{c: c, then: then, args: append(args, state, c.ID, c.By, c.At), query: update + `state = 'claimed'`}
 	saved, err := q.save(ctx, p)
 	t := q.tracker(c.By)
 	switch {
@@ -315,6 +324,9 @@ func (q *Queue) settle(ctx context.Context, c claimed, state string, then func()
 		q.o.Log.Error("jobs: settling a job", "job", c.Name, "id", c.ID, "err", err)
 	case err != nil:
 		q.o.Log.Error("jobs: settling a job; the heartbeat tries again", "job", c.Name, "id", c.ID, "err", err)
+		if state != "ready" {
+			p.query = update + fmt.Sprintf(`state IN ('claimed', $%d)`, n+1)
+		}
 		t.hold(p)
 	case !saved:
 		t.done(c)
@@ -349,17 +361,16 @@ func (q *Queue) resettle(ctx context.Context, t *tracker) {
 		case !saved:
 			q.o.Log.Warn("job's settle, tried again, matched nothing: it was saved already, or the job lost its claim", "job", p.c.Name, "id", p.c.ID)
 		case p.then != nil:
-			q.hooks.Go(p.then)
+			t.later(p.then)
 		}
 	}
 }
 
-func (q *Queue) release(ctx context.Context, process string, t *tracker) error {
-	now := q.now()
+func (q *Queue) release(ctx context.Context, process string, t *tracker, upTo time.Time) error {
 	ids := t.ids()
-	args := []any{process, now.Add(-q.o.Heartbeat)}
+	args := []any{process, upTo}
 	query := `UPDATE gantry_jobs SET state = 'ready', attempts = attempts - 1, claimed_by = '', claimed_at = NULL
-		WHERE state = 'claimed' AND claimed_by = $1 AND claimed_at < $2`
+		WHERE state = 'claimed' AND claimed_by = $1 AND claimed_at <= $2`
 	if len(ids) > 0 {
 		in := ""
 		for i := range ids {
@@ -412,7 +423,7 @@ func (q *Queue) Drain(ctx context.Context) error {
 // result that didn't save (the database away for a moment) is saved with
 // the next heartbeats, and once more as Run returns; a job this process
 // claimed and runs none of (a commit that errored but went through) goes
-// back after a Heartbeat.
+// back after a Heartbeat, or as Run returns.
 //
 // The heartbeat goes on until the last running job returns, so no other
 // process takes a job this one still runs. A job that ignores its context
@@ -499,13 +510,13 @@ func (q *Queue) Run(ctx context.Context) error {
 				q.o.Log.Error("jobs: heartbeat", "err", err)
 			}
 			q.resettle(bg, t)
-			if err := q.release(bg, process, t); err != nil {
+			if err := q.release(bg, process, t, q.now().Add(-q.o.Heartbeat)); err != nil {
 				q.o.Log.Error("jobs: putting back claims", "err", err)
 			}
 			if ctx.Err() != nil {
 				continue
 			}
-			if err := q.maintain(bg); err != nil {
+			if err := q.maintain(bg, t); err != nil {
 				q.o.Log.Error("jobs: maintenance", "err", err)
 			}
 		}
@@ -522,7 +533,10 @@ func (q *Queue) Run(ctx context.Context) error {
 	endBeats()
 	<-beating
 	q.resettle(bg, t)
-	q.hooks.Wait()
+	if err := q.release(bg, process, t, q.now()); err != nil {
+		q.o.Log.Error("jobs: putting back claims", "err", err)
+	}
+	t.hooks.Wait()
 	return nil
 }
 
@@ -532,7 +546,7 @@ func (q *Queue) beat(ctx context.Context, process string) error {
 	return err
 }
 
-func (q *Queue) maintain(ctx context.Context) error {
+func (q *Queue) maintain(ctx context.Context, t *tracker) error {
 	now := q.now()
 	var failed []claimed
 	err := q.d.Tx(ctx, func(tx *db.Tx) error {
@@ -569,14 +583,15 @@ func (q *Queue) maintain(ctx context.Context) error {
 		r, ok := q.defs[c.Name]
 		q.mu.Unlock()
 		if ok {
-			q.hooks.Go(func() { r.exhausted(bg, c.Args, errCrashed) })
+			t.later(func() { r.exhausted(bg, c.Args, errCrashed) })
 		}
 	}
 	return nil
 }
 
 func (q *Queue) failCrashed(ctx context.Context, tx *db.Tx, now time.Time) ([]claimed, error) {
-	rows, err := tx.QueryContext(ctx, `UPDATE gantry_jobs SET state = 'failed', attempts = attempts - 1, crashes = crashes + 1, error = $1, finished_at = $2
+	rows, err := tx.QueryContext(ctx, `UPDATE gantry_jobs SET state = 'failed', attempts = attempts - 1, crashes = crashes + 1, error = $1, finished_at = $2,
+		claimed_by = '', claimed_at = NULL
 		WHERE state = 'claimed' AND claimed_by <> 'drain' AND claimed_by NOT IN (SELECT id FROM gantry_job_processes)
 		AND claimed_at < $3 AND crashes + 1 >= $4
 		RETURNING id, name, args`, errCrashed.Error(), now, now.Add(-q.o.Dead), maxCrashes)

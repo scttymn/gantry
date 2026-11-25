@@ -30,7 +30,7 @@ func testCrashLoopFailsAfterMaxCrashes(t *testing.T, engine string) {
 		}
 		if ok {
 			clock.Advance(6 * time.Minute)
-			if err := q.maintain(ctx); err != nil {
+			if err := q.maintain(ctx, nil); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -106,7 +106,7 @@ func testShutdownKeepsHeartbeatWhileJobRuns(t *testing.T, engine string) {
 	if err := b.beat(ctx, "b"); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.maintain(ctx); err != nil {
+	if err := b.maintain(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	c, ok, err := b.claim(ctx, "default", "b")
@@ -183,27 +183,188 @@ func testOwnOrphanedClaimIsReleased(t *testing.T, engine string) {
 	stopped := make(chan error, 1)
 	go func() { stopped <- q.Run(runCtx) }()
 	defer func() { stop(); <-stopped }()
-	var process string
-	for deadline := time.Now().Add(5 * time.Second); process == "" && time.Now().Before(deadline); {
-		d.Read.QueryRow(`SELECT id FROM gantry_job_processes`).Scan(&process)
-	}
-	if process == "" {
-		t.Fatal("Run's process never beat")
-	}
-	id, err := work.EnqueueIn(ctx, "x", time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Now().UTC()
-	if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'claimed', claimed_by = $1, claimed_at = $2, attempts = 1, run_at = $3 WHERE id = $4`,
-		process, now.Add(-time.Second), now, id); err != nil {
-		t.Fatal(err)
-	}
+	orphan(t, d, work, process(t, d), time.Now().UTC().Add(-time.Second))
 	for deadline := time.Now().Add(5 * time.Second); runs.Load() == 0 && time.Now().Before(deadline); {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if runs.Load() != 1 {
 		t.Errorf("a job claimed by this live process, which no worker of it runs (a claim whose commit errored but applied), ran %d times; want it released and run once", runs.Load())
+	}
+}
+
+func process(t *testing.T, d *db.DB) string {
+	t.Helper()
+	var id string
+	for deadline := time.Now().Add(5 * time.Second); id == "" && time.Now().Before(deadline); {
+		d.Read.QueryRow(`SELECT id FROM gantry_job_processes`).Scan(&id)
+		time.Sleep(5 * time.Millisecond)
+	}
+	if id == "" {
+		t.Fatal("Run's process never beat")
+	}
+	return id
+}
+
+func orphan(t *testing.T, d *db.DB, work *Job[string], by string, at time.Time) int64 {
+	t.Helper()
+	ctx := context.Background()
+	id, err := work.EnqueueIn(ctx, "x", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'claimed', claimed_by = $1, claimed_at = $2, attempts = 1, run_at = $3 WHERE id = $4`,
+		by, at, time.Now().UTC(), id); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestStopReleasesOwnOrphanedClaim(t *testing.T) { onEngines(t, testStopReleasesOwnOrphanedClaim) }
+
+func testStopReleasesOwnOrphanedClaim(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
+		Heartbeat: time.Minute, Dead: 2 * time.Minute})
+	work := Define(q, "work", func(ctx context.Context, s string) error { return nil }, Opts[string]{})
+	runCtx, stop := context.WithCancel(ctx)
+	stopped := make(chan error, 1)
+	go func() { stopped <- q.Run(runCtx) }()
+	orphan(t, d, work, process(t, d), time.Now().UTC())
+	stop()
+	<-stopped
+	if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "ready" || p[0].Attempts != 0 {
+		t.Errorf("Run stopped within a Heartbeat of a claim of its own that no worker ran: %+v; want it put back, its attempt undone, not left for another process to count as a crash", p)
+	}
+}
+
+func crashTwice(t *testing.T, q *Queue, clock interface{ Advance(time.Duration) }) {
+	t.Helper()
+	ctx := context.Background()
+	for i := range 2 {
+		if _, ok, err := q.claim(ctx, "default", fmt.Sprint("crashed-", i)); !ok || err != nil {
+			t.Fatalf("nothing claimed: %v", err)
+		}
+		clock.Advance(6 * time.Minute)
+		if err := q.maintain(ctx, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestStaleSettleAfterCrashFailure(t *testing.T) { onEngines(t, testStaleSettleAfterCrashFailure) }
+
+func testStaleSettleAfterCrashFailure(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, _, clock := queue(t, engine, Options{})
+	var exhausted atomic.Int32
+	Define(q, "work", func(ctx context.Context, s string) error { return errors.New("too late") },
+		Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }}).Enqueue(ctx, "x")
+	crashTwice(t, q, clock)
+	stale, ok, _ := q.claim(ctx, "default", "stalled")
+	if !ok {
+		t.Fatal("nothing claimed")
+	}
+	clock.Advance(6 * time.Minute)
+	if err := q.maintain(ctx, nil); err != nil {
+		t.Fatal(err)
+	}
+	q.execute(ctx, stale)
+	if failed, _ := q.Failed(ctx); len(failed) != 1 || failed[0].Error != "its process died 3 times" || exhausted.Load() != 1 {
+		t.Errorf("a stalled live worker settled to failed after maintenance failed its job for its 3rd crash: failed %+v, OnExhausted %d; want the crash failure kept and OnExhausted once", failed, exhausted.Load())
+	}
+}
+
+func TestStaleSettleAfterRetry(t *testing.T) { onEngines(t, testStaleSettleAfterRetry) }
+
+func testStaleSettleAfterRetry(t *testing.T, engine string) {
+	for _, c := range []struct {
+		name     string
+		attempts int
+		stopping bool
+	}{{"put back", 1, true}, {"tried again", 3, false}} {
+		t.Run(c.name, func(t *testing.T) {
+			ctx := context.Background()
+			q, _, clock := queue(t, engine, Options{})
+			Define(q, "work", func(ctx context.Context, s string) error { return errors.New("too late") },
+				Opts[string]{Retry: Retry{Attempts: c.attempts, Wait: time.Minute}}).Enqueue(ctx, "x")
+			crashTwice(t, q, clock)
+			stale, ok, _ := q.claim(ctx, "default", "stalled")
+			if !ok {
+				t.Fatal("nothing claimed")
+			}
+			clock.Advance(6 * time.Minute)
+			if err := q.maintain(ctx, nil); err != nil {
+				t.Fatal(err)
+			}
+			failed, _ := q.Failed(ctx)
+			if len(failed) != 1 {
+				t.Fatalf("failed %+v; want the job failed for its 3rd crash", failed)
+			}
+			if err := q.Retry(ctx, failed[0].ID); err != nil {
+				t.Fatal(err)
+			}
+			runCtx, cancel := context.WithCancel(ctx)
+			if c.stopping {
+				cancel()
+			}
+			defer cancel()
+			q.execute(runCtx, stale)
+			if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "ready" || p[0].Attempts != 0 || p[0].Error != "" || !p[0].RunAt.Equal(clock.Now()) {
+				t.Errorf("a stalled live worker's settle (%s) after its job failed for crashes and was retried: %+v; want the retried job as Retry left it", c.name, p)
+			}
+		})
+	}
+}
+
+func TestRunWaitsForItsOwnHooks(t *testing.T) { onEngines(t, testRunWaitsForItsOwnHooks) }
+
+func testRunWaitsForItsOwnHooks(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
+		Heartbeat: 20 * time.Millisecond, Dead: 100 * time.Millisecond})
+	entered, release := make(chan struct{}, 2), make(chan struct{})
+	var exhausted atomic.Int32
+	work := Define(q, "work", func(ctx context.Context, s string) error { return nil },
+		Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) {
+			exhausted.Add(1)
+			entered <- struct{}{}
+			<-release
+		}})
+	id := orphan(t, d, work, "crashed", time.Now().UTC())
+	if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET crashes = 2 WHERE id = $1`, id); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan error, 2)
+	var stops []context.CancelFunc
+	for range 2 {
+		runCtx, stop := context.WithCancel(ctx)
+		stops = append(stops, stop)
+		go func() { stopped <- q.Run(runCtx) }()
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no Run's maintenance failed the job of a process that died 3 times")
+	}
+	for _, stop := range stops {
+		stop()
+	}
+	early, timeout := 0, time.After(time.Second)
+collect:
+	for early < 2 {
+		select {
+		case <-stopped:
+			early++
+		case <-timeout:
+			break collect
+		}
+	}
+	close(release)
+	for range 2 - early {
+		<-stopped
+	}
+	if early != 1 || exhausted.Load() != 1 {
+		t.Errorf("two Runs on one Queue, one running OnExhausted for a job it failed: %d returned before the hook did, OnExhausted %d; want the other Run returned, and OnExhausted once", early, exhausted.Load())
 	}
 }
 
@@ -265,7 +426,7 @@ func testTickNotRerunAtKeepBoundary(t *testing.T, engine string) {
 		now := clock.Now()
 		if fired.CompareAndSwap(false, true) {
 			clock.Advance(time.Second)
-			if err := q.maintain(ctx); err != nil {
+			if err := q.maintain(ctx, nil); err != nil {
 				t.Error(err)
 			}
 		}
@@ -307,7 +468,7 @@ func TestTickNotRerunAtKeepBoundaryControl(t *testing.T) {
 		clock.Advance(time.Hour)
 		drain(t, q)
 		clock.Advance(24*time.Hour + time.Second)
-		q.maintain(ctx)
+		q.maintain(ctx, nil)
 		if err := stalled.tick(ctx); err != nil {
 			t.Fatal(err)
 		}
