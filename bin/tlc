@@ -96,8 +96,9 @@ if [ ! -f "$jar" ] || ! verify_sha256 "$jar"; then
 fi
 
 # In the container: the configs that expect a violation (they stop at their
-# first counterexample, so TLC's start-up is most of their time) a core each,
-# as many at once as there are cores, then the passes in turn on every core.
+# first counterexample, so the JVM's start-up is most of their time) a core
+# each, as many at once as there are cores, with the quick-starting compiler
+# and collector, then the passes in turn on every core.
 # Each config runs in a directory of its own, its JVM's temporary directory
 # too (TLC writes the standard modules it parses, Naturals.tla and the rest,
 # there, and two at once in one directory trip over each other: "Module-Table
@@ -108,28 +109,30 @@ fi
 run='jar=$1 tla=$2; shift 2
 mkdir -p /tmp/out
 check() {
-	mkdir -p "/tmp/run/$1"
+	cfg=$1 workers=$2
+	shift 2
+	mkdir -p "/tmp/run/$cfg"
 	(
-		cd "/tmp/run/$1" || exit
-		echo "@@ start $1 $(date +%s%N)"
-		java -XX:+UseParallelGC -Djava.io.tmpdir="/tmp/run/$1" -cp "$jar" tlc2.TLC \
-			-deadlock -cleanup -metadir "/tmp/run/$1/states" -workers "$2" -config "/spec/$1" "/spec/$tla" 2>&1
-		echo "@@ end $1 $? $(date +%s%N)"
-	) >"/tmp/out/$1"
+		cd "/tmp/run/$cfg" || exit
+		echo "@@ start $cfg $(date +%s%N)"
+		java "$@" -Djava.io.tmpdir="/tmp/run/$cfg" -cp "$jar" tlc2.TLC \
+			-deadlock -cleanup -metadir "/tmp/run/$cfg/states" -workers "$workers" -config "/spec/$cfg" "/spec/$tla" 2>&1
+		echo "@@ end $cfg $? $(date +%s%N)"
+	) >"/tmp/out/$cfg"
 }
 n=0
-for cfg; do
-	read -r expect <"/spec/$cfg"
+for c; do
+	read -r expect <"/spec/$c"
 	case $expect in *violates*)
-		check "$cfg" 1 &
+		check "$c" 1 -XX:TieredStopAtLevel=1 -XX:+UseSerialGC &
 		n=$((n + 1))
 		[ "$n" -lt "$(nproc)" ] || { wait; n=0; } ;;
 	esac
 done
 wait
-for cfg; do
-	read -r expect <"/spec/$cfg"
-	case $expect in *violates*) ;; *) check "$cfg" auto ;; esac
+for c; do
+	read -r expect <"/spec/$c"
+	case $expect in *violates*) ;; *) check "$c" auto -XX:+UseParallelGC ;; esac
 done
 for cfg; do cat "/tmp/out/$cfg"; done'
 
