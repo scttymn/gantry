@@ -71,6 +71,7 @@ type Queue struct {
 	defs  map[string]runner
 	recur []*recurring
 	wake  map[string]chan struct{}
+	runs  map[string]*tracker
 	hooks sync.WaitGroup
 }
 
@@ -109,7 +110,7 @@ func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 	if err := d.Migrate(ctx, sub, "gantry_jobs_migrations"); err != nil {
 		return nil, err
 	}
-	q := &Queue{d: d, o: o, defs: map[string]runner{}, wake: map[string]chan struct{}{}}
+	q := &Queue{d: d, o: o, defs: map[string]runner{}, wake: map[string]chan struct{}{}, runs: map[string]*tracker{}}
 	for name := range o.Queues {
 		q.wake[name] = make(chan struct{}, 1)
 	}

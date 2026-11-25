@@ -2,6 +2,7 @@ package jobs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -122,6 +123,130 @@ func testShutdownKeepsHeartbeatWhileJobRuns(t *testing.T, engine string) {
 	<-stopped
 	if ok || most.Load() > 1 {
 		t.Errorf("a stopping process ran a job that ignores its context for longer than Dead; another process claimed it (%v) and ran it beside it, %d at once; want 1", ok, most.Load())
+	}
+}
+
+func TestFailedSettleIsRetriedOnHeartbeat(t *testing.T) {
+	onEngines(t, testFailedSettleIsRetriedOnHeartbeat)
+}
+
+func testFailedSettleIsRetriedOnHeartbeat(t *testing.T, engine string) {
+	for _, c := range []struct {
+		state string
+		err   error
+	}{{"finished", nil}, {"failed", errors.New("no")}} {
+		t.Run(c.state, func(t *testing.T) {
+			ctx := context.Background()
+			q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
+				Heartbeat: 20 * time.Millisecond, Dead: time.Minute})
+			var runs, exhausted atomic.Int32
+			work := Define(q, "work", func(ctx context.Context, s string) error { runs.Add(1); return c.err },
+				Opts[string]{OnExhausted: func(ctx context.Context, s string, err error) { exhausted.Add(1) }})
+			undo := failWrites(t, d, "UPDATE", "NEW.state = '"+c.state+"'")
+			runCtx, stop := context.WithCancel(ctx)
+			stopped := make(chan error, 1)
+			go func() { stopped <- q.Run(runCtx) }()
+			work.Enqueue(ctx, "x")
+			for deadline := time.Now().Add(5 * time.Second); runs.Load() == 0 && time.Now().Before(deadline); {
+				time.Sleep(5 * time.Millisecond)
+			}
+			time.Sleep(100 * time.Millisecond)
+			undo()
+			states := func() string {
+				var s string
+				d.Read.QueryRow(`SELECT state FROM gantry_jobs`).Scan(&s)
+				return s
+			}
+			for deadline := time.Now().Add(5 * time.Second); states() != c.state && time.Now().Before(deadline); {
+				time.Sleep(10 * time.Millisecond)
+			}
+			stop()
+			<-stopped
+			want := map[string]int32{"finished": 0, "failed": 1}[c.state]
+			if states() != c.state || runs.Load() != 1 || exhausted.Load() != want {
+				t.Errorf("its settle to %s failed once, and the database recovered: the job is %q, run %d times, OnExhausted %d; want %s, run once, OnExhausted %d",
+					c.state, states(), runs.Load(), exhausted.Load(), c.state, want)
+			}
+		})
+	}
+}
+
+func TestOwnOrphanedClaimIsReleased(t *testing.T) { onEngines(t, testOwnOrphanedClaimIsReleased) }
+
+func testOwnOrphanedClaimIsReleased(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, _ := queue(t, engine, Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond,
+		Heartbeat: 20 * time.Millisecond, Dead: time.Minute})
+	var runs atomic.Int32
+	work := Define(q, "work", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{})
+	runCtx, stop := context.WithCancel(ctx)
+	stopped := make(chan error, 1)
+	go func() { stopped <- q.Run(runCtx) }()
+	defer func() { stop(); <-stopped }()
+	var process string
+	for deadline := time.Now().Add(5 * time.Second); process == "" && time.Now().Before(deadline); {
+		d.Read.QueryRow(`SELECT id FROM gantry_job_processes`).Scan(&process)
+	}
+	if process == "" {
+		t.Fatal("Run's process never beat")
+	}
+	id, err := work.EnqueueIn(ctx, "x", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	if _, err := d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'claimed', claimed_by = $1, claimed_at = $2, attempts = 1, run_at = $3 WHERE id = $4`,
+		process, now.Add(-time.Second), now, id); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); runs.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if runs.Load() != 1 {
+		t.Errorf("a job claimed by this live process, which no worker of it runs (a claim whose commit errored but applied), ran %d times; want it released and run once", runs.Load())
+	}
+}
+
+func TestClaimCommitFailureDoesNotRun(t *testing.T) {
+	ctx := context.Background()
+	q, d, _ := queue(t, "postgres", Options{Queues: map[string]int{"default": 2}, Now: time.Now,
+		Poll: 10 * time.Millisecond, Grace: 50 * time.Millisecond})
+	release := make(chan struct{})
+	var runs, inside, most atomic.Int32
+	work := Define(q, "work", func(ctx context.Context, s string) error {
+		runs.Add(1)
+		n := inside.Add(1)
+		defer inside.Add(-1)
+		for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+		}
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+		return nil
+	}, Opts[string]{})
+	for _, stmt := range []string{
+		`CREATE FUNCTION fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'commit failed'; END $$`,
+		`CREATE CONSTRAINT TRIGGER fail_commit AFTER UPDATE ON gantry_jobs DEFERRABLE INITIALLY DEFERRED
+			FOR EACH ROW WHEN (NEW.state = 'claimed') EXECUTE FUNCTION fail_commit()`,
+	} {
+		if _, err := d.Write.ExecContext(ctx, stmt); err != nil {
+			t.Fatal(err)
+		}
+	}
+	work.Enqueue(ctx, "x")
+	if c, ok, err := q.claim(ctx, "default", "direct"); ok || err == nil {
+		t.Errorf("a claim whose commit failed: %+v, %v, %v; want nothing claimed, and the error", c, ok, err)
+	}
+	runCtx, stop := context.WithCancel(ctx)
+	stopped := make(chan error, 1)
+	go func() { stopped <- q.Run(runCtx) }()
+	time.Sleep(300 * time.Millisecond)
+	stop()
+	close(release)
+	<-stopped
+	if p, _ := q.Pending(ctx); runs.Load() != 0 || len(p) != 1 || p[0].State != "ready" {
+		t.Errorf("every claim's commit failed, yet the job ran %d times, %d at once; it's %+v; want no runs, and it ready", runs.Load(), most.Load(), p)
 	}
 }
 
