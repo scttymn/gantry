@@ -15,11 +15,20 @@
 \*                          claims that no worker runs
 \*   MutRetryFenceClaimed   a retried settle fences on state = 'claimed' only,
 \*                          so one that errored but went through looks lost
+\*   MutStaleFence          every settle fences on state IN ('claimed', its
+\*                          target), and a crash failure and Retry keep the
+\*                          claim on the row (bfc43db), so a worker stalled
+\*                          past Dead settles a row that's no longer its claim
 \* Reach* are witnesses, each violated by its spec/Jobs.Reach*.cfg, so the
 \* main run's pass covers the states that matter.
 \*
-\* Assumptions: one discrete clock for every host; every live process beats
-\* within HB (< Dead) and puts back an orphaned claim at its next beat; Grace
+\* With Stalls, a live process may stall once (a GC pause, SIGSTOP, a VM
+\* migration) for as long as it likes, its workers frozen and its beats
+\* missed: maintenance then treats it as dead, so two runs at once and a rerun
+\* are by design there, and spec/Jobs.Stall.cfg checks what must still hold.
+\*
+\* Assumptions: one discrete clock for every host; every awake live process
+\* beats within HB (< Dead) and puts back an orphaned claim at its next beat; Grace
 \* is under one tick (5 s against Heartbeat's 60 s); limits, discards and
 \* Drain are left out (TestLimits, TestSettleFails). The row may have
 \* crashed before the model starts (crashes in Init), so one crash reaches
@@ -35,23 +44,23 @@
 EXTENDS Naturals, FiniteSets, TLC
 
 CONSTANTS Procs, Slots, MaxAttempts, MaxCrashes, Dead, HB, MaxTime,
-          Crashes, CommitErrors, SettleErrors,
+          Crashes, CommitErrors, SettleErrors, Stalls,
           MutNoCrashCount, MutBeatStopsOnShutdown, MutNoSettleRetry,
-          MutFoundBeforeCommit, MutNoOrphanRelease, MutRetryFenceClaimed
+          MutFoundBeforeCommit, MutNoOrphanRelease, MutRetryFenceClaimed, MutStaleFence
 
 None == "none"
 W == Procs \X Slots
 Kinds == {"finished", "putback", "retry", "failed"}
 
 VARIABLES st, by, at, att, runAt, crashes, \* the row (at = 0 is NULL; times start at 1)
-          proc, row, hb,                   \* processes, gantry_job_processes
+          proc, row, hb, stalled,          \* processes, gantry_job_processes
           pc, wAt, wAtt, wRes,             \* each worker slot's claim in memory
           fly, pend,                       \* each Run's tracker: claims in flight, settles to retry
           now,
           starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, okLost, retried \* history
 
 rowVars == <<st, by, at, att, runAt, crashes>>
-procVars == <<proc, row, hb>>
+procVars == <<proc, row, hb, stalled>>
 wVars == <<pc, wAt, wAtt, wRes>>
 history == <<starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, okLost, retried>>
 vars == <<rowVars, procVars, wVars, fly, pend, now, history>>
@@ -69,7 +78,8 @@ TypeOK ==
 Init ==
     /\ st = "ready" /\ by = None /\ at = 0 /\ att = 0 /\ runAt = 1 /\ crashes \in 0..(MaxCrashes - 1)
     /\ proc = [p \in Procs |-> "new"] /\ row = [p \in Procs |-> FALSE] /\ hb = [p \in Procs |-> 0]
-    /\ pc = [w \in W |-> "idle"] /\ wAt = [w \in W |-> 0] /\ wAtt = [w \in W |-> 0] /\ wRes = [w \in W |-> "none"]
+    /\ stalled = [p \in Procs |-> "no"]
+    /\ pc =[w \in W |-> "idle"] /\ wAt = [w \in W |-> 0] /\ wAtt = [w \in W |-> 0] /\ wRes = [w \in W |-> "none"]
     /\ fly = [p \in Procs |-> {}] /\ pend = [p \in Procs |-> {}]
     /\ now = 1
     /\ starts = 0 /\ putBacks = 0 /\ reclaims = 0 /\ exhausted = 0
@@ -78,17 +88,26 @@ Init ==
 Live(p) == proc[p] \in {"up", "stopping", "graceOver"}
 \* Run's heartbeat goes on until every job has returned (B2's fix).
 Beating(p) == IF MutBeatStopsOnShutdown THEN proc[p] = "up" ELSE Live(p)
+\* A stalled process does nothing until it resumes.
+Awake(p) == stalled[p] # "yes"
 
 \* Run: beat on start.
 Start(p) ==
     /\ proc[p] = "new"
     /\ proc' = [proc EXCEPT ![p] = "up"] /\ row' = [row EXCEPT ![p] = TRUE] /\ hb' = [hb EXCEPT ![p] = now]
-    /\ UNCHANGED <<rowVars, wVars, fly, pend, now, history>>
+    /\ UNCHANGED <<rowVars, stalled, wVars, fly, pend, now, history>>
+
+Stall(p) ==
+    /\ Stalls /\ Live(p) /\ stalled[p] = "no" /\ stalled' = [stalled EXCEPT ![p] = "yes"]
+    /\ UNCHANGED <<rowVars, proc, row, hb, wVars, fly, pend, now, history>>
+Resume(p) ==
+    /\ stalled[p] = "yes" /\ stalled' = [stalled EXCEPT ![p] = "was"]
+    /\ UNCHANGED <<rowVars, proc, row, hb, wVars, fly, pend, now, history>>
 
 \* claim's one transaction: the SELECT of a ready, due job and its UPDATE.
 \* claimed_at is to the microsecond, so a process never makes two claims at
 \* one instant: none of its claims in flight has this one's time.
-CanClaim(w) == proc[w[1]] = "up" /\ pc[w] = "idle" /\ st = "ready" /\ runAt <= now /\ now \notin fly[w[1]]
+CanClaim(w) == proc[w[1]] = "up" /\ Awake(w[1]) /\ pc[w] = "idle" /\ st = "ready" /\ runAt <= now /\ now \notin fly[w[1]]
 
 StartRun(w) ==
     /\ pc' = [pc EXCEPT ![w] = "perform"] /\ wAt' = [wAt EXCEPT ![w] = now]
@@ -121,7 +140,7 @@ ClaimCommitAmbiguous(w) ==
 
 \* perform returns; it may have ignored its context.
 Return(w, r) ==
-    /\ pc[w] = "perform"
+    /\ pc[w] = "perform" /\ Awake(w[1])
     /\ pc' = [pc EXCEPT ![w] = "settle"] /\ wRes' = [wRes EXCEPT ![w] = r]
     /\ okDone' = (okDone \/ r = "ok")
     /\ UNCHANGED <<rowVars, procVars, wAt, wAtt, fly, pend, now, starts, putBacks, reclaims, exhausted, rerunAfterOk, okLost, retried>>
@@ -133,8 +152,11 @@ Kind(w) == IF wRes[w] = "ok" THEN "finished"
            ELSE "failed"
 Target(k) == IF k \in {"finished", "failed"} THEN k ELSE "ready"
 
-\* settle's UPDATE: WHERE state IN ('claimed', target) AND claimed_by, claimed_at.
+\* settle's UPDATE: WHERE claimed_by, claimed_at AND state = 'claimed', or, for
+\* a kept settle's retry to finished or failed, state IN ('claimed', target).
 Fence(p, a, k, strict) == by = p /\ at = a /\ (st = "claimed" \/ (~strict /\ st = Target(k)))
+FirstStrict == ~MutStaleFence
+RetryStrict(k) == MutRetryFenceClaimed \/ (~MutStaleFence /\ k \in {"putback", "retry"})
 
 \* The settle's SET, made at t; hook: OnExhausted runs (the settle reported saved).
 Apply(k, t, hook) ==
@@ -153,8 +175,8 @@ Idle(w) == /\ pc' = [pc EXCEPT ![w] = "idle"] /\ wAt' = [wAt EXCEPT ![w] = 0]
 \* The settle is saved (or matches nothing): its claim leaves the tracker,
 \* compared by (id, claimed_at).
 Settle(w) ==
-    /\ pc[w] = "settle"
-    /\ IF Fence(w[1], wAt[w], Kind(w), FALSE) THEN Apply(Kind(w), now, TRUE) ELSE NoChange
+    /\ pc[w] = "settle" /\ Awake(w[1])
+    /\ IF Fence(w[1], wAt[w], Kind(w), FirstStrict) THEN Apply(Kind(w), now, TRUE) ELSE NoChange
     /\ fly' = [fly EXCEPT ![w[1]] = @ \ {wAt[w]}]
     /\ Idle(w)
     /\ UNCHANGED <<crashes, procVars, pend, now, starts, reclaims, okDone, rerunAfterOk, okLost, retried>>
@@ -168,22 +190,23 @@ Held(w) ==
          /\ UNCHANGED fly
 
 SettleFails(w) ==
-    /\ SettleErrors /\ pc[w] = "settle"
+    /\ SettleErrors /\ pc[w] = "settle" /\ Awake(w[1])
     /\ NoChange /\ Held(w) /\ Idle(w)
     /\ UNCHANGED <<crashes, procVars, now, starts, reclaims, okDone, rerunAfterOk, okLost, retried>>
 
 \* The settle errored but went through (Postgres): OnExhausted waits for the retry.
 SettleAmbiguous(w) ==
-    /\ SettleErrors /\ pc[w] = "settle"
-    /\ IF Fence(w[1], wAt[w], Kind(w), FALSE) THEN Apply(Kind(w), now, FALSE) ELSE NoChange
+    /\ SettleErrors /\ pc[w] = "settle" /\ Awake(w[1])
+    /\ IF Fence(w[1], wAt[w], Kind(w), FirstStrict) THEN Apply(Kind(w), now, FALSE) ELSE NoChange
     /\ Held(w) /\ Idle(w)
     /\ UNCHANGED <<crashes, procVars, now, starts, reclaims, okDone, rerunAfterOk, okLost, retried>>
 
 \* A heartbeat (or the last try as Run returns) saves a kept settle. With its
-\* fence widened to the target state, one that went through counts as saved.
+\* fence widened to a finished or failed target, one that went through
+\* counts as saved.
 Resettle(p, r) ==
-    /\ Live(p) /\ r \in pend[p]
-    /\ IF Fence(p, r.at, r.kind, MutRetryFenceClaimed) THEN Apply(r.kind, r.t, TRUE) ELSE NoChange
+    /\ Live(p) /\ Awake(p) /\ r \in pend[p]
+    /\ IF Fence(p, r.at, r.kind, RetryStrict(r.kind)) THEN Apply(r.kind, r.t, TRUE) ELSE NoChange
     /\ pend' = [pend EXCEPT ![p] = @ \ {r}] /\ fly' = [fly EXCEPT ![p] = @ \ {r.at}]
     /\ UNCHANGED <<crashes, procVars, wVars, now, starts, reclaims, okDone, rerunAfterOk, okLost, retried>>
 
@@ -191,14 +214,14 @@ Resettle(p, r) ==
 \* record of (a claim whose commit errored but went through).
 Orphaned(p) == st = "claimed" /\ by = p /\ at + HB < now /\ at \notin fly[p]
 Release(p) ==
-    /\ ~MutNoOrphanRelease /\ Beating(p) /\ Orphaned(p)
+    /\ ~MutNoOrphanRelease /\ Beating(p) /\ Awake(p) /\ Orphaned(p)
     /\ st' = "ready" /\ att' = att - 1 /\ by' = None /\ at' = 0
     /\ UNCHANGED <<runAt, crashes, procVars, wVars, fly, pend, now, history>>
 
 Beat(p) ==
-    /\ Beating(p)
+    /\ Beating(p) /\ Awake(p)
     /\ row' = [row EXCEPT ![p] = TRUE] /\ hb' = [hb EXCEPT ![p] = now]
-    /\ UNCHANGED <<rowVars, proc, wVars, fly, pend, now, history>>
+    /\ UNCHANGED <<rowVars, proc, stalled, wVars, fly, pend, now, history>>
 
 \* maintain, one transaction, only while Run's ctx lasts: delete silent
 \* processes, then fail the claims of dead ones on their MaxCrashes-th crash
@@ -206,29 +229,32 @@ Beat(p) ==
 Alive2 == [q \in Procs |-> row[q] /\ hb[q] + Dead >= now]
 Orphan2 == st = "claimed" /\ ~Alive2[by] /\ at + Dead < now
 Maintain(p) ==
-    /\ proc[p] = "up" /\ ~Orphan2
+    /\ proc[p] = "up" /\ Awake(p) /\ ~Orphan2
     /\ row' = Alive2
-    /\ UNCHANGED <<rowVars, proc, hb, wVars, fly, pend, now, history>>
+    /\ UNCHANGED <<rowVars, proc, hb, stalled, wVars, fly, pend, now, history>>
 MaintainReclaim(p) ==
-    /\ proc[p] = "up" /\ Orphan2 /\ (MutNoCrashCount \/ crashes + 1 < MaxCrashes)
+    /\ proc[p] = "up" /\ Awake(p) /\ Orphan2 /\ (MutNoCrashCount \/ crashes + 1 < MaxCrashes)
     /\ row' = Alive2
     /\ st' = "ready" /\ att' = att - 1 /\ crashes' = crashes + 1 /\ by' = None /\ at' = 0
     /\ reclaims' = reclaims + 1
-    /\ UNCHANGED <<runAt, proc, hb, wVars, fly, pend, now, starts, putBacks, exhausted, okDone, rerunAfterOk, okLost, retried>>
+    /\ UNCHANGED <<runAt, proc, hb, stalled, wVars, fly, pend, now, starts, putBacks, exhausted, okDone, rerunAfterOk, okLost, retried>>
+\* The failure clears the claim, as Retry does: no later life of the row
+\* carries it.
 MaintainCrashFail(p) ==
-    /\ proc[p] = "up" /\ Orphan2 /\ ~MutNoCrashCount /\ crashes + 1 >= MaxCrashes
+    /\ proc[p] = "up" /\ Awake(p) /\ Orphan2 /\ ~MutNoCrashCount /\ crashes + 1 >= MaxCrashes
     /\ row' = Alive2
     /\ st' = "failed" /\ att' = att - 1 /\ crashes' = crashes + 1 /\ exhausted' = exhausted + 1
-    /\ UNCHANGED <<by, at, runAt, proc, hb, wVars, fly, pend, now, starts, putBacks, reclaims, okDone, rerunAfterOk, okLost, retried>>
+    /\ IF MutStaleFence THEN UNCHANGED <<by, at>> ELSE by' = None /\ at' = 0
+    /\ UNCHANGED <<runAt, proc, hb, stalled, wVars, fly, pend, now, starts, putBacks, reclaims, okDone, rerunAfterOk, okLost, retried>>
 
 \* Run's ctx ends: no more claims, ticks or maintenance.
 Shutdown(p) ==
-    /\ proc[p] = "up" /\ proc' = [proc EXCEPT ![p] = "stopping"]
-    /\ UNCHANGED <<rowVars, row, hb, wVars, fly, pend, now, history>>
+    /\ proc[p] = "up" /\ Awake(p) /\ proc' = [proc EXCEPT ![p] = "stopping"]
+    /\ UNCHANGED <<rowVars, row, hb, stalled, wVars, fly, pend, now, history>>
 \* Grace runs out: endJobs cancels the running jobs' context.
 GraceOver(p) ==
-    /\ proc[p] = "stopping" /\ proc' = [proc EXCEPT ![p] = "graceOver"]
-    /\ UNCHANGED <<rowVars, row, hb, wVars, fly, pend, now, history>>
+    /\ proc[p] = "stopping" /\ Awake(p) /\ proc' = [proc EXCEPT ![p] = "graceOver"]
+    /\ UNCHANGED <<rowVars, row, hb, stalled, wVars, fly, pend, now, history>>
 
 \* A finished job's result lost with its process: a rerun after it is the
 \* at-least-once the docs promise, not a bug.
@@ -236,13 +262,17 @@ LosesOk(p) == \/ \E s \in Slots : pc[<<p, s>>] = "settle" /\ wRes[<<p, s>>] = "o
               \/ \E r \in pend[p] : r.kind = "finished"
 
 \* Every job has returned; the heartbeat stops, the last retry fails or
-\* isn't needed, and the deferred DELETE removes the process row.
+\* isn't needed, every claim of its own it has no record of goes back,
+\* whatever its age, and the deferred DELETE removes the process row.
 Exit(p) ==
-    /\ proc[p] \in {"stopping", "graceOver"} /\ \A s \in Slots : pc[<<p, s>>] = "idle"
+    /\ proc[p] \in {"stopping", "graceOver"} /\ Awake(p) /\ \A s \in Slots : pc[<<p, s>>] = "idle"
     /\ proc' = [proc EXCEPT ![p] = "gone"] /\ row' = [row EXCEPT ![p] = FALSE]
+    /\ IF ~MutNoOrphanRelease /\ st = "claimed" /\ by = p /\ at \notin fly[p]
+       THEN st' = "ready" /\ att' = att - 1 /\ by' = None /\ at' = 0
+       ELSE UNCHANGED <<st, by, at, att>>
     /\ fly' = [fly EXCEPT ![p] = {}] /\ pend' = [pend EXCEPT ![p] = {}]
     /\ okLost' = (okLost \/ LosesOk(p))
-    /\ UNCHANGED <<rowVars, hb, wVars, now, starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, retried>>
+    /\ UNCHANGED <<runAt, crashes, hb, stalled, wVars, now, starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, retried>>
 
 \* kill -9, the OOM killer, a panic outside perform: anywhere; the rows stay.
 Crash(p) ==
@@ -253,32 +283,33 @@ Crash(p) ==
     /\ wRes' = [w \in W |-> IF w[1] = p THEN "none" ELSE wRes[w]]
     /\ fly' = [fly EXCEPT ![p] = {}] /\ pend' = [pend EXCEPT ![p] = {}]
     /\ okLost' = (okLost \/ LosesOk(p))
-    /\ UNCHANGED <<rowVars, row, hb, now, starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, retried>>
+    /\ UNCHANGED <<rowVars, row, hb, stalled, now, starts, putBacks, reclaims, exhausted, okDone, rerunAfterOk, retried>>
 
-\* Retry: failed -> ready, attempts and crashes 0, run_at now; claimed_by and
-\* claimed_at stay. Someone chose to run it again, so the history restarts.
+\* Retry: failed -> ready, attempts and crashes 0, run_at now, the claim
+\* cleared. Someone chose to run it again, so the history restarts.
 \* Once a behavior: another would start the same history over.
 RetryFailed ==
     /\ st = "failed" /\ ~retried
     /\ st' = "ready" /\ att' = 0 /\ crashes' = 0 /\ runAt' = now
+    /\ IF MutStaleFence THEN UNCHANGED <<by, at>> ELSE by' = None /\ at' = 0
     /\ starts' = 0 /\ putBacks' = 0 /\ reclaims' = 0 /\ exhausted' = 0
     /\ okDone' = FALSE /\ rerunAfterOk' = FALSE /\ okLost' = FALSE /\ retried' = TRUE
-    /\ UNCHANGED <<by, at, procVars, wVars, fly, pend, now>>
+    /\ UNCHANGED <<procVars, wVars, fly, pend, now>>
 
-\* Time passes: each beating process has beaten within HB, none is in its
-\* grace, and no beating process has an orphaned claim due.
+\* Time passes: each awake beating process has beaten within HB, none is in
+\* its grace, and no awake beating process has an orphaned claim due.
 Tick ==
     /\ now < MaxTime
-    /\ \A p \in Procs : Beating(p) => now + 1 <= hb[p] + HB
-    /\ \A p \in Procs : proc[p] # "stopping"
-    /\ ~MutNoOrphanRelease => \A p \in Procs : Beating(p) => ~Orphaned(p)
+    /\ \A p \in Procs : Beating(p) /\ Awake(p) => now + 1 <= hb[p] + HB
+    /\ \A p \in Procs : proc[p] = "stopping" => ~Awake(p)
+    /\ ~MutNoOrphanRelease => \A p \in Procs : Beating(p) /\ Awake(p) => ~Orphaned(p)
     /\ now' = now + 1
     /\ UNCHANGED <<rowVars, procVars, wVars, fly, pend, history>>
 
 Next ==
     \/ \E p \in Procs : \/ Start(p) \/ Beat(p) \/ Release(p) \/ \E r \in pend[p] : Resettle(p, r)
                         \/ Maintain(p) \/ MaintainReclaim(p) \/ MaintainCrashFail(p)
-                        \/ Shutdown(p) \/ GraceOver(p) \/ Exit(p) \/ Crash(p)
+                        \/ Shutdown(p) \/ GraceOver(p) \/ Exit(p) \/ Crash(p) \/ Stall(p) \/ Resume(p)
     \/ \E w \in W : \/ Claim(w) \/ ClaimCommitFails(w) \/ ClaimCommitAmbiguous(w)
                     \/ Return(w, "ok") \/ Return(w, "err")
                     \/ Settle(w) \/ SettleFails(w) \/ SettleAmbiguous(w)
@@ -313,7 +344,9 @@ NoAvoidableRerun == rerunAfterOk => okLost
 \* failed settle is saved.
 ExhaustedOnce == exhausted <= 1
 FailedRunsOnExhausted ==
-    (st = "failed" /\ proc[by] # "gone" /\ ~\E r \in pend[by] : r.at = at) => exhausted >= 1
+    (st = "failed" /\ by # None /\ proc[by] # "gone" /\ ~\E r \in pend[by] : r.at = at) => exhausted >= 1
+\* No settle takes back an attempt the row doesn't have (a stale put-back).
+AttemptsNonNegative == att >= 0
 
 \* Reachability witnesses: each is violated by its spec/Jobs.Reach*.cfg.
 \* A crashed process's claim put back, and one failed on its last crash:
