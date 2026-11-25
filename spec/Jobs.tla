@@ -359,6 +359,10 @@ ReachCrashFail == ~(st = "failed" /\ crashes = MaxCrashes)
 ReachSettleRetried == ~\E p \in Procs : Live(p) /\ \E r \in pend[p] : Fence(p, r.at, r.kind, FALSE)
 \* A claim of a beating process that no worker runs, due to be put back:
 ReachOrphanReleased == ~\E p \in Procs : Beating(p) /\ Orphaned(p)
+\* A failed run tried again: its settle saved (ready, run_at later), and one
+\* kept for the heartbeat (spec/Jobs.Retry.cfg's constants, MaxAttempts 2):
+ReachRetryWait == ~(st = "ready" /\ runAt > now)
+ReachRetryKept == ~\E p \in Procs : \E r \in pend[p] : r.kind = "retry"
 \* A claim whose commit errored but went through, not run:
 ReachClaimCommitFailed == ~(st = "claimed" /\ proc[by] = "up" /\ at \notin fly[by])
 ====
