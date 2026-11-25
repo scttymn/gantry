@@ -3,7 +3,9 @@ package jobs
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -56,4 +58,72 @@ func testCrashLoopFailsAfterMaxCrashes(t *testing.T, engine string) {
 	if p, _ := q.Pending(ctx); len(p) != 1 || p[0].State != "ready" {
 		t.Errorf("one crash after Retry: %+v; want it back in the queue, its crashes counted afresh", p)
 	}
+}
+
+func TestTickNotRerunAtKeepBoundary(t *testing.T) { onEngines(t, testTickNotRerunAtKeepBoundary) }
+
+func testTickNotRerunAtKeepBoundary(t *testing.T, engine string) {
+	ctx := context.Background()
+	q, d, clock := queue(t, engine, Options{})
+	var runs atomic.Int32
+	sweep := func(q *Queue) {
+		Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(time.Hour, "x")
+	}
+	sweep(q)
+	var fired atomic.Bool
+	maintainsWhileTickWaits := func() time.Time {
+		now := clock.Now()
+		if fired.CompareAndSwap(false, true) {
+			clock.Advance(time.Second)
+			if err := q.maintain(ctx); err != nil {
+				t.Error(err)
+			}
+		}
+		return now
+	}
+	stalled, err := New(ctx, d, Options{Now: clock.Now, Log: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sweep(stalled)
+	clock.Advance(time.Hour)
+	drain(t, q)
+	clock.Advance(24 * time.Hour)
+	stalled.o.Now = maintainsWhileTickWaits
+	if err := stalled.tick(ctx); err != nil {
+		t.Fatal(err)
+	}
+	stalled.o.Now = clock.Now
+	drain(t, stalled)
+	if runs.Load() != 1 {
+		t.Errorf("a process stalled a day ticked 13:00 just inside Keep while another's maintenance ran a second later: the 13:00 sweep ran %d times; want 1", runs.Load())
+	}
+}
+
+func TestTickNotRerunAtKeepBoundaryControl(t *testing.T) {
+	onEngines(t, func(t *testing.T, engine string) {
+		ctx := context.Background()
+		q, d, clock := queue(t, engine, Options{})
+		var runs atomic.Int32
+		sweep := func(q *Queue) {
+			Define(q, "sweep", func(ctx context.Context, s string) error { runs.Add(1); return nil }, Opts[string]{}).Every(time.Hour, "x")
+		}
+		sweep(q)
+		stalled, err := New(ctx, d, Options{Now: clock.Now, Log: slog.New(slog.DiscardHandler)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sweep(stalled)
+		clock.Advance(time.Hour)
+		drain(t, q)
+		clock.Advance(24*time.Hour + time.Second)
+		q.maintain(ctx)
+		if err := stalled.tick(ctx); err != nil {
+			t.Fatal(err)
+		}
+		drain(t, stalled)
+		if runs.Load() != 1 {
+			t.Errorf("maintenance before the stalled tick read its clock: the 13:00 sweep ran %d times; want 1", runs.Load())
+		}
+	})
 }

@@ -388,7 +388,7 @@ func (q *Queue) maintain(ctx context.Context) error {
 				WHERE state = 'claimed' AND claimed_by <> 'drain' AND claimed_by NOT IN (SELECT id FROM gantry_job_processes)
 				AND claimed_at < $1`, []any{now.Add(-q.o.Dead)}},
 			{`DELETE FROM gantry_jobs WHERE state = 'finished' AND finished_at < $1`, []any{now.Add(-q.o.Keep)}},
-			{`DELETE FROM gantry_job_ticks WHERE run_at < $1`, []any{now.Add(-q.o.Keep)}},
+			{`DELETE FROM gantry_job_ticks WHERE run_at < $1`, []any{now.Add(-q.o.Keep - tickMargin)}},
 		} {
 			if _, err := tx.ExecContext(ctx, stmt.query, stmt.args...); err != nil {
 				return err

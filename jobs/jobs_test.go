@@ -713,15 +713,15 @@ func testTicksCleared(t *testing.T, engine string) {
 		d.Read.QueryRow(`SELECT COUNT(*) FROM gantry_job_ticks`).Scan(&n)
 		return n
 	}
-	clock.Advance(23 * time.Hour)
+	clock.Advance(25*time.Hour - time.Second)
 	q.maintain(ctx)
 	if ticks() != 1 {
-		t.Fatalf("%d ticks before a day; want 1", ticks())
+		t.Fatalf("%d ticks a second before a day and an hour; want 1: kept an hour past Keep, so a tick that read its clock just inside Keep finds it", ticks())
 	}
-	clock.Advance(2 * time.Hour)
+	clock.Advance(2 * time.Second)
 	q.maintain(ctx)
 	if ticks() != 0 {
-		t.Errorf("%d ticks after a day; want 0", ticks())
+		t.Errorf("%d ticks a second after a day and an hour; want 0", ticks())
 	}
 }
 

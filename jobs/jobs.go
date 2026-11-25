@@ -56,7 +56,9 @@ type Options struct {
 	// a process silent this long crashed, and its jobs go back (or fail, the
 	// third time their process died): 5 min
 	Dead time.Duration
-	// how long finished jobs are kept: a day
+	// how long finished jobs are kept: a day. A recurring job's runs are
+	// remembered an hour past it, so a process stalled about Keep that
+	// ticks a run another process ran doesn't run it again.
 	Keep time.Duration
 }
 
@@ -72,7 +74,10 @@ type Queue struct {
 	hooks sync.WaitGroup
 }
 
-const maxCrashes = 3
+const (
+	maxCrashes = 3
+	tickMargin = time.Hour
+)
 
 var errCrashed = fmt.Errorf("its process died %d times", maxCrashes)
 
