@@ -22,7 +22,7 @@
 \* Reach* are witnesses, each violated by its spec/Jobs.Reach*.cfg, so the
 \* main run's pass covers the states that matter.
 \*
-\* With Stalls, a live process may stall once (a GC pause, SIGSTOP, a VM
+\* With Stalls, one live process a behavior may stall (a GC pause, SIGSTOP, a VM
 \* migration) for as long as it likes, its workers frozen and its beats
 \* missed: maintenance then treats it as dead, so two runs at once and a rerun
 \* are by design there, and spec/Jobs.Stall.cfg checks what must still hold.
@@ -98,7 +98,7 @@ Start(p) ==
     /\ UNCHANGED <<rowVars, stalled, wVars, fly, pend, now, history>>
 
 Stall(p) ==
-    /\ Stalls /\ Live(p) /\ stalled[p] = "no" /\ stalled' = [stalled EXCEPT ![p] = "yes"]
+    /\ Stalls /\ Live(p) /\ \A q \in Procs : stalled[q] = "no" /\ stalled' = [stalled EXCEPT ![p] = "yes"]
     /\ UNCHANGED <<rowVars, proc, row, hb, wVars, fly, pend, now, history>>
 Resume(p) ==
     /\ stalled[p] = "yes" /\ stalled' = [stalled EXCEPT ![p] = "was"]
