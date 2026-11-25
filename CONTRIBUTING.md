@@ -157,8 +157,9 @@ The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plan
   reachability witness (`<Name>.Reach<State>.cfg`: the state is reached, so
   a pass isn't vacuous). `bin/tlc` fails on a config that does otherwise, and
   `TestSpecConfigsSayWhatTheyExpect` on one without a valid expect line or
-  its spec. Keep every config small (the whole run takes about 20 s on a
-  24-core machine, and the CI step under a minute); a longer exploration goes in its spec's header as a
+  its spec. Keep every config small (the whole run takes about 12 s on a
+  24-core machine, and the CI step well under a minute; `bin/tlc` runs the
+  configs that expect a violation at once, a core each); a longer exploration goes in its spec's header as a
   command, not in a config. A new `spec/<Name>.tla` and its configs are
   picked up automatically by `bin/tlc` and CI.
 
