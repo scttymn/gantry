@@ -63,6 +63,68 @@ func testCrashLoopFailsAfterMaxCrashes(t *testing.T, engine string) {
 	}
 }
 
+func TestShutdownKeepsHeartbeatWhileJobRuns(t *testing.T) {
+	onEngines(t, testShutdownKeepsHeartbeatWhileJobRuns)
+}
+
+func testShutdownKeepsHeartbeatWhileJobRuns(t *testing.T, engine string) {
+	ctx := context.Background()
+	o := Options{Now: time.Now, Poll: 10 * time.Millisecond, Grace: 20 * time.Millisecond,
+		Heartbeat: 50 * time.Millisecond, Dead: 300 * time.Millisecond}
+	a, d, _ := queue(t, engine, o)
+	release := make(chan struct{})
+	var inside, most atomic.Int32
+	perform := func(ctx context.Context, s string) error {
+		n := inside.Add(1)
+		defer inside.Add(-1)
+		for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+		}
+		<-release
+		return nil
+	}
+	work := Define(a, "work", perform, Opts[string]{})
+	o.Log = slog.New(slog.DiscardHandler)
+	b, err := New(ctx, d, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	Define(b, "work", perform, Opts[string]{})
+
+	runCtx, stop := context.WithCancel(ctx)
+	stopped := make(chan error, 1)
+	go func() { stopped <- a.Run(runCtx) }()
+	work.Enqueue(ctx, "x")
+	for deadline := time.Now().Add(5 * time.Second); inside.Load() == 0 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if inside.Load() == 0 {
+		t.Fatal("the job never started")
+	}
+	stop()
+	time.Sleep(o.Dead + 3*o.Heartbeat)
+	if err := b.beat(ctx, "b"); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.maintain(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c, ok, err := b.claim(ctx, "default", "b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		go b.execute(ctx, c)
+		for deadline := time.Now().Add(2 * time.Second); most.Load() < 2 && time.Now().Before(deadline); {
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	close(release)
+	<-stopped
+	if ok || most.Load() > 1 {
+		t.Errorf("a stopping process ran a job that ignores its context for longer than Dead; another process claimed it (%v) and ran it beside it, %d at once; want 1", ok, most.Load())
+	}
+}
+
 func TestTickNotRerunAtKeepBoundary(t *testing.T) { onEngines(t, testTickNotRerunAtKeepBoundary) }
 
 func testTickNotRerunAtKeepBoundary(t *testing.T, engine string) {

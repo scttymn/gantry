@@ -274,9 +274,14 @@ func (q *Queue) Drain(ctx context.Context) error {
 }
 
 // Run runs the queues' workers until ctx ends, then stops taking jobs,
-// gives the running ones their grace, ends their contexts, and returns.
-// Its process heartbeats, and keeps the tables: jobs a crashed process
-// claimed go back, finished jobs go after Keep.
+// gives the running ones their grace, ends their contexts, and returns once
+// every one has. Its process heartbeats, and keeps the tables: jobs a
+// crashed process claimed go back, finished jobs go after Keep.
+//
+// The heartbeat goes on until the last running job returns, so no other
+// process takes a job this one still runs. A job that ignores its context
+// holds its claim, and Run, for as long as it runs: only killing the process
+// frees it, and then it counts as one of the job's 3 crashes.
 func (q *Queue) Run(ctx context.Context) error {
 	host, _ := os.Hostname()
 	raw := make([]byte, 4)
@@ -335,21 +340,27 @@ func (q *Queue) Run(ctx context.Context) error {
 			}
 		}
 	})
-	workers.Go(func() {
+	beatCtx, endBeats := context.WithCancel(bg)
+	beating := make(chan struct{})
+	go func() {
+		defer close(beating)
 		for {
 			select {
 			case <-time.After(q.o.Heartbeat):
-			case <-ctx.Done():
+			case <-beatCtx.Done():
 				return
 			}
 			if err := q.beat(bg, process); err != nil {
 				q.o.Log.Error("jobs: heartbeat", "err", err)
 			}
+			if ctx.Err() != nil {
+				continue
+			}
 			if err := q.maintain(bg); err != nil {
 				q.o.Log.Error("jobs: maintenance", "err", err)
 			}
 		}
-	})
+	}()
 	workers.Wait()
 	done := make(chan struct{})
 	go func() { running.Wait(); close(done) }()
@@ -359,6 +370,8 @@ func (q *Queue) Run(ctx context.Context) error {
 		endJobs()
 		<-done
 	}
+	endBeats()
+	<-beating
 	q.hooks.Wait()
 	return nil
 }
