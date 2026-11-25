@@ -95,17 +95,43 @@ if [ ! -f "$jar" ] || ! verify_sha256 "$jar"; then
 	trap - EXIT
 fi
 
-# In the container: each config in turn, between lines that say which it is,
-# how it ended and when, each with a state directory of its own. Its shell,
+# In the container: the configs that expect a violation (they stop at their
+# first counterexample, so TLC's start-up is most of their time) a core each,
+# as many at once as there are cores, then the passes in turn on every core.
+# Each config runs in a directory of its own, its JVM's temporary directory
+# too (TLC writes the standard modules it parses, Naturals.tla and the rest,
+# there, and two at once in one directory trip over each other: "Module-Table
+# lookup failure"), and its output goes between lines that
+# say which it is, how it ended and when, and comes out in order. Its shell,
 # not this one, expands the variables.
 # shellcheck disable=SC2016
 run='jar=$1 tla=$2; shift 2
+mkdir -p /tmp/out
+check() {
+	mkdir -p "/tmp/run/$1"
+	(
+		cd "/tmp/run/$1" || exit
+		echo "@@ start $1 $(date +%s%N)"
+		java -XX:+UseParallelGC -Djava.io.tmpdir="/tmp/run/$1" -cp "$jar" tlc2.TLC \
+			-deadlock -cleanup -metadir "/tmp/run/$1/states" -workers "$2" -config "/spec/$1" "/spec/$tla" 2>&1
+		echo "@@ end $1 $? $(date +%s%N)"
+	) >"/tmp/out/$1"
+}
+n=0
 for cfg; do
-	echo "@@ start $cfg $(date +%s%N)"
-	java -XX:+UseParallelGC -cp "$jar" tlc2.TLC \
-		-deadlock -cleanup -metadir "/tmp/states/$cfg" -workers auto -config "/spec/$cfg" "/spec/$tla" 2>&1
-	echo "@@ end $cfg $? $(date +%s%N)"
-done'
+	read -r expect <"/spec/$cfg"
+	case $expect in *violates*)
+		check "$cfg" 1 &
+		n=$((n + 1))
+		[ "$n" -lt "$(nproc)" ] || { wait; n=0; } ;;
+	esac
+done
+wait
+for cfg; do
+	read -r expect <"/spec/$cfg"
+	case $expect in *violates*) ;; *) check "$cfg" auto ;; esac
+done
+for cfg; do cat "/tmp/out/$cfg"; done'
 
 out=$(mktemp) container=gantry-tlc-$$
 # A timeout or ^C ends the docker client, not the container: remove it.
@@ -135,15 +161,16 @@ for spec in "${specs[@]}"; do
 		failed=1
 	fi
 
-	cfg='' text='' states='?' violated='' began=0
+	cfg='' text='' states='?' violated='' began=0 opened=0 closed=0
 	while IFS= read -r line; do
 		if [[ $line =~ ^@@\ start\ ([^ ]+)\ ([0-9]+)$ ]]; then
 			cfg=${BASH_REMATCH[1]} began=${BASH_REMATCH[2]} text='' states='?' violated=''
+			if [ "$opened" = 0 ] || [ "$began" -lt "$opened" ]; then opened=$began; fi
 			continue
 		fi
 		if [[ $line =~ ^@@\ end\ ([^ ]+)\ ([0-9]+)\ ([0-9]+)$ ]]; then
 			code=${BASH_REMATCH[2]} tenths=$(((BASH_REMATCH[3] - began) / 100000000))
-			total=$((total + tenths))
+			if [ "${BASH_REMATCH[3]}" -gt "$closed" ]; then closed=${BASH_REMATCH[3]}; fi
 			IFS= read -r first <"spec/$cfg"
 			want=${first#'\* expect: '}
 			got="exit $code"
@@ -164,6 +191,7 @@ for spec in "${specs[@]}"; do
 		if [[ $line =~ Invariant\ ([A-Za-z_0-9]+)\ is\ violated ]]; then violated=${BASH_REMATCH[1]}; fi
 	done <"$out"
 	[ -z "$cfg" ] || { echo "bin/tlc: TLC stopped in $cfg" >&2; printf '%s' "$text"; failed=1; }
+	total=$((total + (closed - opened) / 100000000))
 done
-printf 'bin/tlc: %d.%ds in TLC\n' $((total / 10)) $((total % 10))
+printf 'bin/tlc: %d.%ds in TLC, wall clock\n' $((total / 10)) $((total % 10))
 exit "$failed"
