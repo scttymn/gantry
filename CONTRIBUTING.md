@@ -152,7 +152,8 @@ The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plan
   JRE container (`internal/pins.TemurinImage`) using the SHA-256-verified
   `tla2tools.jar` (`internal/pins.TLAVersion` / `TLASHA256`). A config's first
   line says what TLC must find: `\* expect: pass`, or `\* expect: violates
-  <Invariant>` for a control (`<Name>.Mut<Fix>.cfg` sets a `Mut*` constant
+  <Invariant>` for a control (`<Name>.Mut<Fix>.cfg`, or `<Name>.Mut<Fix>.<Case>.cfg` for
+  another invariant it breaks, sets a `Mut*` constant
   that puts a fix back, and the invariant guarding it must fail) or a
   reachability witness (`<Name>.Reach<State>.cfg`: the state is reached, so
   a pass isn't vacuous). `bin/tlc` fails on a config that does otherwise, and

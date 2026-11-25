@@ -18,7 +18,11 @@
 \*   MutStaleFence          every settle fences on state IN ('claimed', its
 \*                          target), and a crash failure and Retry keep the
 \*                          claim on the row (bfc43db), so a worker stalled
-\*                          past Dead settles a row that's no longer its claim
+\*                          past Dead settles a row that's no longer its claim:
+\*                          Jobs.MutStaleFence.cfg after a crash failure,
+\*                          Jobs.MutStaleFence.Retry.cfg after a crash failure
+\*                          and Retry (both with MaxCrashes 1, as Jobs.Stall.cfg:
+\*                          the stale settles follow a failure, not a put-back)
 \* Reach* are witnesses, each violated by its spec/Jobs.Reach*.cfg, so the
 \* main run's pass covers the states that matter.
 \*

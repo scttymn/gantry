@@ -331,6 +331,7 @@ func TestSpecConfigsSayWhatTheyExpect(t *testing.T) {
 			t.Fatal(err)
 		}
 		base, variant, _ := strings.Cut(strings.TrimSuffix(filepath.Base(cfg), ".cfg"), ".")
+		variant, _, _ = strings.Cut(variant, ".")
 		spec, err := os.ReadFile(filepath.Join("spec", base+".tla"))
 		if err != nil {
 			t.Errorf("%s has no spec: bin/tlc runs spec/<Name>.cfg and spec/<Name>.*.cfg with spec/<Name>.tla, and there's no spec/%s.tla", cfg, base)
