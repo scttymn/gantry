@@ -141,7 +141,8 @@ The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plan
 - **TLA+ specifications (`spec/`):** `spec/Jobs.tla` (the queue as `jobs` runs
   it: fenced claims and settles, a failed settle saved on the heartbeat, a
   process's own orphaned claims put back, crash recovery and its bound,
-  shutdown, failed and ambiguous commits), `spec/Ticks.tla` (a recurring job's
+  shutdown, failed and ambiguous commits, a live process stalled past Dead),
+  `spec/Ticks.tla` (a recurring job's
   ticks against maintenance), `spec/PageCache.tla` (no personalized
   entries stored, no cross-visitor leak, no stale version served) and
   `spec/Auth.tla` (single-use first-install setup, no unverified social takeover,
@@ -156,8 +157,8 @@ The plan, with what each batch measured: [`docs/plans/performance.md`](docs/plan
   reachability witness (`<Name>.Reach<State>.cfg`: the state is reached, so
   a pass isn't vacuous). `bin/tlc` fails on a config that does otherwise, and
   `TestSpecConfigsSayWhatTheyExpect` on one without a valid expect line or
-  its spec. Keep every config small (the whole run takes under 20 s on a
-  24-core machine); a longer exploration goes in its spec's header as a
+  its spec. Keep every config small (the whole run takes about 20 s on a
+  24-core machine, and the CI step under a minute); a longer exploration goes in its spec's header as a
   command, not in a config. A new `spec/<Name>.tla` and its configs are
   picked up automatically by `bin/tlc` and CI.
 
