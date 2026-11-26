@@ -1,11 +1,12 @@
 // Command ciplan prints the CI checks a change needs (internal/ciplan).
 //
-//	ciplan -full [-format F]                  every check
-//	ciplan -base REF [-worktree] [-format F]  those HEAD's changes since its merge base with REF
-//	                                          need, and with -worktree the tree's
+//	ciplan -full [-format F]
+//	ciplan -base REF [-worktree] [-format F]
 //
-// F is json, sh (bin/ci's) or github (a step's outputs). When git can't say
-// what changed it plans every check; any other failure exits 1.
+// -full plans every check. -base plans those HEAD's changes since its merge
+// base with REF need, and with -worktree the tree's changes too. F is json,
+// sh (bin/ci's) or github (a step's outputs). When git can't say what
+// changed it plans every check; any other failure exits 1.
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 
 	"github.com/scttymn/gantry/internal/ciplan"
 )
@@ -53,21 +55,30 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unknown format %q", *format)
 	}
 
-	if *full {
+	everyCheck := func() error {
 		plan, err := ciplan.FullPlanAt(*root)
 		if err != nil {
 			return err
 		}
 		return write(stdout, plan)
 	}
-	in, err := ciplan.Load(*root)
-	if err != nil {
-		return err
+	if *full {
+		return everyCheck()
 	}
 	changed, err := ciplan.Changed(*root, *base, *worktree)
 	if err != nil {
 		fmt.Fprintf(stderr, "ciplan: can't tell what changed since %s, so planning every check: %v\n", *base, err)
-		return write(stdout, ciplan.FullPlan(in.Specs, in.Scripts))
+		return everyCheck()
+	}
+	if slices.ContainsFunc(changed, ciplan.PlansEveryCheck) {
+		return everyCheck()
+	}
+	if len(changed) == 0 {
+		return write(stdout, ciplan.Result{})
+	}
+	in, err := ciplan.Load(*root)
+	if err != nil {
+		return err
 	}
 	return write(stdout, ciplan.Plan(changed, in))
 }

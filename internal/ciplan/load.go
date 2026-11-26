@@ -76,6 +76,10 @@ func Load(root string) (Inputs, error) {
 // FullPlanAt is FullPlan for the checkout at root. Every check needs no
 // package graph, so it lists none, and downloads no module.
 func FullPlanAt(root string) (Result, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return Result{}, err
+	}
 	specs, err := listSpecs(root)
 	if err != nil {
 		return Result{}, err
@@ -160,6 +164,7 @@ func listScripts(root string) ([]string, error) {
 func listPackages(root string) ([]Package, error) {
 	byPath := map[string]*Package{}
 	files := map[string]string{}
+	builds := map[string]int{}
 	var order []string
 	for _, build := range []struct{ env, flags []string }{
 		{[]string{"CGO_ENABLED=0"}, nil},
@@ -212,10 +217,14 @@ func listPackages(root string) ([]Package, error) {
 				got.DiffersWithCGO = true
 			}
 			files[p.ImportPath] = built
+			builds[p.ImportPath]++
 		}
 	}
 	pkgs := make([]Package, 0, len(order))
 	for _, imp := range order {
+		if builds[imp] != 2 {
+			byPath[imp].DiffersWithCGO = true
+		}
 		pkgs = append(pkgs, *byPath[imp])
 	}
 	return pkgs, nil

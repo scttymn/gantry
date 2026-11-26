@@ -102,7 +102,7 @@ func TestCIFilesPlanFull(t *testing.T) {
 		if rule, ok := ruled[f]; ok && rule(got) || got.Full {
 			continue
 		}
-		t.Errorf("ci.yml runs %s, and a change to it doesn't plan every check: add it to plansEveryCheck (internal/ciplan/plan.go), or a rule here for what does run it: %+v", f, got)
+		t.Errorf("ci.yml runs %s, and a change to it doesn't plan every check: add it to PlansEveryCheck (internal/ciplan/plan.go), or a rule here for what does run it: %+v", f, got)
 	}
 }
 
@@ -197,13 +197,34 @@ func pathsLeaving(decl ast.Node) []string {
 				}
 				parts = append(parts, s)
 			}
-			if len(parts) > 0 && parts[0] == ".." {
+			if len(parts) > 0 && (parts[0] == ".." || strings.HasPrefix(parts[0], "../")) {
 				found = append(found, path.Join(parts...))
+				return false
 			}
 		}
 		return true
 	})
 	return found
+}
+
+func TestPathsLeaving(t *testing.T) {
+	for src, want := range map[string][]string{
+		`os.ReadFile("../cmd/gantry/x.tmpl")`:                        {"../cmd/gantry/x.tmpl"},
+		`filepath.Join("..", "bench", "feed")`:                       {"../bench/feed"},
+		`filepath.Join("../..", "docs", "x.md")`:                     {"../../docs/x.md"},
+		`filepath.Join("../cmd/gantry", "templates", "social.tmpl")`: {"../cmd/gantry/templates/social.tmpl"},
+		`filepath.Join("../..", pattern)`:                            {"../.."},
+		`filepath.Join("testdata", "x")`:                             nil,
+		`os.ReadFile("testdata/x")`:                                  nil,
+	} {
+		expr, err := parser.ParseExpr(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := pathsLeaving(expr); !slices.Equal(got, want) {
+			t.Errorf("pathsLeaving(%s) = %q, want %q", src, got, want)
+		}
+	}
 }
 
 func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
@@ -249,6 +270,18 @@ func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
 		t.Setenv("GOFLAGS", "-tags=nodynamic")
 		if _, err := Load(root); err != nil {
 			t.Errorf("Load: %v; listing packages needs no VCS stamp", err)
+		}
+	})
+	t.Run("a package only an app's cgo build has", func(t *testing.T) {
+		root := tempModule(t, map[string]string{"c/c.go": "package c\n\nimport \"C\"\n"})
+		in, err := Load(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range in.Packages {
+			if p.DiffersWithCGO != (p.ImportPath == "example.com/m/c") {
+				t.Errorf("%s: DiffersWithCGO %v; only c, which builds only with cgo, differs", p.ImportPath, p.DiffersWithCGO)
+			}
 		}
 	})
 	t.Run("a template's import that is", func(t *testing.T) {

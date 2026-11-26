@@ -96,14 +96,15 @@ Each of the workflow's jobs plans its checks first, with `internal/ciplan`: a
 push to `main` plans every one, and a pull request those its diff from its base
 (`git diff --no-renames`) needs. That's the tests of each changed package and of
 every package that imports it, `cmd/gantry`'s too when a generated app imports
-it (`TestGeneratorMatrix`), with both builds' imports (cgo's
-`db/sqlite_c.go` imports `internal/pins`); the TLA+ specs that model it, its fuzz
-targets, its shell scripts, the linters, tidy and govulncheck on a Go change, the
-bench modules that build it and the release build when `cmd/gantry` is among
-them, the cgo passes when one is a package an app's cgo build builds other
-files of (`db`), and the tests of another package that read a changed file
-(`TestCrossPackageReadsArePlanned` finds them). Every change also runs the checks of the whole repo (the root package,
-`internal/hygiene`, `internal/pins`, `internal/ciplan` and
+it (`TestGeneratorMatrix`), with both builds' imports (cgo's `db/sqlite_c.go`
+imports `internal/pins`); the TLA+ specs that model it, its fuzz targets, its
+shell scripts, the linters, tidy and govulncheck on a Go change, the bench
+modules that build it and the release build when `cmd/gantry` is among them,
+the cgo passes when one is a package an app's cgo build builds other files of
+(`db`), and the tests of another package that read a changed file
+(`TestCrossPackageReadsArePlanned` finds them). Every change also runs the
+checks of the whole repo (the root package, `internal/hygiene`,
+`internal/pins`, `internal/ciplan` and
 `TestGantryPassesStrict`, under a second together). A change to CI itself
 (`ci.yml`, `bin/ci`, `bin/go`, `bin/shellcheck`, `internal/ciplan`), to
 `go.mod`, `go.sum` or the `Dockerfile` runs every check, and so does one git

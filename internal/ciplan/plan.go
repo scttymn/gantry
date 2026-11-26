@@ -6,15 +6,15 @@
 //
 // Every change also runs the checks of the whole repo, under a second
 // together: the root package's, internal/hygiene's, internal/pins', this
-// planner's, and TestGantryPassesStrict. A change to CI itself (ci.yml, bin/ci,
-// bin/go, bin/shellcheck, this planner), go.mod, go.sum or the Dockerfile runs
-// every check. Each spec/*.tla models a package's code, and a change to that
-// code runs it (TestEverySpecHasAnOwner); a spec/ config runs the spec named
-// by its name up to its first dot, as bin/tlc pairs them, and one with no
-// spec runs every spec, so bin/tlc fails on it. A file another package's
-// test reads runs that package's tests (TestCrossPackageReadsArePlanned), and
-// a change reaching a package an app's cgo build builds differently runs
-// the cgo passes.
+// planner's, and TestGantryPassesStrict. A change to CI itself (ci.yml,
+// bin/ci, bin/go, bin/shellcheck, this planner), go.mod, go.sum or the
+// Dockerfile runs every check. Each spec/*.tla models a package's code, and
+// a change to that code runs it (TestEverySpecHasAnOwner); a spec/ config
+// runs the spec named by its name up to its first dot, as bin/tlc pairs
+// them, and one with no spec runs every spec, so bin/tlc fails on it. A file
+// another package's test reads runs that package's tests
+// (TestCrossPackageReadsArePlanned), and a change reaching a package an app's
+// cgo build builds differently runs the cgo passes.
 package ciplan
 
 import (
@@ -25,9 +25,10 @@ import (
 )
 
 // Package is one Go package of the module: `go list -json`'s fields, its
-// imports from every build CI tests. DiffersWithCGO is whether an app's build, with cgo and SQLite's tags,
-// builds other files of the package (db/sqlite_c.go): a change reaching it
-// runs the cgo pass and the cgo vet and lint.
+// imports from every build CI tests. DiffersWithCGO is whether an app's
+// build, with cgo and SQLite's tags, builds other files of the package
+// (db/sqlite_c.go), or builds only it: a change reaching it runs the cgo pass
+// and the cgo vet and lint.
 type Package struct {
 	ImportPath     string
 	Dir            string
@@ -82,7 +83,10 @@ var specsModellingDir = map[string][]string{
 	"web":  {"spec/PageCache.tla"},
 }
 
-func plansEveryCheck(file string) bool {
+// PlansEveryCheck reports whether a change to file plans every check, with
+// no package graph to read: CI's own files, go.mod, go.sum and the
+// Dockerfile.
+func PlansEveryCheck(file string) bool {
 	switch file {
 	case ".github/workflows/ci.yml", "bin/ci", "bin/go", "bin/shellcheck", "Dockerfile", "go.mod", "go.sum":
 		return true
@@ -150,7 +154,7 @@ func Plan(changed []string, in Inputs) Result {
 	if len(files) == 0 {
 		return Result{}
 	}
-	if slices.ContainsFunc(files, plansEveryCheck) {
+	if slices.ContainsFunc(files, PlansEveryCheck) {
 		return FullPlan(in.Specs, in.Scripts)
 	}
 

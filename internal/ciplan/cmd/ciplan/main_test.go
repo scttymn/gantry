@@ -71,15 +71,49 @@ func TestRun(t *testing.T) {
 			t.Errorf("ciplan -full: %v\n%s", err, out)
 		}
 	})
-	t.Run("-full lists no packages", func(t *testing.T) {
+	withoutGo := func(t *testing.T) {
+		t.Helper()
 		bin := t.TempDir()
-		if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\necho \"go $*: not for -full\" >&2\nexit 1\n"), 0o755); err != nil {
+		if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\necho \"go $*: not for this plan\" >&2\nexit 1\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
+	t.Run("-full lists no packages", func(t *testing.T) {
+		withoutGo(t)
 		out, stderr, err := plan("-full")
 		if err != nil || !strings.Contains(out, "full=true\n") {
 			t.Errorf("ciplan -full ran go, which every check doesn't need: %v\n%s%s", err, out, stderr)
+		}
+	})
+	t.Run("-full, from a relative -root", func(t *testing.T) {
+		t.Chdir(filepath.Dir(root))
+		rel := filepath.Base(root)
+		var stdout, stderr bytes.Buffer
+		if err := run([]string{"-root", rel, "-full", "-format", "github"}, &stdout, &stderr); err != nil || !strings.Contains(stdout.String(), "full=true\n") {
+			t.Errorf("ciplan -root %s -full: %v\n%s%s", rel, err, stdout.String(), stderr.String())
+		}
+	})
+	t.Run("a change that plans every check lists no packages", func(t *testing.T) {
+		git("checkout", "-q", "-b", "ci", "main")
+		defer git("checkout", "-q", "feature")
+		if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("FROM scratch\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		git("add", "Dockerfile")
+		git("commit", "-q", "-m", "docker")
+		withoutGo(t)
+		out, stderr, err := plan("-base", "main")
+		if err != nil || !strings.Contains(out, "any=true\nfull=true\n") {
+			t.Errorf("ciplan -base main, with a Dockerfile change: %v\n%s%s", err, out, stderr)
+		}
+	})
+	t.Run("no change, or none git can say, lists no packages", func(t *testing.T) {
+		withoutGo(t)
+		for base, want := range map[string]string{"feature": "any=false\n", "origin/nope": "any=true\nfull=true\n"} {
+			if out, stderr, err := plan("-base", base); err != nil || !strings.Contains(out, want) {
+				t.Errorf("ciplan -base %s: %v\n%s%s", base, err, out, stderr)
+			}
 		}
 	})
 	t.Run("neither -full nor -base: an error", func(t *testing.T) {
