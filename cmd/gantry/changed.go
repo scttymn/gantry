@@ -34,7 +34,7 @@ func affectedPackages(root, base string) affected {
 		return everything("%v", err)
 	}
 	for _, f := range outside {
-		if !documentation(f) {
+		if !topLevelDocumentation(f) {
 			return everything("%s changed, outside the app", f)
 		}
 	}
@@ -47,9 +47,14 @@ func affectedPackages(root, base string) affected {
 		if runsEverything(f) {
 			return everything("%s changed", f)
 		}
+		if skipped := graph.skippedDirOf(f); skipped == ".github" {
+			continue
+		} else if skipped != "" {
+			return everything("%s is under %s, which the import graph doesn't read", f, skipped)
+		}
 		dir, ok := graph.packageOf(root, f)
 		switch {
-		case ok && strings.HasSuffix(f, "_test.go"):
+		case ok && strings.HasSuffix(f, "_test.go") && parent(f) == dir:
 			testsChanged[dir] = true
 		case ok:
 			changed[dir] = true
@@ -120,7 +125,7 @@ func changedFiles(root, base string) (inside, outside []string, err error) {
 
 func runsEverything(f string) bool {
 	switch f {
-	case "go.mod", "go.sum", "go.work", "go.work.sum", "Dockerfile", "compose.yml", ".dockerignore":
+	case "go.mod", "go.sum", "go.work", "go.work.sum", "Dockerfile", "compose.yml", ".dockerignore", "Dockerfile.dockerignore":
 		return true
 	}
 	for _, dir := range []string{"config/", "db/", "test/"} {
@@ -142,10 +147,24 @@ func documentation(f string) bool {
 	return false
 }
 
+func topLevelDocumentation(f string) bool {
+	return strings.HasPrefix(f, "docs/") || strings.HasPrefix(f, ".github/") || !strings.Contains(f, "/") && documentation(f)
+}
+
 type imports struct {
 	dirs          map[string]string
 	importers     map[string][]string
 	testImporters map[string][]string
+	skipped       []string
+}
+
+func (g imports) skippedDirOf(f string) string {
+	for _, dir := range g.skipped {
+		if strings.HasPrefix(f, dir+"/") {
+			return dir
+		}
+	}
+	return ""
 }
 
 func importGraph(root string) (imports, error) {
@@ -163,10 +182,17 @@ func importGraph(root string) (imports, error) {
 		rel = filepath.ToSlash(rel)
 		if entry.IsDir() {
 			name := entry.Name()
-			if rel != "." && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == "node_modules") {
+			switch {
+			case rel == ".":
+				return nil
+			case name == "testdata":
+				return filepath.SkipDir
+			case strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "node_modules":
+				g.skipped = append(g.skipped, rel)
 				return filepath.SkipDir
 			}
-			if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil && rel != "." {
+			if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil {
+				g.skipped = append(g.skipped, rel)
 				return filepath.SkipDir
 			}
 			return nil

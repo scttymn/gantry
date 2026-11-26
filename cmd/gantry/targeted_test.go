@@ -182,6 +182,39 @@ func TestAffectedPackages(t *testing.T) {
 	}
 }
 
+func TestAffectedPackagesWithARootPackage(t *testing.T) {
+	files := maps.Clone(targetedApp)
+	maps.Copy(files, map[string]string{
+		"doc.go":                        "package shop\n",
+		"tools/go.mod":                  "module example.com/tools\n",
+		"tools/tools.go":                "package tools\n",
+		"_scripts/seed.go":              "package scripts\n",
+		"vendor/example.com/dep/dep.go": "package dep\n",
+		".github/workflows/ci.yml":      "on: push\n",
+	})
+	for _, tc := range []struct {
+		name, file string
+		pkgs       []string
+		all        string
+	}{
+		{"vendored code", "vendor/example.com/dep/dep.go", nil, "vendor/example.com/dep/dep.go is under vendor"},
+		{"a nested module", "tools/tools.go", nil, "tools/tools.go is under tools"},
+		{"an underscore directory", "_scripts/seed.go", nil, "_scripts/seed.go is under _scripts"},
+		{"the in-module Dockerfile's ignore file", "Dockerfile.dockerignore", nil, "Dockerfile.dockerignore changed"},
+		{"a test in test data counts for its package, not only its tests", "app/posts/testdata/helper_test.go", []string{"./app", "./app/posts", "./cmd/shop"}, ""},
+		{"the workflows", ".github/workflows/ci.yml", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := gitRepo(t, files)
+			put(t, root, map[string]string{tc.file: "package changed\n\n// " + tc.name + "\n"})
+			got := affectedPackages(root, "")
+			if !strings.HasPrefix(got.everythingBecause, tc.all) || (tc.all == "") != (got.everythingBecause == "") || !reflect.DeepEqual(got.pkgs, tc.pkgs) {
+				t.Errorf("got %+v, want packages %q or everything because %q", got, tc.pkgs, tc.all)
+			}
+		})
+	}
+}
+
 func TestAffectedPackagesRunsEverythingWhenGitCantSay(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -243,6 +276,9 @@ func TestAffectedPackagesOfAnAppInAModule(t *testing.T) {
 		{"documentation outside the app", func(t *testing.T, root string) {
 			put(t, root, map[string]string{"README.md": "# big, again\n"})
 		}, nil, ""},
+		{"Markdown outside the app, which a package it imports could embed", func(t *testing.T, root string) {
+			put(t, root, map[string]string{"apps/lib/help.md": "Help.\n"})
+		}, nil, "apps/lib/help.md changed, outside the app"},
 		{"code outside the app, in its module", func(t *testing.T, root string) {
 			put(t, root, map[string]string{"apps/lib/lib.go": "package lib\n\nvar X = 1\n"})
 		}, nil, "apps/lib/lib.go changed, outside the app"},
