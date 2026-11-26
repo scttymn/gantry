@@ -146,33 +146,40 @@ func TestNewCI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var workflow struct {
+			Jobs map[string]struct {
+				Steps []struct {
+					Uses string `yaml:"uses"`
+					Run  string `yaml:"run"`
+				} `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(ci, &workflow); err != nil {
+			t.Fatal(err)
+		}
 		var runs []string
-		for _, line := range strings.Split(string(ci), "\n") {
-			line = strings.TrimSpace(line)
-			if command, ok := strings.CutPrefix(line, "- run: bin/gantry "); ok {
-				runs = append(runs, command)
-				if msg := checkInvocation(command); msg != "" {
-					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
-				}
-			} else if command, ok := strings.CutPrefix(line, "bin/gantry "); ok {
-				runs = append(runs, command)
-				if msg := checkInvocation(command); msg != "" {
-					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
-				}
+		for _, step := range workflow.Jobs["check"].Steps {
+			if step.Uses != "" && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(step.Uses) {
+				t.Errorf("%s: %s isn't pinned by commit", engine, step.Uses)
 			}
-			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(action) {
-				t.Errorf("%s: %s isn't pinned by commit", engine, action)
+			// A ${{ }} in a script is pasted into it before the shell reads
+			// it: pass the value through env and quote the variable instead.
+			if strings.Contains(step.Run, "${{") {
+				t.Errorf("%s: a run script has a ${{ }} expression in it; pass it through env:\n%s", engine, step.Run)
+			}
+			for _, line := range strings.Split(step.Run, "\n") {
+				if command, ok := strings.CutPrefix(strings.TrimSpace(line), "bin/gantry "); ok {
+					runs = append(runs, command)
+					if msg := checkInvocation(command); msg != "" {
+						t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+					}
+				}
 			}
 		}
-		for _, want := range []string{"check --strict", "check --generated", "test", "verify"} {
-			if !slices.Contains(runs, want) {
-				t.Errorf("%s: ci.yml missing %q in %q", engine, want, runs)
-			}
-		}
-		for _, want := range []string{"check --strict --changed", "test --changed", "verify --changed"} {
-			if !strings.Contains(string(ci), "bin/gantry "+want) {
-				t.Errorf("%s: ci.yml missing PR targeted %q:\n%s", engine, want, ci)
-			}
+		// The strict check and verify are the full ones on every run; only the
+		// tests narrow to what a pull request affects.
+		if want := []string{"check --strict", "check --generated", `test --changed --base "origin/$BASE_REF"`, "test", "verify"}; !reflect.DeepEqual(runs, want) {
+			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
 		}
 		if want := "golangci-lint@" + pins.GolangciLint + " run ./..."; !strings.Contains(string(ci), want) {
 			t.Errorf("%s: ci.yml doesn't run %q:\n%s", engine, want, ci)

@@ -28,27 +28,17 @@ jobs:
           docker cp "$id:/usr/local/bin/sqlc" "$RUNNER_TEMP/bin/sqlc"
           docker rm "$id" >/dev/null
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-      - name: Strict check
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            bin/gantry check --strict --changed --base "origin/${{ github.base_ref }}"
-          else
-            bin/gantry check --strict
-          fi
+      - run: bin/gantry check --strict
       - run: bin/gantry check --generated
       - name: golangci-lint
         run: docker run --rm -v "$PWD:/app" -w /app feed-toolchain go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
-      - name: Tests
+      - name: Tests, of the packages a pull request affects
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            bin/gantry test --changed --base "origin/${{ github.base_ref }}"
+          if [ -n "$BASE_REF" ]; then
+            bin/gantry test --changed --base "origin/$BASE_REF"
           else
             bin/gantry test
           fi
-      - name: Verify
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            bin/gantry verify --changed --base "origin/${{ github.base_ref }}"
-          else
-            bin/gantry verify
-          fi
+      - run: bin/gantry verify

@@ -12,16 +12,16 @@ Use `bin/gantry`, which runs the CLI that matches `go.mod`. Ask the tools rather
 ```sh
 bin/gantry --help          # commands and generators
 bin/gantry check --rules   # the rules this version checks, with their guidance
-bin/gantry check --strict  # nonzero on a violation (--changed or PATH... for touched files)
+bin/gantry check --strict  # nonzero on a violation: run it before you finish
 bin/gantry check --generated  # nonzero when generated Go isn't what its .templ or .sql makes
-bin/gantry test            # the tests, in a throwaway copy (--changed or ./app/... for affected packages)
+bin/gantry test            # the tests, in a throwaway copy (--changed: the packages your change affects)
 bin/gantry routes --json   # every route, from the app's router
 bin/gantry routes --diagram  # Mermaid flowchart of routes and test/features.yaml
-bin/gantry verify          # each feature in test/features.yaml, visited as each role (--changed, --feature, --json, --browser)
+bin/gantry verify          # each feature in test/features.yaml, visited as each role (--json for tools, --feature NAME for one)
 ```
 {{- if not .InModule}}
 
-`.github/workflows/ci.yml` runs targeted `check --strict --changed`, `test --changed`, and `verify --changed` on pull requests (plus `check --generated` and `golangci-lint`), and the full suite on `main`.
+`.github/workflows/ci.yml` runs `check --strict`, `check --generated`, `golangci-lint`, `test` and `verify` on every pull request; its `test` is `test --changed`, the packages the pull request affects and the ones that import them.
 {{- end}}
 
 A route needs a feature in `test/features.yaml`, or `TestFeatures` fails. `bin/gantry g features` adds one for each route in none, for you to finish.
