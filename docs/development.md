@@ -377,12 +377,22 @@ touches and on every package that imports them, with each `./...` in the
 command narrowed to that list. A change is what differs from where the branch
 left `--base REF` (`origin/main` or `main` when it's left out), what is staged,
 what isn't, and new files. A file in a package's directory, of any kind (a
-template, an embedded asset, test data), counts for that package. Anything it
-can't be sure about runs everything:
+template, an embedded asset, test data), counts for that package. A
+`_test.go` file directly in it counts for that package's tests alone; one
+under its `testdata/` counts for the package. Anything it can't be sure about
+runs everything:
 
-- `go.mod`, `go.sum`, `go.work`, `Dockerfile`, `compose.yml`, `.dockerignore`,
-  or anything under `config/`, `db/` or `test/`
+- any `go.mod`, `go.sum`, `go.work` or `go.work.sum`; `Dockerfile`,
+  `compose.yml`, `.dockerignore`, `Dockerfile.dockerignore`; or anything under
+  `config/`, `db/` or `test/`
+- anything under a directory the import graph doesn't read: `vendor/`,
+  `node_modules/`, a nested module, or one whose name starts with `.` or `_`
+  (except `.github/`), even once deleted
+- a submodule
 - a file in no package's directory that isn't documentation
+- in an app inside a bigger module, a change outside the app other than
+  `.github/` or documentation no package of the module could embed (none in
+  its directory or above it, up to the module's root)
 - no base to compare with, no history shared with it, or any error from git
 - a Go file it can't read the imports of
 - a test command with a `./...` that isn't `go vet`'s or `go test`'s (or no

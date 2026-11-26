@@ -29,12 +29,12 @@ func everything(format string, args ...any) affected {
 }
 
 func affectedPackages(root, base string) affected {
-	inside, outside, err := changedFiles(root, base)
+	c, err := changedFiles(root, base)
 	if err != nil {
 		return everything("%v", err)
 	}
-	for _, f := range outside {
-		if !topLevelDocumentation(f) {
+	for _, f := range c.outside {
+		if !strings.HasPrefix(f, ".github/") && !unbuiltDocumentation(root, c.top, f) {
 			return everything("%s changed, outside the app", f)
 		}
 	}
@@ -43,7 +43,7 @@ func affectedPackages(root, base string) affected {
 		return everything("%v", err)
 	}
 	changed, testsChanged := map[string]bool{}, map[string]bool{}
-	for _, f := range inside {
+	for _, f := range c.inside {
 		if runsEverything(f) {
 			return everything("%s changed", f)
 		}
@@ -66,7 +66,12 @@ func affectedPackages(root, base string) affected {
 	return affected{pkgs: graph.toTest(changed, testsChanged)}
 }
 
-func changedFiles(root, base string) (inside, outside []string, err error) {
+type changes struct {
+	inside, outside []string
+	top             string
+}
+
+func changedFiles(root, base string) (changes, error) {
 	git := func(args ...string) ([]byte, error) {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = root
@@ -78,10 +83,11 @@ func changedFiles(root, base string) (inside, outside []string, err error) {
 		}
 		return out, nil
 	}
-	prefix, err := git("rev-parse", "--show-prefix")
+	where, err := git("rev-parse", "--show-toplevel", "--show-prefix")
 	if err != nil {
-		return nil, nil, err
+		return changes{}, err
 	}
+	top, prefix, _ := strings.Cut(strings.TrimSuffix(string(where), "\n"), "\n")
 	if base == "" {
 		for _, candidate := range []string{"origin/main", "main"} {
 			if _, err := git("rev-parse", "--verify", "--quiet", candidate+"^{commit}"); err == nil {
@@ -90,51 +96,61 @@ func changedFiles(root, base string) (inside, outside []string, err error) {
 			}
 		}
 		if base == "" {
-			return nil, nil, errors.New("no origin/main or main to compare with: pass --base REF")
+			return changes{}, errors.New("no origin/main or main to compare with: pass --base REF")
 		}
 	} else if _, err := git("rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
-		return nil, nil, fmt.Errorf("--base %s isn't a commit here", base)
+		return changes{}, fmt.Errorf("--base %s isn't a commit here", base)
 	}
 	since, err := git("merge-base", base, "HEAD")
 	if err != nil {
-		return nil, nil, fmt.Errorf("HEAD shares no history with %s (a shallow clone needs fetch-depth: 0): %w", base, err)
+		return changes{}, fmt.Errorf("HEAD shares no history with %s (a shallow clone needs fetch-depth: 0): %w", base, err)
 	}
-	changed, err := git("diff", "--name-only", "-z", "--no-renames", "--no-relative", strings.TrimSpace(string(since)), "--")
-	if err != nil {
-		return nil, nil, err
+	var all []string
+	diff := []string{"diff", "--raw", "-z", "--no-renames", "--no-relative", "--ignore-submodules=none"}
+	for _, which := range [][]string{{strings.TrimSpace(string(since)), "HEAD"}, {"--cached"}, nil} {
+		raw, err := git(slices.Concat(diff, which, []string{"--"})...)
+		if err != nil {
+			return changes{}, err
+		}
+		fields := strings.Split(string(raw), "\x00")
+		for i := 0; i+1 < len(fields); i += 2 {
+			if modes := strings.Fields(fields[i]); len(modes) > 1 && (modes[0] == ":160000" || modes[1] == "160000") {
+				return changes{}, fmt.Errorf("%s is a submodule", fields[i+1])
+			}
+			all = append(all, fields[i+1])
+		}
 	}
 	untracked, err := git("ls-files", "-z", "--others", "--exclude-standard", "--full-name", "--", ":/")
 	if err != nil {
-		return nil, nil, err
+		return changes{}, err
 	}
-	in := strings.TrimSpace(string(prefix))
-	all := strings.Split(string(changed)+string(untracked), "\x00")
+	all = append(all, strings.Split(string(untracked), "\x00")...)
 	slices.Sort(all)
+	c := changes{top: top}
 	for _, f := range slices.Compact(all) {
 		if f == "" {
 			continue
 		}
-		if rest, ok := strings.CutPrefix(f, in); ok {
-			inside = append(inside, rest)
+		if rest, ok := strings.CutPrefix(f, prefix); ok {
+			c.inside = append(c.inside, rest)
 		} else {
-			outside = append(outside, f)
+			c.outside = append(c.outside, f)
 		}
 	}
-	return inside, outside, nil
+	return c, nil
 }
 
 func runsEverything(f string) bool {
-	switch f {
-	case "go.mod", "go.sum", "go.work", "go.work.sum", "Dockerfile", "compose.yml", ".dockerignore", "Dockerfile.dockerignore":
-		return true
-	}
-	for _, dir := range []string{"config/", "db/", "test/"} {
-		if strings.HasPrefix(f, dir) {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(moduleFiles, path.Base(f)) || slices.Contains(appFiles, f) ||
+		slices.ContainsFunc(appDirs, func(dir string) bool { return strings.HasPrefix(f, dir) })
 }
+
+var (
+	moduleFiles = []string{"go.mod", "go.sum", "go.work", "go.work.sum"}
+	appFiles    = []string{"Dockerfile", "compose.yml", ".dockerignore", "Dockerfile.dockerignore"}
+	appDirs     = []string{"config/", "db/", "test/"}
+	unreadDirs  = []string{"vendor", "node_modules"}
+)
 
 func documentation(f string) bool {
 	if strings.HasPrefix(f, "docs/") || strings.HasPrefix(f, ".github/") || strings.HasSuffix(f, ".md") {
@@ -147,8 +163,30 @@ func documentation(f string) bool {
 	return false
 }
 
-func topLevelDocumentation(f string) bool {
-	return strings.HasPrefix(f, "docs/") || strings.HasPrefix(f, ".github/") || !strings.Contains(f, "/") && documentation(f)
+func unbuiltDocumentation(root, top, f string) bool {
+	if !documentation(f) || strings.HasSuffix(f, ".go") {
+		return false
+	}
+	module, _, err := gomod.Enclosing(root)
+	if err != nil {
+		return false
+	}
+	if real, err := filepath.EvalSymlinks(module); err == nil {
+		module = real
+	}
+	file := filepath.Join(top, filepath.FromSlash(f))
+	if rel, err := filepath.Rel(module, file); err != nil || strings.HasPrefix(rel, "..") {
+		return true
+	}
+	for dir := filepath.Dir(file); ; dir = filepath.Dir(dir) {
+		entries, _ := os.ReadDir(dir)
+		if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.IsDir() && strings.HasSuffix(e.Name(), ".go") }) {
+			return false
+		}
+		if dir == module || filepath.Dir(dir) == dir {
+			return true
+		}
+	}
 }
 
 type imports struct {
@@ -159,6 +197,12 @@ type imports struct {
 }
 
 func (g imports) skippedDirOf(f string) string {
+	segments := strings.Split(f, "/")
+	for i, name := range segments[:len(segments)-1] {
+		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || slices.Contains(unreadDirs, name) {
+			return strings.Join(segments[:i+1], "/")
+		}
+	}
 	for _, dir := range g.skipped {
 		if strings.HasPrefix(f, dir+"/") {
 			return dir
@@ -187,7 +231,7 @@ func importGraph(root string) (imports, error) {
 				return nil
 			case name == "testdata":
 				return filepath.SkipDir
-			case strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "vendor" || name == "node_modules":
+			case strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || slices.Contains(unreadDirs, name):
 				g.skipped = append(g.skipped, rel)
 				return filepath.SkipDir
 			}
