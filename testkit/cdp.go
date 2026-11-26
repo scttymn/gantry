@@ -90,14 +90,15 @@ func VerifyBrowser(t testing.TB, h http.Handler, path string, roles Roles, opts 
 		t.Fatalf("testkit: VerifyBrowser refuses GANTRY_ENV=development: run it as GANTRY_ENV=test, as bin/gantry verify --browser does")
 	}
 	all := Features(t, path)
-	selected := opts.Features
+	selected, fromEnv := opts.Features, false
 	if len(selected) == 0 {
 		selected = parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES"))
-		if len(selected) > 0 {
-			t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selected, ", "), len(all), path)
-		}
+		fromEnv = len(selected) > 0
 	}
 	features := filterFeatures(t, path, all, selected)
+	if fromEnv {
+		t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selected, ", "), len(all), path)
+	}
 	viewports := opts.Viewports
 	if len(viewports) == 0 {
 		viewports = DefaultViewports

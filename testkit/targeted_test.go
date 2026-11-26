@@ -280,6 +280,17 @@ features:
 	if got := chose(rec.logs); got != 0 {
 		t.Errorf("BrowserOptions.Features was credited to GANTRY_VERIFY_FEATURES: %q", rec.logs)
 	}
+	t.Setenv("GANTRY_VERIFY_FEATURES", "nosuch")
+	unknown := &loggingTB{silentTB: silentTB{TB: t}}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		VerifyBrowser(unknown, club(&web.PageCache{}).Handler(), fmap, signIn, BrowserOptions{CDPURL: cdpSrv.URL})
+	}()
+	<-done
+	if !unknown.failed || chose(unknown.logs) != 0 {
+		t.Errorf("an unknown feature: failed=%v, logs %q; want it rejected and never logged as chosen", unknown.failed, unknown.logs)
+	}
 }
 
 func TestVerifyReportsFailuresOfFeaturesLeftOut(t *testing.T) {
