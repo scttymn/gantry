@@ -34,7 +34,7 @@ func affectedPackages(root, base string) affected {
 		return everything("%v", err)
 	}
 	for _, f := range c.outside {
-		if !strings.HasPrefix(f, ".github/") && !unbuiltDocumentation(root, c.top, f) {
+		if !strings.HasPrefix(f, ".github/") || !documentation(f) {
 			return everything("%s changed, outside the app", f)
 		}
 	}
@@ -47,7 +47,7 @@ func affectedPackages(root, base string) affected {
 		if runsEverything(f) {
 			return everything("%s changed", f)
 		}
-		if skipped := graph.skippedDirOf(f); skipped == ".github" {
+		if skipped := graph.skippedDirOf(f); skipped == ".github" && documentation(f) {
 			continue
 		} else if skipped != "" {
 			return everything("%s is under %s, which the import graph doesn't read", f, skipped)
@@ -68,7 +68,6 @@ func affectedPackages(root, base string) affected {
 
 type changes struct {
 	inside, outside []string
-	top             string
 }
 
 func changedFiles(root, base string) (changes, error) {
@@ -83,11 +82,11 @@ func changedFiles(root, base string) (changes, error) {
 		}
 		return out, nil
 	}
-	where, err := git("rev-parse", "--show-toplevel", "--show-prefix")
+	where, err := git("rev-parse", "--show-prefix")
 	if err != nil {
 		return changes{}, err
 	}
-	top, prefix, _ := strings.Cut(strings.TrimSuffix(string(where), "\n"), "\n")
+	prefix := strings.TrimSpace(string(where))
 	if base == "" {
 		for _, candidate := range []string{"origin/main", "main"} {
 			if _, err := git("rev-parse", "--verify", "--quiet", candidate+"^{commit}"); err == nil {
@@ -126,7 +125,7 @@ func changedFiles(root, base string) (changes, error) {
 	}
 	all = append(all, strings.Split(string(untracked), "\x00")...)
 	slices.Sort(all)
-	c := changes{top: top}
+	var c changes
 	for _, f := range slices.Compact(all) {
 		if f == "" {
 			continue
@@ -153,6 +152,9 @@ var (
 )
 
 func documentation(f string) bool {
+	if strings.HasSuffix(f, ".go") || slices.Contains(moduleFiles, path.Base(f)) {
+		return false
+	}
 	if strings.HasPrefix(f, "docs/") || strings.HasPrefix(f, ".github/") || strings.HasSuffix(f, ".md") {
 		return true
 	}
@@ -161,32 +163,6 @@ func documentation(f string) bool {
 		return true
 	}
 	return false
-}
-
-func unbuiltDocumentation(root, top, f string) bool {
-	if !documentation(f) || strings.HasSuffix(f, ".go") {
-		return false
-	}
-	module, _, err := gomod.Enclosing(root)
-	if err != nil {
-		return false
-	}
-	if real, err := filepath.EvalSymlinks(module); err == nil {
-		module = real
-	}
-	file := filepath.Join(top, filepath.FromSlash(f))
-	if rel, err := filepath.Rel(module, file); err != nil || strings.HasPrefix(rel, "..") {
-		return true
-	}
-	for dir := filepath.Dir(file); ; dir = filepath.Dir(dir) {
-		entries, _ := os.ReadDir(dir)
-		if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.IsDir() && strings.HasSuffix(e.Name(), ".go") }) {
-			return false
-		}
-		if dir == module || filepath.Dir(dir) == dir {
-			return true
-		}
-	}
 }
 
 type imports struct {
@@ -199,6 +175,9 @@ type imports struct {
 func (g imports) skippedDirOf(f string) string {
 	segments := strings.Split(f, "/")
 	for i, name := range segments[:len(segments)-1] {
+		if name == "testdata" {
+			break
+		}
 		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || slices.Contains(unreadDirs, name) {
 			return strings.Join(segments[:i+1], "/")
 		}

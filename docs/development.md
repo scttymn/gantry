@@ -387,20 +387,24 @@ runs everything:
   `config/`, `db/` or `test/`
 - anything under a directory the import graph doesn't read: `vendor/`,
   `node_modules/`, a nested module, or one whose name starts with `.` or `_`
-  (except `.github/`), even once deleted
+  (except documentation under `.github/`), even once deleted; under a
+  package's `testdata/`, files count for the package whatever the directory
+  names
 - a submodule
-- a file in no package's directory that isn't documentation
-- in an app inside a bigger module, a change outside the app other than
-  `.github/` or documentation no package of the module could embed (none in
-  its directory or above it, up to the module's root)
+- a file in no package's directory that isn't documentation, and any `.go`
+  file in none, a deleted package's included
+- in an app inside a bigger module, any change outside the app but
+  documentation under `.github/`: a sibling module or a package the app
+  imports could build or embed it
 - no base to compare with, no history shared with it, or any error from git
 - a Go file it can't read the imports of
 - a test command with a `./...` that isn't `go vet`'s or `go test`'s (or no
   `./...` at all), which runs as it is
 
 Documentation (`*.md`, `docs/`, `.github/`, `LICENSE`, `.gitignore`,
-`.golangci.yml`, `.gantry-check.json`) outside a package's directory affects
-no package, so a change of only that runs nothing. The imports are read from
+`.golangci.yml`, `.gantry-check.json`, but never a `.go` file or a `go.mod`)
+in the app, outside a package's directory, affects no package, so a change of
+only that runs nothing. The imports are read from
 the source, so it doesn't need Go installed. With `--local` it runs
 `go vet` and `go test` on those packages here instead of in Houston's test
 stack. An app's CI runs it on a pull request, from the pull request's base.

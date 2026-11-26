@@ -230,6 +230,7 @@ func TestAffectedPackagesWithARootPackage(t *testing.T) {
 		".github/workflows/ci.yml":      "on: push\n",
 		".config/settings.yaml":         "debug: false\n",
 		"_fixtures/seed.sh":             "#!/bin/sh\n",
+		"docs/docs.go":                  "package docs\n",
 	})
 	edit := func(file string) func(t *testing.T, root string) {
 		return func(t *testing.T, root string) {
@@ -251,6 +252,9 @@ func TestAffectedPackagesWithARootPackage(t *testing.T) {
 		{"the last file of a dot directory, deleted", remove(".config/settings.yaml"), nil, ".config/settings.yaml is under .config"},
 		{"the last file of an underscore directory, deleted", remove("_fixtures/seed.sh"), nil, "_fixtures/seed.sh is under _fixtures"},
 		{"a nested module's go.mod, deleted", remove("tools/go.mod"), nil, "tools/go.mod changed"},
+		{"a Go package under docs/, deleted whole", remove("docs/docs.go"), nil, "docs/docs.go is in no package"},
+		{"Go under .github/", edit(".github/tools/check.go"), nil, ".github/tools/check.go is under .github"},
+		{"golden files in an underscore directory under test data", edit("app/posts/testdata/_golden/out.txt"), []string{"./app", "./app/posts", "./cmd/shop"}, ""},
 		{"a submodule", func(t *testing.T, root string) {
 			runGit(t, root, "update-index", "--add", "--cacheinfo", "160000,1111111111111111111111111111111111111111,ext")
 			runGit(t, root, "commit", "-qm", "submodule")
@@ -299,7 +303,7 @@ func TestAffectedPackagesRunsEverythingWhenGitCantSay(t *testing.T) {
 			put(t, root, targetedApp)
 			t.Setenv("GIT_CEILING_DIRECTORIES", filepath.Dir(root))
 			return root
-		}, "", "git rev-parse --show-toplevel --show-prefix"},
+		}, "", "git rev-parse --show-prefix"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := affectedPackages(tc.setup(t), tc.base)
@@ -307,6 +311,25 @@ func TestAffectedPackagesRunsEverythingWhenGitCantSay(t *testing.T) {
 				t.Errorf("got %+v, want everything because %q", got, tc.all)
 			}
 		})
+	}
+}
+
+func TestAffectedPackagesOfAnAppBesideAModuleItReplaces(t *testing.T) {
+	files := map[string]string{
+		"apps/lib/go.mod":  "module example.com/lib\n\ngo 1.27\n",
+		"apps/lib/lib.go":  "package lib\n\nimport _ \"embed\"\n\n//go:embed help.md\nvar Help string\n",
+		"apps/lib/help.md": "Help.\n",
+	}
+	for name, body := range targetedApp {
+		files["apps/control/"+name] = body
+	}
+	files["apps/control/go.mod"] = "module example.com/shop\n\ngo 1.27\n\nrequire example.com/lib v0.0.0\n\nreplace example.com/lib => ../lib\n"
+	files["apps/control/app/home/controller.go"] = "package home\n\nimport _ \"example.com/lib\"\n"
+	repo := gitRepo(t, files)
+	put(t, repo, map[string]string{"apps/lib/help.md": "More help.\n"})
+	got := affectedPackages(filepath.Join(repo, "apps", "control"), "")
+	if want := "apps/lib/help.md changed, outside the app"; got.everythingBecause != want {
+		t.Errorf("got %+v, want everything because %q: the app embeds that file through its replace", got, want)
 	}
 }
 
@@ -330,7 +353,13 @@ func TestAffectedPackagesOfAnAppInAModule(t *testing.T) {
 		}, []string{"./app", "./app/home", "./app/lib", "./app/models", "./app/posts", "./cmd/shop"}, ""},
 		{"documentation outside the app", func(t *testing.T, root string) {
 			put(t, root, map[string]string{"README.md": "# big, again\n"})
+		}, nil, "README.md changed, outside the app"},
+		{"the workflows, outside the app", func(t *testing.T, root string) {
+			put(t, root, map[string]string{".github/workflows/ci.yml": "on: push\n"})
 		}, nil, ""},
+		{"Go under .github/, outside the app", func(t *testing.T, root string) {
+			put(t, root, map[string]string{".github/tools/check.go": "package tools\n"})
+		}, nil, ".github/tools/check.go changed, outside the app"},
 		{"a Go package under docs/, which the app could import", func(t *testing.T, root string) {
 			put(t, root, map[string]string{"docs/docs.go": "package docs\n\nvar X = 1\n"})
 		}, nil, "docs/docs.go changed, outside the app"},
