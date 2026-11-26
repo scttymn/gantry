@@ -344,7 +344,9 @@ with stable field names, exiting nonzero on a failure after printing:
       "leaks": [],
       "errors": []
     }
-  ]
+  ],
+  "selected": [],
+  "errors": []
 }
 ```
 
@@ -359,6 +361,53 @@ statuses or missing selectors, and writes deterministic PNG screenshots plus
 `manifest.json` into the artifacts directory. Set `GANTRY_CDP_URL` to point at
 an existing headless Chrome endpoint (for example, a container in CI) or
 `GANTRY_CHROME_BIN` to pick a specific local Chrome/Chromium binary.
+
+`bin/gantry verify --feature posts` (or `--feature posts,comments`) visits only
+those features, and takes screenshots of only those with `--browser`. Every
+route still needs a feature, and a route whose cache doesn't match its
+feature's still fails the run, named in the report's `errors`, whichever
+features were chosen. The report's `selected` lists them (empty when it
+verified every feature), and `--local` sets `GANTRY_VERIFY_FEATURES` every
+time, so one left exported in the shell doesn't narrow a full run. It's for
+working on one feature; CI verifies them all.
+
+`bin/gantry test --changed` runs the app's own test command
+(`x-houston.commands.test` in `compose.yml`) on the Go packages a change
+touches and on every package that imports them, with each `./...` in the
+command narrowed to that list. A change is what differs from where the branch
+left `--base REF` (`origin/main` or `main` when it's left out), what is staged,
+what isn't, and new files. A file in a package's directory, of any kind (a
+template, an embedded asset, test data), counts for that package. A
+`_test.go` file directly in it counts for that package's tests alone; one
+under its `testdata/` counts for the package. Anything it can't be sure about
+runs everything:
+
+- any `go.mod`, `go.sum`, `go.work` or `go.work.sum`; `Dockerfile`,
+  `compose.yml`, `.dockerignore`, `Dockerfile.dockerignore`; or anything under
+  `config/`, `db/` or `test/`
+- anything under a directory the import graph doesn't read: `vendor/`,
+  `node_modules/`, a nested module, or one whose name starts with `.` or `_`
+  (except documentation under `.github/`), even once deleted; under a
+  package's `testdata/`, files count for the package whatever the directory
+  names
+- a submodule
+- a file in no package's directory that isn't documentation, and any `.go`
+  file in none, a deleted package's included
+- in an app inside a bigger module, any change outside the app but
+  documentation under `.github/`: a sibling module or a package the app
+  imports could build or embed it
+- no base to compare with, no history shared with it, or any error from git
+- a Go file it can't read the imports of
+- a test command with a `./...` that isn't `go vet`'s or `go test`'s (or no
+  `./...` at all), which runs as it is
+
+Documentation (`*.md`, `docs/`, `.github/`, `LICENSE`, `.gitignore`,
+`.golangci.yml`, `.gantry-check.json`, but never a `.go` file or a `go.mod`)
+in the app, outside a package's directory, affects no package, so a change of
+only that runs nothing. The imports are read from
+the source, so it doesn't need Go installed. With `--local` it runs
+`go vet` and `go test` on those packages here instead of in Houston's test
+stack. An app's CI runs it on a pull request, from the pull request's base.
 
 `g resource` and `g auth` print their feature among their next steps, to paste
 under `features` once its routes are routed. A namespaced resource's role is

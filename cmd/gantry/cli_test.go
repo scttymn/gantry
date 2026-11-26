@@ -23,7 +23,8 @@ func TestUsage(t *testing.T) {
 		"gantry g auth [--email-code] [--signup] [--social]",
 		"gantry check [--generated] [--json] [--rules] [--strict]",
 		"gantry routes [--diagram] [--json] [--local]",
-		"gantry verify [--artifacts DIR] [--browser] [--json] [--local]",
+		"gantry verify [--artifacts DIR] [--browser] [--feature NAME[,NAME...]] [--json] [--local]",
+		"gantry test [ARGS...] [--base REF] [--changed] [--local]",
 		"gantry g features [--local]",
 		"gantry secret ",
 		"gantry dev|",
@@ -39,10 +40,22 @@ func TestUsage(t *testing.T) {
 		{[]string{"new"}, []string{"usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"new", "shop", "--in-modules"}, []string{"-in-modules", "usage: gantry new NAME", "[--in-module]"}},
 		{[]string{"check", "--bogus"}, []string{"usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
+		{[]string{"check", "--changed"}, []string{"-changed", "usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
+		{[]string{"check", "--strict", "app/routes.go"}, []string{"usage: gantry check [--generated] [--json] [--rules] [--strict]"}},
 		{[]string{"routes", "posts"}, []string{"usage: gantry routes [--diagram] [--json] [--local]"}},
 		{[]string{"routes", "--diagram", "--json"}, []string{"usage: gantry routes [--diagram] [--json] [--local]"}},
-		{[]string{"verify", "extra"}, []string{"usage: gantry verify [--artifacts DIR] [--browser] [--json] [--local]"}},
-		{[]string{"verify", "--artifacts", "out"}, []string{"usage: gantry verify [--artifacts DIR] [--browser] [--json] [--local]"}},
+		{[]string{"verify", "extra"}, []string{"usage: gantry verify [--artifacts DIR] [--browser] [--feature NAME[,NAME...]] [--json] [--local]"}},
+		{[]string{"verify", "--artifacts", "out"}, []string{"usage: gantry verify [--artifacts DIR] [--browser] [--feature NAME[,NAME...]] [--json] [--local]"}},
+		{[]string{"verify", "--changed"}, []string{"-changed", "usage: gantry verify"}},
+		{[]string{"verify", "--feature", ""}, []string{"--feature names no feature", "usage: gantry verify"}},
+		{[]string{"verify", "--feature", ","}, []string{"--feature names no feature", "usage: gantry verify"}},
+		{[]string{"test", "--base", "main"}, []string{"usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--changed", "./app/..."}, []string{"usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--changed", "-count=1"}, []string{"-count", "usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--local", "--base"}, []string{"-base", "usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--base", ""}, []string{"usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--changed", "--base", " "}, []string{"--base names no ref", "usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--local", "./app/posts"}, []string{"usage: gantry test [ARGS...]"}},
 		{[]string{"g", "features", "posts"}, []string{"usage: gantry g features [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
 		{[]string{"check", "--generated", "--strict"}, []string{"usage: gantry check"}},
@@ -81,8 +94,12 @@ func TestCommandHelp(t *testing.T) {
 				args = append(strings.Fields(c.name), "Work Sans", help)
 			}
 			var out, errOut strings.Builder
+			want := "usage: " + c.synopsis() + "\n"
+			if c.help != "" {
+				want += c.help + "\n"
+			}
 			code := run(args, t.TempDir(), &out, &errOut)
-			if code != 0 || out.String() != "usage: "+c.synopsis()+"\n" || errOut.String() != "" {
+			if code != 0 || out.String() != want || errOut.String() != "" {
 				t.Errorf("%q: exit %d\nstdout: %s\nstderr: %s", args, code, out.String(), errOut.String())
 			}
 		}

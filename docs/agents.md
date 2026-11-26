@@ -197,6 +197,11 @@ also identifies patterns that still require human or agent review.
 
 ## 5. Verify behavior and performance
 
+While you work on one part, `bin/gantry test --changed` runs the tests of the
+packages your change touches and of those that import them, and
+`bin/gantry verify --feature posts` visits only that feature. Neither replaces
+the full run.
+
 Before handing over or deploying the change:
 
 ```sh
@@ -208,7 +213,8 @@ bin/gantry verify
 
 `check --strict`, `check --generated`, the test suite and `verify` are
 separate checks; an app's `.github/workflows/ci.yml`, which `gantry new`
-writes, runs all four on every pull request. `check --json` gives the findings
+writes, runs all four on every pull request, the tests as `test --changed`.
+`check --json` gives the findings
 to a tool with stable field names. A route you add needs a feature in
 `test/features.yaml`, or the tests fail: `bin/gantry g features` adds one for
 each route in none, for you to finish. `verify` visits every feature's pages

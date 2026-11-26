@@ -120,12 +120,18 @@ func rank(r Role) int { return slices.Index(allRoles, r) }
 // line prefixed with VerifyJSONPrefix when GANTRY_VERIFY_JSON=1 (for
 // `bin/gantry verify --json`).
 type VerifyReport struct {
-	Passed         bool             `json:"passed"`
-	Failures       int              `json:"failures"`
-	Routes         int              `json:"routes"`
-	UnmappedRoutes []string         `json:"unmapped_routes"`
-	Features       []FeatureResult  `json:"features"`
-	Browser        *BrowserManifest `json:"browser,omitempty"`
+	Passed         bool            `json:"passed"`
+	Failures       int             `json:"failures"`
+	Routes         int             `json:"routes"`
+	UnmappedRoutes []string        `json:"unmapped_routes"`
+	Features       []FeatureResult `json:"features"`
+	// the features GANTRY_VERIFY_FEATURES chose; empty when it verified
+	// every one
+	Selected []string `json:"selected"`
+	// failures of features GANTRY_VERIFY_FEATURES left out, which have no
+	// entry in Features
+	Errors  []string         `json:"errors"`
+	Browser *BrowserManifest `json:"browser,omitempty"`
 }
 
 // FeatureResult is one feature's verification outcome in VerifyReport.
@@ -199,13 +205,22 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 	if env.Development() {
 		t.Fatalf("testkit: Verify runs the app as GANTRY_ENV=development, whose reload script takes the page cache's ETag and Last-Modified off every page: run it as GANTRY_ENV=test, as bin/gantry verify does")
 	}
-	features := Features(t, path)
+	allFeatures := Features(t, path)
+	selection := parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES"))
+	features := filterFeatures(t, path, allFeatures, selection)
+	if len(selection) > 0 {
+		t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selection, ", "), len(allFeatures), path)
+	}
 	report := VerifyReport{
 		Passed:         true,
 		UnmappedRoutes: []string{},
 		Features:       make([]FeatureResult, len(features)),
+		Selected:       append([]string{}, selection...),
+		Errors:         []string{},
 	}
+	indexByName := make(map[string]int, len(features))
 	for i, f := range features {
+		indexByName[f.Name] = i
 		report.Features[i] = FeatureResult{
 			Name:      f.Name,
 			Role:      f.Role,
@@ -224,6 +239,10 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		t.Errorf("%s", msg)
 		report.Passed = false
 		report.Failures++
+		if i < 0 {
+			report.Errors = append(report.Errors, msg)
+			return
+		}
 		report.Features[i].Passed = false
 		report.Features[i].Errors = append(report.Features[i].Errors, msg)
 	}
@@ -234,17 +253,22 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		report.Routes++
 		name := strings.TrimSpace(r.Method + " " + r.Path)
 		in := 0
-		for i, f := range features {
+		for _, f := range allFeatures {
 			if !f.covers(r) {
 				continue
 			}
 			in++
-			report.Features[i].Routes = append(report.Features[i].Routes, name)
+			idx, selected := indexByName[f.Name]
+			if !selected {
+				idx = -1
+			} else {
+				report.Features[idx].Routes = append(report.Features[idx].Routes, name)
+			}
 			if f.Cacheable && !r.Cached {
-				failFeature(i, "%s: %s is cacheable, and %s isn't Cached", path, f.Name, name)
+				failFeature(idx, "%s: %s is cacheable, and %s isn't Cached", path, f.Name, name)
 			}
 			if r.Cached && !f.Cacheable {
-				failFeature(i, "%s: %s is Cached, and its feature %s isn't cacheable", path, name, f.Name)
+				failFeature(idx, "%s: %s is Cached, and its feature %s isn't cacheable", path, name, f.Name)
 			}
 		}
 		if in == 0 {
@@ -254,9 +278,13 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 			report.UnmappedRoutes = append(report.UnmappedRoutes, name)
 		}
 	}
-	for i, f := range features {
+	for _, f := range allFeatures {
 		if f.Role != Public && roles[f.Role] == nil {
-			failFeature(i, "%s: %s is for %s visitors, and Verify has no SignIn for %s", path, f.Name, f.Role, f.Role)
+			idx, selected := indexByName[f.Name]
+			if !selected {
+				idx = -1
+			}
+			failFeature(idx, "%s: %s is for %s visitors, and Verify has no SignIn for %s", path, f.Name, f.Role, f.Role)
 		}
 	}
 	for i, f := range features {
@@ -302,6 +330,7 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 			ArtifactsDir: os.Getenv("GANTRY_VERIFY_ARTIFACTS"),
 			CDPURL:       os.Getenv("GANTRY_CDP_URL"),
 			ChromePath:   os.Getenv("GANTRY_CHROME_BIN"),
+			Features:     selection,
 		})
 		report.Browser = &bm
 		if !bm.Passed {
@@ -315,6 +344,47 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		}
 	}
 	return report
+}
+
+func parseVerifyFeatures(raw string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, part := range strings.Split(raw, ",") {
+		name := strings.TrimSpace(part)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	return out
+}
+
+func filterFeatures(t testing.TB, path string, all []Feature, selected []string) []Feature {
+	t.Helper()
+	if len(selected) == 0 {
+		return all
+	}
+	byName := make(map[string]Feature, len(all))
+	valid := make([]string, 0, len(all))
+	for _, f := range all {
+		byName[f.Name] = f
+		valid = append(valid, f.Name)
+	}
+	want := make(map[string]bool, len(selected))
+	for _, name := range selected {
+		if _, ok := byName[name]; !ok {
+			t.Fatalf("testkit: %s has no feature %q (available: %s)", path, name, strings.Join(valid, ", "))
+		}
+		want[name] = true
+	}
+	var filtered []Feature
+	for _, f := range all {
+		if want[f.Name] {
+			filtered = append(filtered, f)
+		}
+	}
+	return filtered
 }
 
 type captureTB struct {

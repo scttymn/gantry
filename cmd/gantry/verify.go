@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -30,22 +31,35 @@ const (
 
 const verifyCopy = ".gantry-verify-*.yml"
 
-func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser *bool, artifacts *string) {
+func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser *bool, artifacts, feature *string) {
 	fs, local = appFlags()
 	asJSON = fs.Bool("json", false, "a JSON report of features, visits, cache and leak checks")
 	browser = fs.Bool("browser", false, "also render each feature in headless Chrome via CDP and capture screenshots")
 	artifacts = fs.String("artifacts", "", "output `DIR` for --browser screenshots and manifest.json (default "+defaultVerifyArtifacts+")")
-	return fs, local, asJSON, browser, artifacts
+	feature = fs.String("feature", "", "only these features from test/features.yaml, `NAME[,NAME...]`")
+	return fs, local, asJSON, browser, artifacts, feature
 }
 
 func verify(root string, args []string, out, errOut io.Writer) error {
-	fs, local, asJSON, browser, artifacts := verifyFlags()
+	fs, local, asJSON, browser, artifacts, feature := verifyFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
 	if fs.NArg() > 0 || *artifacts != "" && !*browser {
 		return usageError{}
 	}
+	var names []string
+	for _, name := range strings.Split(*feature, ",") {
+		if name = strings.TrimSpace(name); name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	featureGiven := false
+	fs.Visit(func(f *flag.Flag) { featureGiven = featureGiven || f.Name == "feature" })
+	if featureGiven && len(names) == 0 {
+		return usageError{errors.New("--feature names no feature")}
+	}
+	selectedFeatures := strings.Join(names, ",")
 	if _, err := os.Stat(filepath.Join(root, "test", "features.yaml")); err != nil {
 		return errors.New("no test/features.yaml here: run gantry at the app's root; an app made before gantry verify writes one with bin/gantry g features, and adds its test (docs/development.md#an-app-made-before-the-feature-map)")
 	}
@@ -61,6 +75,7 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 		if *asJSON {
 			envVars = append(envVars, "GANTRY_VERIFY_JSON=1")
 		}
+		envVars = append(envVars, "GANTRY_VERIFY_FEATURES="+selectedFeatures)
 		if *browser {
 			absArtifacts := artifactsDir
 			if !filepath.IsAbs(absArtifacts) {
@@ -80,7 +95,19 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("no compose.yml here, for Houston's test stack: %w (or run it on this machine, with --local)", err)
 	}
-	command := verifyTestCommand(*asJSON, *browser, artifactsDir)
+	command := verifyTestCommand(*asJSON, *browser, artifactsDir, selectedFeatures)
+	return inTestStack(root, compose, command, func(houstonArgs []string) error {
+		if *asJSON {
+			if err := needHouston(errOut); err != nil {
+				return err
+			}
+			return runVerifyJSON(root, "houston", houstonArgs, out, errOut)
+		}
+		return houston(root, houstonArgs, errOut)
+	})
+}
+
+func inTestStack(root string, compose []byte, command string, run func(houstonArgs []string) error) error {
 	copied, err := featuresCompose(compose, command)
 	if err != nil {
 		return err
@@ -100,20 +127,16 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	interrupted := make(chan os.Signal, 1)
 	signal.Notify(interrupted, os.Interrupt)
 	defer signal.Stop(interrupted)
-	houstonArgs := []string{"-f", filepath.Base(f.Name()), "test"}
-	if *asJSON {
-		if err := needHouston(errOut); err != nil {
-			return err
-		}
-		return runVerifyJSON(root, "houston", houstonArgs, out, errOut)
-	}
-	return houston(root, houstonArgs, errOut)
+	return run([]string{"-f", filepath.Base(f.Name()), "test"})
 }
 
-func verifyTestCommand(asJSON, browser bool, artifactsDir string) string {
+func verifyTestCommand(asJSON, browser bool, artifactsDir, features string) string {
 	var envPrefix []string
 	if asJSON {
 		envPrefix = append(envPrefix, "GANTRY_VERIFY_JSON=1")
+	}
+	if features != "" {
+		envPrefix = append(envPrefix, "GANTRY_VERIFY_FEATURES="+shellQuote(features))
 	}
 	if browser {
 		envPrefix = append(envPrefix, "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS="+shellQuote(artifactsDir))

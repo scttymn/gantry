@@ -146,21 +146,36 @@ func TestNewCI(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		var workflow struct {
+			Jobs map[string]struct {
+				Steps []struct {
+					Uses string `yaml:"uses"`
+					Run  string `yaml:"run"`
+				} `yaml:"steps"`
+			} `yaml:"jobs"`
+		}
+		if err := yaml.Unmarshal(ci, &workflow); err != nil {
+			t.Fatal(err)
+		}
 		var runs []string
-		for _, line := range strings.Split(string(ci), "\n") {
-			line = strings.TrimSpace(line)
-			if command, ok := strings.CutPrefix(line, "- run: bin/gantry "); ok {
-				runs = append(runs, command)
-				if msg := checkInvocation(command); msg != "" {
-					t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+		for _, step := range workflow.Jobs["check"].Steps {
+			if step.Uses != "" && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(step.Uses) {
+				t.Errorf("%s: %s isn't pinned by commit", engine, step.Uses)
+			}
+			if strings.Contains(step.Run, "${{") {
+				t.Errorf("%s: a run script has a ${{ }} expression, which GitHub pastes into the script before the shell reads it; pass it through env and quote the variable:\n%s", engine, step.Run)
+			}
+			for _, line := range strings.Split(step.Run, "\n") {
+				if command, ok := strings.CutPrefix(strings.TrimSpace(line), "bin/gantry "); ok {
+					runs = append(runs, command)
+					if msg := checkInvocation(command); msg != "" {
+						t.Errorf("%s: bin/gantry %s: %s", engine, command, msg)
+					}
 				}
 			}
-			if action, ok := strings.CutPrefix(strings.TrimPrefix(line, "- "), "uses: "); ok && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(action) {
-				t.Errorf("%s: %s isn't pinned by commit", engine, action)
-			}
 		}
-		if want := []string{"check --strict", "check --generated", "test", "verify"}; !reflect.DeepEqual(runs, want) {
-			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
+		if want := []string{"check --strict", "check --generated", `test --changed --base "origin/$BASE_REF"`, "test", "verify"}; !reflect.DeepEqual(runs, want) {
+			t.Errorf("%s: runs bin/gantry %q, want %q: the strict check and verify run in full every time, and only the tests narrow to what a pull request affects", engine, runs, want)
 		}
 		if want := "golangci-lint@" + pins.GolangciLint + " run ./..."; !strings.Contains(string(ci), want) {
 			t.Errorf("%s: ci.yml doesn't run %q:\n%s", engine, want, ci)
@@ -506,7 +521,7 @@ func TestAppCommands(t *testing.T) {
 		{[]string{"db", "migrate", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "db", "migrate"}},
 		{[]string{"routes"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "routes"}},
 		{[]string{"routes", "--json", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "routes", "--json"}},
-		{[]string{"verify", "--local"}, []string{"env", "GANTRY_ENV=test", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
+		{[]string{"verify", "--local"}, []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
 		{[]string{"dev", "--as", "login"}, []string{"houston", "dev", "--as", "login"}},
 		{[]string{"test"}, []string{"houston", "test"}},
 		{[]string{"deploy", "--server"}, []string{"houston", "deploy", "--server"}},
