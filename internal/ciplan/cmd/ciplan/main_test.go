@@ -71,6 +71,17 @@ func TestRun(t *testing.T) {
 			t.Errorf("ciplan -full: %v\n%s", err, out)
 		}
 	})
+	t.Run("-full lists no packages", func(t *testing.T) {
+		bin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(bin, "go"), []byte("#!/bin/sh\necho \"go $*: not for -full\" >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		out, stderr, err := plan("-full")
+		if err != nil || !strings.Contains(out, "full=true\n") {
+			t.Errorf("ciplan -full ran go, which every check doesn't need: %v\n%s%s", err, out, stderr)
+		}
+	})
 	t.Run("neither -full nor -base: an error", func(t *testing.T) {
 		if out, _, err := plan(); err == nil {
 			t.Errorf("ciplan: no error\n%s", out)

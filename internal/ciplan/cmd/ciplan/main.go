@@ -53,18 +53,21 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("unknown format %q", *format)
 	}
 
+	if *full {
+		plan, err := ciplan.FullPlanAt(*root)
+		if err != nil {
+			return err
+		}
+		return write(stdout, plan)
+	}
 	in, err := ciplan.Load(*root)
 	if err != nil {
 		return err
 	}
-	plan := ciplan.FullPlan(in.Specs, in.Scripts)
-	if !*full {
-		changed, err := ciplan.Changed(*root, *base, *worktree)
-		if err != nil {
-			fmt.Fprintf(stderr, "ciplan: can't tell what changed since %s, so planning every check: %v\n", *base, err)
-		} else {
-			plan = ciplan.Plan(changed, in)
-		}
+	changed, err := ciplan.Changed(*root, *base, *worktree)
+	if err != nil {
+		fmt.Fprintf(stderr, "ciplan: can't tell what changed since %s, so planning every check: %v\n", *base, err)
+		return write(stdout, ciplan.FullPlan(in.Specs, in.Scripts))
 	}
-	return write(stdout, plan)
+	return write(stdout, ciplan.Plan(changed, in))
 }

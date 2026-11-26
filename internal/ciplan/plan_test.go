@@ -28,9 +28,12 @@ func sampleInputs() Inputs {
 		}
 		return p
 	}
+	db := pkg("db", "internal/pins", "internal/env", "test:internal/testenv")
+	db.DiffersWithCGO = true
 	return Inputs{
 		Module: testMod,
 		Packages: []Package{
+			db,
 			pkg(""),
 			pkg("internal/env"),
 			pkg("internal/hygiene"),
@@ -39,7 +42,6 @@ func sampleInputs() Inputs {
 			pkg("internal/ciplan/cmd/ciplan", "internal/ciplan"),
 			pkg("internal/testenv"),
 			pkg("internal/featuremap"),
-			pkg("db", "internal/pins", "test:internal/testenv"),
 			pkg("token"),
 			pkg("sign", "db", "internal/env"),
 			pkg("devcheck"),
@@ -170,10 +172,35 @@ func TestPlanWebTargetsFuzzAndBenchFeed(t *testing.T) {
 }
 
 func TestPlanCGO(t *testing.T) {
-	for _, f := range []string{"db/sqlite_c.go", "internal/pins/pins.go"} {
+	for _, f := range []string{"db/sqlite_c.go", "internal/pins/pins.go", "internal/env/env.go"} {
 		got := Plan([]string{f}, sampleInputs())
 		if !got.NeedCGO || !got.NeedLintCGO || !got.NeedPostgres || !got.NeedRace || !slices.Contains(got.Packages, "./db") {
-			t.Errorf("%s must test ./db with cgo, on Postgres, with the race detector: %+v", f, got)
+			t.Errorf("%s reaches ./db, which an app's cgo build builds differently, and doesn't test it with cgo, on Postgres, with the race detector: %+v", f, got)
+		}
+	}
+	if got := Plan([]string{"token/token.go"}, sampleInputs()); got.NeedCGO || got.NeedLintCGO {
+		t.Errorf("token/token.go reaches nothing cgo builds differently: %+v", got)
+	}
+}
+
+func TestPlanBenchLint(t *testing.T) {
+	for _, f := range []string{"bench/feed/.golangci.yml", "bench/.golangci.yml", "bench/go.mod", "bench/go.sum", "bench/feed/go.mod", "bench/feed/go.sum", "bench/feed/app/x.go", "bench/load/x.go"} {
+		if got := Plan([]string{f}, sampleInputs()); !got.NeedLint || len(got.BenchModules) == 0 {
+			t.Errorf("%s changes what golangci-lint finds in a bench module, and doesn't lint it: %+v", f, got)
+		}
+	}
+	if got := Plan([]string{"bench/feed/README.md"}, sampleInputs()); got.NeedLint {
+		t.Errorf("bench/feed/README.md needs no lint: %+v", got)
+	}
+}
+
+func TestPlanFilesOtherPackagesTestsRead(t *testing.T) {
+	for f, dirs := range readByTestsOf {
+		got := Plan([]string{f}, sampleInputs())
+		for _, dir := range dirs {
+			if !slices.Contains(got.Packages, relPkg(dir)) {
+				t.Errorf("%s is read by %s's tests, which don't run: %v", f, dir, got.Packages)
+			}
 		}
 	}
 }

@@ -11,7 +11,10 @@
 // every check. Each spec/*.tla models a package's code, and a change to that
 // code runs it (TestEverySpecHasAnOwner); a spec/ config runs the spec named
 // by its name up to its first dot, as bin/tlc pairs them, and one with no
-// spec runs every spec, so bin/tlc fails on it.
+// spec runs every spec, so bin/tlc fails on it. A file another package's
+// test reads runs that package's tests (TestCrossPackageReadsArePlanned), and
+// a change reaching a package an app's cgo build builds differently runs
+// the cgo passes.
 package ciplan
 
 import (
@@ -22,13 +25,16 @@ import (
 )
 
 // Package is one Go package of the module: `go list -json`'s fields, its
-// imports from every build CI tests.
+// imports from every build CI tests. DiffersWithCGO is whether an app's build, with cgo and SQLite's tags,
+// builds other files of the package (db/sqlite_c.go): a change reaching it
+// runs the cgo pass and the cgo vet and lint.
 type Package struct {
-	ImportPath   string
-	Dir          string
-	Imports      []string
-	UnitImports  []string
-	XUnitImports []string
+	ImportPath     string
+	Dir            string
+	Imports        []string
+	UnitImports    []string
+	XUnitImports   []string
+	DiffersWithCGO bool
 }
 
 // FuzzTarget identifies one Go fuzz test to smoke-run.
@@ -63,6 +69,12 @@ var (
 )
 
 var dirsTestedOnEveryChange = []string{"", "internal/hygiene", "internal/pins", "internal/ciplan", "internal/ciplan/cmd/ciplan"}
+
+var readByTestsOf = map[string][]string{
+	"cmd/gantry/templates/social/migration.sql.tmpl":                {"auth"},
+	"cmd/gantry/templates/new/assets/js/vendor/@hotwired--turbo.js": {"web"},
+	"bench/feed/assets/js/vendor/@hotwired--turbo.js":               {"web"},
+}
 
 var specsModellingDir = map[string][]string{
 	"auth": {"spec/Auth.tla"},
@@ -167,7 +179,11 @@ func Plan(changed []string, in Inputs) Result {
 		if scriptSet[f] {
 			scripts[f] = true
 		}
+		for _, dir := range readByTestsOf[f] {
+			g.add(tested, dir)
+		}
 		goFile := strings.HasSuffix(f, ".go")
+		linted := goFile || path.Base(f) == ".golangci.yml"
 		switch {
 		case f == ".golangci.yml" || f == "staticcheck.conf":
 			lintAll = true
@@ -206,11 +222,11 @@ func Plan(changed []string, in Inputs) Result {
 			}
 
 		case f == "bench/go.mod" || f == "bench/go.sum":
-			res.NeedTidy = true
+			res.NeedTidy, res.NeedLint = true, true
 			bench["bench"] = true
 
 		case f == "bench/feed/go.mod" || f == "bench/feed/go.sum":
-			res.NeedTidy = true
+			res.NeedTidy, res.NeedLint = true, true
 			bench["bench/feed"] = true
 			runs[benchFeedRun] = true
 
@@ -220,8 +236,9 @@ func Plan(changed []string, in Inputs) Result {
 		case strings.HasPrefix(f, "bench/feed/"):
 			bench["bench/feed"] = true
 			runs[benchFeedRun] = true
+			res.NeedLint = res.NeedLint || linted
 			if goFile {
-				res.NeedFmt, res.NeedLint, res.NeedTidy = true, true, true
+				res.NeedFmt, res.NeedTidy = true, true
 			}
 
 		case strings.HasPrefix(f, "bench/sqlite3way/"):
@@ -231,8 +248,9 @@ func Plan(changed []string, in Inputs) Result {
 
 		case strings.HasPrefix(f, "bench/"):
 			bench["bench"] = true
+			res.NeedLint = res.NeedLint || linted
 			if goFile {
-				res.NeedFmt, res.NeedLint, res.NeedTidy = true, true, true
+				res.NeedFmt, res.NeedTidy = true, true
 			}
 
 		default:
@@ -245,9 +263,6 @@ func Plan(changed []string, in Inputs) Result {
 			if goFile {
 				res.NeedFmt, res.NeedTidy, res.NeedVuln = true, true, true
 			}
-			if dir == "db" || dir == "internal/pins" {
-				res.NeedCGO, res.NeedLintCGO = true, true
-			}
 			for _, s := range specsModellingDir[dir] {
 				specs[s] = true
 			}
@@ -258,6 +273,9 @@ func Plan(changed []string, in Inputs) Result {
 	for imp := range closure {
 		if benchFeedSet[imp] {
 			bench["bench/feed"] = true
+		}
+		if g.differsWithCGO[imp] {
+			res.NeedCGO, res.NeedLintCGO = true, true
 		}
 		tested[imp] = true
 	}
@@ -300,24 +318,27 @@ func Plan(changed []string, in Inputs) Result {
 }
 
 type graph struct {
-	dirToImport  map[string]string
-	importToDir  map[string]string
-	revDeps      map[string][]string
-	usesPostgres map[string]bool
+	dirToImport    map[string]string
+	importToDir    map[string]string
+	revDeps        map[string][]string
+	usesPostgres   map[string]bool
+	differsWithCGO map[string]bool
 }
 
 func newGraph(in Inputs) graph {
 	g := graph{
-		dirToImport:  map[string]string{},
-		importToDir:  map[string]string{},
-		revDeps:      map[string][]string{},
-		usesPostgres: map[string]bool{},
+		dirToImport:    map[string]string{},
+		importToDir:    map[string]string{},
+		revDeps:        map[string][]string{},
+		usesPostgres:   map[string]bool{},
+		differsWithCGO: map[string]bool{},
 	}
 	testenv := in.Module + "/internal/testenv"
 	for _, p := range in.Packages {
 		d := normalizeDir(p.Dir)
 		g.dirToImport[d] = p.ImportPath
 		g.importToDir[p.ImportPath] = d
+		g.differsWithCGO[p.ImportPath] = p.DiffersWithCGO
 		for _, imp := range slices.Concat(p.Imports, p.UnitImports, p.XUnitImports) {
 			if imp == testenv {
 				g.usesPostgres[p.ImportPath] = true
@@ -344,7 +365,7 @@ func normalizePaths(in []string) []string {
 	seen := make(map[string]bool, len(in))
 	var out []string
 	for _, raw := range in {
-		clean := strings.TrimPrefix(path.Clean(strings.TrimSpace(raw)), "./")
+		clean := strings.TrimPrefix(path.Clean(raw), "./")
 		if clean == "" || clean == "." || seen[clean] {
 			continue
 		}

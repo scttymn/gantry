@@ -1,11 +1,17 @@
 package ciplan
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +52,11 @@ func TestRealGraphGeneratedAppsImports(t *testing.T) {
 }
 
 func TestRealGraphCGOImports(t *testing.T) {
+	for _, p := range realInputs(t).Packages {
+		if p.DiffersWithCGO != (p.ImportPath == testMod+"/db") {
+			t.Errorf("%s: DiffersWithCGO %v; only db's files (sqlite_c.go, sqlite_go.go) differ in an app's cgo build", p.ImportPath, p.DiffersWithCGO)
+		}
+	}
 	got := Plan([]string{"internal/pins/pins.go"}, realInputs(t))
 	if !slices.Contains(got.Packages, "./db") || !got.NeedCGO {
 		t.Errorf("db/sqlite_c.go, built with cgo, imports internal/pins, and its change doesn't test ./db with cgo: %+v", got)
@@ -95,6 +106,106 @@ func TestCIFilesPlanFull(t *testing.T) {
 	}
 }
 
+func TestCrossPackageReadsArePlanned(t *testing.T) {
+	root := filepath.Join("..", "..")
+	in := realInputs(t)
+	buildsAppsAgainstTheModule := map[string]bool{"cmd/gantry": true}
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", ".cache", "bench", "testdata", "vendor", "node_modules":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), p, nil, 0)
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		dir := normalizeDir(filepath.ToSlash(rel))
+		for _, decl := range file.Decls {
+			test := ""
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				test = fn.Name.Name
+			}
+			for _, read := range pathsLeaving(decl) {
+				target := path.Join(dir, read)
+				if strings.HasPrefix(target, "..") || target == dir || strings.HasPrefix(target, dir+"/") {
+					continue
+				}
+				info, err := os.Stat(filepath.Join(root, target))
+				if err != nil {
+					continue
+				}
+				probe := target
+				switch {
+				case target == "." && buildsAppsAgainstTheModule[dir]:
+					continue
+				case target == ".":
+					probe = "x"
+				case info.IsDir():
+					probe = target + "/x"
+				}
+				got := Plan([]string{probe}, in)
+				if got.Full || slices.Contains(got.Packages, relPkg(dir)) || slices.ContainsFunc(got.Runs, func(r Run) bool {
+					return r.Package == relPkg(dir) && regexp.MustCompile(r.Pattern).MatchString(test)
+				}) {
+					continue
+				}
+				t.Errorf("%s/%s (%s) reads %s, and a change there doesn't run it: add the file to readByTestsOf (internal/ciplan/plan.go)", dir, filepath.Base(p), test, target)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func pathsLeaving(decl ast.Node) []string {
+	var found []string
+	ast.Inspect(decl, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.BasicLit:
+			if s, err := strconv.Unquote(n.Value); err == nil && n.Kind == token.STRING && strings.HasPrefix(s, "../") {
+				found = append(found, s)
+			}
+		case *ast.CallExpr:
+			sel, ok := n.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "Join" {
+				return true
+			}
+			var parts []string
+			for _, arg := range n.Args {
+				lit, ok := arg.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING {
+					break
+				}
+				s, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					break
+				}
+				parts = append(parts, s)
+			}
+			if len(parts) > 0 && parts[0] == ".." {
+				found = append(found, path.Join(parts...))
+			}
+		}
+		return true
+	})
+	return found
+}
+
 func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
 	for name, c := range map[string]struct {
 		files map[string]string
@@ -102,6 +213,14 @@ func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
 	}{
 		"scripts not listed": {map[string]string{"bin/shellcheck": "#!/bin/sh\nexit 1\n"}, "bin/shellcheck --list"},
 		"go list fails":      {map[string]string{"go.mod": "module example.com/m\n\ngo 1.22\n\nrequire (\n"}, "go list"},
+		"a test's import of a package that isn't": {
+			map[string]string{"a/a_test.go": "package a\n\nimport _ \"example.com/m/gone\"\n"},
+			"example.com/m/a's tests import example.com/m/gone",
+		},
+		"an external test's import of a package that isn't": {
+			map[string]string{"a/x_test.go": "package a_test\n\nimport _ \"example.com/m/gone\"\n"},
+			"example.com/m/a's tests import example.com/m/gone",
+		},
 		"an import of a package that isn't": {
 			map[string]string{"a/a.go": "package a\n\nimport _ \"example.com/m/gone\"\n"},
 			"example.com/m/a: ",
@@ -160,6 +279,15 @@ func TestChanged(t *testing.T) {
 		got, err := Changed(root, "main", true)
 		if err != nil || !slices.Equal(got, []string{"a/a.go", "b.go", "go.mod", "new.txt"}) {
 			t.Errorf("Changed: %q, %v", got, err)
+		}
+	})
+	t.Run("a name git would quote", func(t *testing.T) {
+		name := "we\"ird\\name\t.txt"
+		write(t, root, map[string]string{name: "x\n"})
+		defer os.Remove(filepath.Join(root, name))
+		got, err := Changed(root, "main", true)
+		if err != nil || !slices.Contains(got, name) {
+			t.Errorf("Changed: %q, %v; want %q as it is", got, err, name)
 		}
 	})
 	t.Run("a base that isn't", func(t *testing.T) {
