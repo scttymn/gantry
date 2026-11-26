@@ -8,7 +8,14 @@ mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.m
 # By the ID the build prints, not a tag another checkout's build can move.
 image=$(docker build -q --target toolchain .)
 tty=; [ -t 0 ] && tty=-t
-exec docker run --rm -i $tty -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" \
+# A worktree's .git names its repository's, outside the checkout: git in the
+# container reads it there, as on this machine.
+gitdir=()
+if [ -f .git ]; then
+  common=$(git rev-parse --path-format=absolute --git-common-dir)
+  gitdir=(-v "$common:$common:ro")
+fi
+exec docker run --rm -i $tty -v "$PWD:/src" ${gitdir[@]+"${gitdir[@]}"} -w "/src/${GANTRY_DIR:-}" \
   -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache \
   -e GANTRY_TEST_POSTGRES_URL="${GANTRY_TEST_POSTGRES_URL:-}" -e CI \
   "$image" "$@"

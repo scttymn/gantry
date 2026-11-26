@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Before a push, runs targeted checks (bin/ci --changed) against the remote
-# branch or origin/main so small edits verify quickly, falling back to full
-# bin/ci when pushing main directly, with no base ref, or with GANTRY_CI_FULL=1.
+# Before a push, the ci workflow's checks on this machine (bin/ci): a push
+# that would fail CI doesn't leave it. A push to main, or with
+# GANTRY_CI_FULL=1, runs every check; another, those its changes since the
+# remote branch (or origin/main) need (bin/ci --changed).
 # Once per clone:
 #   git config core.hooksPath .githooks
 # bin/ci checks the checkout, so the commit pushed must be HEAD, with nothing
@@ -12,9 +13,11 @@ cd "$(git rev-parse --show-toplevel)"
 head=$(git rev-parse HEAD)
 pushes=
 base=
-while read -r _ local_sha _ remote_sha; do
+main=
+while read -r _ local_sha remote_ref remote_sha; do
 	case $local_sha in *[!0]*) ;; *) continue ;; esac # deleting a ref
 	pushes=1
+	[ "$remote_ref" != refs/heads/main ] || main=1
 	if [ "$(git rev-parse "$local_sha^{commit}")" != "$head" ]; then
 		echo "pre-push: bin/ci checks the checkout, and $local_sha isn't HEAD: check it out, then push" >&2
 		exit 1
@@ -30,7 +33,7 @@ if [ -n "$(git status --porcelain)" ]; then
 	exit 1
 fi
 
-if [ "${GANTRY_CI_FULL:-}" = 1 ]; then
+if [ -n "$main" ] || [ "${GANTRY_CI_FULL:-}" = 1 ]; then
 	exec bin/ci </dev/null
 fi
 if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then

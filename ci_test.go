@@ -11,6 +11,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/scttymn/gantry/internal/ciplan"
 	"github.com/scttymn/gantry/internal/pins"
 )
 
@@ -76,6 +79,7 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 const fakeDocker = `#!/bin/sh
 echo "$*" >>"$FAKE_DOCKER_LOG"
 case "$*" in *"${FAKE_FAIL:-no such call}"*) exit 1 ;; esac
+case "$*" in *internal/ciplan/cmd/ciplan*) cat "$FAKE_PLAN"; exit 0 ;; esac
 case "$*" in *tlc2.TLC*)
 	while [ "$1" != tlc ]; do shift; done
 	shift 3
@@ -98,7 +102,25 @@ case "$1 $2" in
 esac
 `
 
+func writePlan(t *testing.T, p ciplan.Result) string {
+	t.Helper()
+	var b strings.Builder
+	if err := ciplan.WriteShell(&b, p); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "plan.sh")
+	if err := os.WriteFile(file, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return file
+}
+
 func binCI(t *testing.T, env []string, without ...string) (string, []string, error) {
+	t.Helper()
+	return binCIWith(t, []string{"--fast"}, append([]string{"FAKE_PLAN=" + writePlan(t, ciplan.FullPlan(nil, nil))}, env...), without...)
+}
+
+func binCIWith(t *testing.T, args, env []string, without ...string) (string, []string, error) {
 	t.Helper()
 	bin, home := t.TempDir(), t.TempDir()
 	log := filepath.Join(home, "docker.log")
@@ -107,7 +129,7 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 		"df":        "#!/bin/sh\nprintf 'Filesystem 1024-blocks Used Available Capacity Mounted\\nfake 1 1 %s 1%% /\\n' \"${FAKE_FREE_KB:-104857600}\"\n",
 		"jq":        "#!/bin/sh\n",
 		"du":        "#!/bin/sh\nprintf '%s\\t%s\\n' \"${FAKE_DU_KB:-0}\" \"$2\"\n",
-		"git":       "#!/bin/sh\nprintf 'bin/ci\\0'\n",
+		"git":       "#!/bin/sh\ncase \"$1\" in rev-parse) echo \"$PWD/.git\" ;; *) printf 'bin/ci\\0' ;; esac\n",
 		"curl":      "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) : >\"$2\"; shift ;; esac; shift; done\n",
 		"sha256sum": "#!/bin/sh\nprintf '" + pins.TLASHA256 + "  %s\\n' \"$1\"\n",
 	}
@@ -130,11 +152,113 @@ func binCI(t *testing.T, env []string, without ...string) (string, []string, err
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command("bin/ci", "--fast")
+	cmd := exec.Command("bin/ci", args...)
 	cmd.Env = append([]string{"PATH=" + bin, "HOME=" + home, "FAKE_DOCKER_LOG=" + log}, env...)
 	out, err := cmd.CombinedOutput()
 	calls, _ := os.ReadFile(log)
 	return string(out), strings.Split(strings.TrimSpace(string(calls)), "\n"), err
+}
+
+func TestBinCIRunsCIPlansPlan(t *testing.T) {
+	plan := writePlan(t, ciplan.Result{
+		NeedVet:      true,
+		Packages:     []string{"./a"},
+		LintPackages: []string{"./a"},
+		Runs:         []ciplan.Run{{Package: "./b", Pattern: "^Bee$"}},
+		FuzzTargets:  []ciplan.FuzzTarget{{Package: "./a", Name: "^FuzzA$"}},
+	})
+	for name, c := range map[string]struct {
+		args  []string
+		plans string
+	}{
+		"bin/ci":                {[]string{"--fast"}, "ciplan -full -format sh"},
+		"bin/ci --changed":      {[]string{"--fast", "--changed"}, "ciplan -base origin/main -worktree -format sh"},
+		"bin/ci --changed BASE": {[]string{"--fast", "--changed", "abc123"}, "ciplan -base abc123 -worktree -format sh"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, calls, err := binCIWith(t, c.args, []string{"FAKE_PLAN=" + plan})
+			if err != nil {
+				t.Fatalf("bin/ci: %v\n%s", err, out)
+			}
+			if len(called(calls, c.plans)) != 1 {
+				t.Errorf("bin/ci didn't plan with %q: %q", c.plans, calls)
+			}
+			for _, want := range []string{"go test ./a", "go test -run ^Bee$ ./b", "go test -fuzz=^FuzzA$ -fuzztime=1s ./a", "go vet ./a"} {
+				if len(called(calls, want)) == 0 {
+					t.Errorf("bin/ci didn't run the plan's %q:\n%s", want, out)
+				}
+			}
+			for _, never := range []string{"go test ./...", "FuzzSignVerify", "go mod tidy", "govulncheck"} {
+				if got := called(calls, never); len(got) > 0 {
+					t.Errorf("bin/ci ran %q, which the plan hasn't: %q", never, got)
+				}
+			}
+		})
+	}
+}
+
+func TestBinCIStopsWithoutAPlan(t *testing.T) {
+	for name, env := range map[string][]string{
+		"ciplan fails":          {"FAKE_FAIL=internal/ciplan/cmd/ciplan"},
+		"ciplan prints nothing": {"FAKE_PLAN=" + os.DevNull},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, calls, err := binCIWith(t, []string{"--fast", "--changed"}, env)
+			if err == nil || len(called(calls, "go test")) > 0 {
+				t.Errorf("bin/ci without a plan: err %v, tests %q\n%s", err, called(calls, "go test"), out)
+			}
+		})
+	}
+}
+
+func TestCIPlansInEveryJob(t *testing.T) {
+	raw, err := os.ReadFile(".github/workflows/ci.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type step struct {
+		Name, ID, If, Run, Shell string
+		Env                      map[string]string
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Needs any
+			If    string
+			Steps []step
+		}
+	}
+	if err := yaml.Unmarshal(raw, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	if len(workflow.Jobs) == 0 {
+		t.Fatal("ci.yml has no jobs")
+	}
+	for name, job := range workflow.Jobs {
+		if job.Needs != nil || strings.Contains(job.If, "needs.") {
+			t.Errorf("job %s needs another job: a skipped job passes, so it plans for itself", name)
+		}
+		plan := slices.IndexFunc(job.Steps, func(s step) bool { return s.ID == "plan" })
+		if plan < 0 {
+			t.Errorf("job %s has no step with id plan", name)
+			continue
+		}
+		p := job.Steps[plan]
+		if p.Name != "Plan" || p.Shell != "bash" || !strings.Contains(p.Run, "./internal/ciplan/cmd/ciplan") {
+			t.Errorf("job %s's plan step: name %q, shell %q; want Plan, bash (-o pipefail), running ciplan", name, p.Name, p.Shell)
+		}
+		for i, s := range job.Steps {
+			uses := s.If + s.Run
+			for _, v := range s.Env {
+				uses += v
+			}
+			if i < plan && strings.Contains(uses, "steps.plan.") {
+				t.Errorf("job %s's step %q reads the plan before it's made", name, s.Name)
+			}
+			if strings.Contains(s.Run, "GITHUB_OUTPUT") && strings.Contains(s.Run, "|") {
+				t.Errorf("job %s's step %q pipes into its outputs: a pipe's status is its last command's", name, s.Name)
+			}
+		}
+	}
 }
 
 func called(calls []string, part string) (found []string) {
@@ -526,6 +650,8 @@ func TestPrePushHook(t *testing.T) {
 	}{
 		{"HEAD, clean: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", true, true, ""},
 		{"HEAD, incremental remote base: bin/ci --changed", false, "refs/heads/feat " + head + " refs/heads/feat " + first + "\n", true, true, "--changed " + first},
+		{"HEAD to main, which has a commit: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + first + "\n", true, true, ""},
+		{"HEAD to a branch and main: bin/ci", false, "refs/heads/feat " + head + " refs/heads/feat " + first + "\nrefs/heads/main " + head + " refs/heads/main " + first + "\n", true, true, ""},
 		{"deletes only: nothing to check", true, "(delete) " + zero + " refs/heads/gone " + head + "\n", true, false, ""},
 		{"another commit: refused", false, "refs/heads/old " + first + " refs/heads/old " + zero + "\n", false, false, ""},
 		{"changes in the tree: refused", true, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", false, false, ""},

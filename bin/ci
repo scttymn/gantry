@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # The ci workflow's checks, on this machine: what a pull request runs, step by
 # step, under its steps' names (TestBinCIRunsTheCIWorkflow holds the two the
-# same). The pre-push hook (.githooks/pre-push) runs it in --changed mode.
+# same), as internal/ciplan plans them. The pre-push hook (.githooks/pre-push)
+# runs it in --changed mode.
 #
 #   bin/ci                    every step, as main's CI runs them
-#   bin/ci --changed [BASE]   only checks affected by changes since BASE (default origin/main)
+#   bin/ci --changed [BASE]   the steps the changes since BASE (origin/main) and in
+#                             the tree need; every step when git can't say what changed
 #   bin/ci --fast             without the race detector and the release's build
 #
 # Tests on Postgres get GANTRY_TEST_POSTGRES_URL's server, or a throwaway
@@ -70,43 +72,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -n "$changed" ]; then
-	if [ -z "$base" ]; then
-		if git rev-parse --verify -q origin/main >/dev/null 2>&1; then
-			base=origin/main
-		elif git rev-parse --verify -q main >/dev/null 2>&1; then
-			base=main
-		fi
-	fi
-	changed_files=()
-	if [ -n "$base" ] && git rev-parse --verify -q "$base^{commit}" >/dev/null 2>&1; then
-		while IFS= read -r f; do
-			[ -n "$f" ] && changed_files+=("$f")
-		done < <({
-			git diff --name-only "$base...HEAD"
-			git diff --name-only --cached
-			git diff --name-only
-			git ls-files --others --exclude-standard
-		} | sort -u)
-	else
-		echo "bin/ci --changed: base ref '${base:-origin/main}' not found; running full checks" >&2
-		changed=
-	fi
-	if [ -n "$changed" ] && [ "${#changed_files[@]}" -eq 0 ]; then
-		printf 'bin/ci --changed: no changed files since %s\n' "$base"
-		exit 0
-	fi
-fi
-
 # The image this build made, by the ID it prints: a tag is every checkout's,
 # and another's build moves it under this one's tests.
 image=$(timeout 1200 docker build -q --target toolchain .)
 unset GANTRY_DIR
+# A worktree's .git names its repository's, outside the checkout: git in the
+# container reads it there, as on this machine.
+gitdir=()
+if [ -f .git ]; then
+	common=$(git rev-parse --path-format=absolute --git-common-dir)
+	gitdir=(-v "$common:$common:ro")
+fi
 toolchain() { # [GANTRY_DIR=DIR] toolchain [DOCKER-RUN-OPTION...] -- COMMAND...: in the toolchain's image, on the checkout (DIR of it, as bin/go)
 	local opts=()
 	while [ "$1" != -- ]; do opts+=("$1"); shift; done
 	shift
-	timeout 1800 docker run --rm -v "$PWD:/src" -w "/src/${GANTRY_DIR:-}" -v "$cache:/cache" \
+	timeout 1800 docker run --rm -v "$PWD:/src" ${gitdir[@]+"${gitdir[@]}"} -w "/src/${GANTRY_DIR:-}" -v "$cache:/cache" \
 		-e GOMODCACHE=/cache/mod -e GOCACHE=/cache/build -e CI="$ci" ${opts[@]+"${opts[@]}"} "$image" "$@"
 }
 others() { # another bin/ci is running (a mark whose run has gone is removed)
@@ -141,59 +122,27 @@ fi
 rm -rf "$lock"
 
 step "Plan"
-PLAN_ANY=1
-PLAN_FULL=1
-PLAN_NEED_TIDY=1
-PLAN_NEED_POSTGRES=1
-PLAN_NEED_CGO=1
-PLAN_NEED_RACE=1
-PLAN_NEED_VET=1
-PLAN_NEED_FMT=1
-PLAN_NEED_LINT=1
-PLAN_NEED_LINT_CGO=1
-PLAN_NEED_VULN=1
-PLAN_NEED_RELEASE=1
-PLAN_DOC_GANTRY_TEST=
-PLAN_STRICT_CHECK=
-PLAN_PACKAGES=("./...")
-PLAN_LINT_PACKAGES=("./...")
-PLAN_BENCH_MODULES=("bench" "bench/feed")
-PLAN_SHELL_SCRIPTS=()
-PLAN_TLA_SPECS=()
-PLAN_FUZZ_TARGETS=(
-	"./sign|^FuzzSignVerify$"
-	"./web|^FuzzSent$"
-	"./web|^FuzzProxies$"
-	"./web|^FuzzPageCache$"
-	"./images|^FuzzDimensionsAndResize$"
-	"./devcheck|^FuzzJSAndHTMLRules$"
-	"./internal/featuremap|^FuzzCovers$"
-)
-if [ -n "$changed" ]; then
-	plan_sh=$(printf '%s\n' "${changed_files[@]}" | toolchain -i -- go run ./internal/ciplan/cmd/ciplan -format sh)
-	eval "$plan_sh"
-	printf 'changed vs %s: packages=[%s] cgo=%s postgres=%s race=%s lint=%s tla=[%s] fuzz=%d scripts=%d bench=[%s] release=%s\n' \
-		"$base" \
-		"${PLAN_PACKAGES[*]-}" \
-		"${PLAN_NEED_CGO:-0}" \
-		"${PLAN_NEED_POSTGRES:-0}" \
-		"${PLAN_NEED_RACE:-0}" \
-		"${PLAN_NEED_LINT:-0}" \
-		"${PLAN_TLA_SPECS[*]-}" \
-		"${#PLAN_FUZZ_TARGETS[@]}" \
-		"${#PLAN_SHELL_SCRIPTS[@]}" \
-		"${PLAN_BENCH_MODULES[*]-}" \
-		"${PLAN_NEED_RELEASE:-0}"
-	if [ -z "$PLAN_ANY" ]; then
-		printf '\nbin/ci --changed: no CI checks affected since %s\n' "$base"
-		exit 0
-	fi
+plan=(-full)
+[ -z "$changed" ] || plan=(-base "${base:=origin/main}" -worktree)
+plan_sh=$(toolchain -- go run ./internal/ciplan/cmd/ciplan "${plan[@]}" -format sh)
+eval "$plan_sh"
+[ -n "${PLAN_ANY+set}" ] || { echo "bin/ci: ciplan printed no plan" >&2; exit 1; }
+if [ -n "$PLAN_FULL" ]; then
+	echo "every check"
 else
-	echo "full run (all packages and checks)"
+	printf 'changed since %s: packages=[%s] runs=[%s] cgo=%s postgres=%s race=%s lint=%s tla=[%s] fuzz=%d scripts=%d bench=[%s] release=%s\n' \
+		"$base" "${PLAN_PACKAGES[*]-}" "${PLAN_RUNS[*]-}" "${PLAN_NEED_CGO:-0}" "${PLAN_NEED_POSTGRES:-0}" \
+		"${PLAN_NEED_RACE:-0}" "${PLAN_NEED_LINT:-0}" "${PLAN_TLA_SPECS[*]-}" "${#PLAN_FUZZ_TARGETS[@]}" \
+		"${#PLAN_SHELL_SCRIPTS[@]}" "${PLAN_BENCH_MODULES[*]-}" "${PLAN_NEED_RELEASE:-0}"
+fi
+if [ -z "$PLAN_ANY" ]; then
+	printf '\nbin/ci --changed: nothing changed since %s\n' "$base"
+	exit 0
 fi
 
 url=${GANTRY_TEST_POSTGRES_URL:-}
 if [ -n "$PLAN_NEED_POSTGRES" ]; then
+	step "Postgres"
 	if [ -z "$url" ] && timeout 30 docker network create "gantry-ci-$$" >/dev/null &&
 		timeout 300 docker run -d --name "$postgres" --network "gantry-ci-$$" -e POSTGRES_PASSWORD=gantry-tests \
 			postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf >/dev/null; then
@@ -235,17 +184,14 @@ if [ -n "$PLAN_NEED_TIDY" ]; then
 	done
 fi
 
-if [ "${#PLAN_PACKAGES[@]}" -gt 0 ] || [ -n "$PLAN_DOC_GANTRY_TEST" ] || [ -n "$PLAN_STRICT_CHECK" ]; then
+if [ "${#PLAN_PACKAGES[@]}" -gt 0 ] || [ "${#PLAN_RUNS[@]}" -gt 0 ]; then
 	step "Go tests"
 	if [ "${#PLAN_PACKAGES[@]}" -gt 0 ]; then
 		toolchain "${db[@]}" -- go test "${PLAN_PACKAGES[@]}"
 	fi
-	if [ -n "$PLAN_DOC_GANTRY_TEST" ]; then
-		toolchain -- go test -run '^(TestDocsCommands|TestDocsCodeSpansCloseOnTheirLine)$' ./cmd/gantry
-	fi
-	if [ -n "$PLAN_STRICT_CHECK" ]; then
-		toolchain -- go test -run '^TestGantryPassesStrict$' ./devcheck
-	fi
+	for run in ${PLAN_RUNS[@]+"${PLAN_RUNS[@]}"}; do
+		toolchain "${db[@]}" -- go test -run "${run#*|}" "${run%%|*}"
+	done
 	if [ -n "$PLAN_NEED_CGO" ] && [ "${#PLAN_PACKAGES[@]}" -gt 0 ]; then
 		echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
 		toolchain "${db[@]}" "${cgo[@]}" -- go test "$tags" "${static[@]}" "${PLAN_PACKAGES[@]}"

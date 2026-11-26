@@ -21,6 +21,7 @@ elif [ $# -gt 0 ]; then
 		case "$arg" in
 			-*) echo "usage: bin/shellcheck [--list | FILE...]" >&2; exit 2 ;;
 		esac
+		[ -f "$arg" ] || { echo "bin/shellcheck: no such file: $arg" >&2; exit 1; }
 		targets+=("$arg")
 	done
 fi

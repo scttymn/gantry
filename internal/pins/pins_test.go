@@ -76,15 +76,20 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 		}},
 		{"Postgres's major version", postgres[1], "internal/pins/pins.go (PostgresImage)",
 			all([]string{"Dockerfile", "cmd/gantry/templates/new/Dockerfile.tmpl"}, `postgresql-client-(\d+)`)},
-		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", append(
-			all(workflows, `image: (postgres:\S+)`),
-			handCopy{"bin/ci", `\b(postgres:\d+@sha256:[0-9a-f]+)`},
-		)},
+		{"Postgres's image", PostgresImage, "internal/pins/pins.go (PostgresImage)", []handCopy{
+			{".github/workflows/release.yml", `image: (postgres:\S+)`},
+			{".github/workflows/ci.yml", `\b(postgres:\d+@sha256:[0-9a-f]+)`},
+			{"bin/ci", `\b(postgres:\d+@sha256:[0-9a-f]+)`},
+		}},
 		{"SQLite's C flags", SQLiteCFlags, "internal/pins/pins.go (SQLiteCFlags)", all(scripts, `CGO_CFLAGS="([^"]+)"`)},
 		{"SQLite's build tags", SQLiteTags, "internal/pins/pins.go (SQLiteTags)", all(scripts, `-tags[ =](?:bench,)?([\w,]+)`)},
 		{"Temurin's image", TemurinImage, "internal/pins/pins.go (TemurinImage)", []handCopy{{"bin/tlc", `\b(eclipse-temurin:\S+)`}}},
 		{"TLA+ version", TLAVersion, "internal/pins/pins.go (TLAVersion)", []handCopy{{"bin/tlc", `tla_version=(v[\d.]+)`}}},
 		{"TLA+ jar digest", TLASHA256, "internal/pins/pins.go (TLASHA256)", []handCopy{{"bin/tlc", `tla_sha256=([0-9a-f]{64})`}}},
+	}
+	everyCopyMarkedBy := map[string]string{
+		"SQLite's C flags":    "CGO_CFLAGS=",
+		"SQLite's build tags": "sqlite_omit_load_extension",
 	}
 	for _, p := range pins {
 		for _, c := range p.copies {
@@ -92,6 +97,9 @@ func TestCopiesMatchTheirPin(t *testing.T) {
 			found := regexp.MustCompile(c.re).FindAllStringSubmatchIndex(text, -1)
 			if len(found) == 0 {
 				t.Errorf("%s has no %s any more (%s): take it out of the table in internal/pins/pins_test.go", c.file, p.what, c.re)
+			}
+			if mark := everyCopyMarkedBy[p.what]; mark != "" && strings.Count(text, mark) != len(found) {
+				t.Errorf("%s has %s %d times, and %s finds %d: write each copy of %s as the others are, so this test checks every one", c.file, mark, strings.Count(text, mark), c.re, len(found), p.what)
 			}
 			for _, m := range found {
 				if got := text[m[2]:m[3]]; got != p.value {
