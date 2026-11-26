@@ -162,10 +162,8 @@ func TestNewCI(t *testing.T) {
 			if step.Uses != "" && !regexp.MustCompile(`@[0-9a-f]{40}$`).MatchString(step.Uses) {
 				t.Errorf("%s: %s isn't pinned by commit", engine, step.Uses)
 			}
-			// A ${{ }} in a script is pasted into it before the shell reads
-			// it: pass the value through env and quote the variable instead.
 			if strings.Contains(step.Run, "${{") {
-				t.Errorf("%s: a run script has a ${{ }} expression in it; pass it through env:\n%s", engine, step.Run)
+				t.Errorf("%s: a run script has a ${{ }} expression, which GitHub pastes into the script before the shell reads it; pass it through env and quote the variable:\n%s", engine, step.Run)
 			}
 			for _, line := range strings.Split(step.Run, "\n") {
 				if command, ok := strings.CutPrefix(strings.TrimSpace(line), "bin/gantry "); ok {
@@ -176,10 +174,8 @@ func TestNewCI(t *testing.T) {
 				}
 			}
 		}
-		// The strict check and verify are the full ones on every run; only the
-		// tests narrow to what a pull request affects.
 		if want := []string{"check --strict", "check --generated", `test --changed --base "origin/$BASE_REF"`, "test", "verify"}; !reflect.DeepEqual(runs, want) {
-			t.Errorf("%s: runs bin/gantry %q, want %q", engine, runs, want)
+			t.Errorf("%s: runs bin/gantry %q, want %q: the strict check and verify run in full every time, and only the tests narrow to what a pull request affects", engine, runs, want)
 		}
 		if want := "golangci-lint@" + pins.GolangciLint + " run ./..."; !strings.Contains(string(ci), want) {
 			t.Errorf("%s: ci.yml doesn't run %q:\n%s", engine, want, ci)

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -388,5 +389,85 @@ func TestRuleCatalog(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "asset-url [error]") || !strings.Contains(out.String(), "cache invalidation") {
 		t.Fatal(out.String())
+	}
+}
+
+func TestStrictFromTheAppsRootFindsCachedHandlersInOtherPackages(t *testing.T) {
+	root := t.TempDir()
+	for name, body := range map[string]string{
+		"go.mod": "module example.com/shop\n",
+		"app/routes.go": `package app
+
+import (
+	"github.com/scttymn/gantry/web"
+
+	"example.com/shop/app/home"
+)
+
+func (a *App) Router() *web.Router {
+	rt := web.NewRouter(nil, nil)
+	rt.Cached("GET /{$}", home.Controller{}.Show)
+	rt.Cached("GET /theme", home.Controller{}.Theme)
+	return rt
+}
+`,
+		"app/home/controller.go": `package home
+
+import (
+	"net/http"
+
+	"github.com/scttymn/gantry/auth"
+)
+
+type Controller struct{}
+
+func (c Controller) Show(w http.ResponseWriter, r *http.Request) error {
+	if u, ok := auth.Current(r); ok {
+		return render(w, "Hello, "+u.Email)
+	}
+	return render(w, "Hello")
+}
+
+func (c Controller) Theme(w http.ResponseWriter, r *http.Request) error {
+	http.SetCookie(w, &http.Cookie{Name: "theme", Value: r.FormValue("theme")})
+	return render(w, "Theme")
+}
+`,
+		"app/posts/config.go":  "package posts\n\nimport \"os\"\n\nvar Key = os.Getenv(\"POSTS_KEY\")\n",
+		"app/legacy/config.go": "package legacy\n\nimport \"os\"\n\nvar Key = os.Getenv(\"LEGACY_KEY\")\n",
+		".gantry-check.json":   `{"exceptions":[{"rule":"env-outside-config","file":"app/legacy/config.go","reason":"moves to config in #1"}]}`,
+	} {
+		p := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(root)
+	var out, errOut strings.Builder
+	if code := run([]string{"check", "--strict", "--json"}, ".", &out, &errOut); code != 1 {
+		t.Fatalf("exit %d, want 1: %s%s", code, out.String(), errOut.String())
+	}
+	var report struct {
+		Findings []checkFinding `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatal(err, out.String())
+	}
+	var got []string
+	for _, f := range report.Findings {
+		got = append(got, f.File+" "+f.Rule)
+	}
+	for _, want := range []string{"app/routes.go cached-scope", "app/routes.go cache-set-cookie", "app/posts/config.go env-outside-config"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("no %s in %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"app/legacy/config.go env-outside-config", ".gantry-check.json stale-exception"} {
+		if slices.Contains(got, unwanted) {
+			t.Errorf("%s in %q: the exception should hide the one and match", unwanted, got)
+		}
 	}
 }

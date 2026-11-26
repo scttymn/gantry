@@ -95,24 +95,10 @@ func validateRules(rules []Rule) (map[string]Rule, error) {
 // bottlenecks; contextual recommendations remain advisory.
 func Scan(root string) ([]Warning, error) { return ScanWithRules(root, DefaultRules()) }
 
-// ScanPaths runs Gantry's registered defaults over only the named project-relative
-// files or directories while still resolving cross-file call graphs from root.
-// When paths is empty, it scans the entire project like Scan.
-func ScanPaths(root string, paths []string) ([]Warning, error) {
-	return ScanPathsWithRules(root, paths, DefaultRules())
-}
-
 // ScanWithRules allows additional compiled rules without changing scanning,
 // exception handling or output. Append extensions to DefaultRules to retain
 // Gantry's checks. No dynamic code is loaded from a project's config file.
 func ScanWithRules(root string, rules []Rule) ([]Warning, error) {
-	return ScanPathsWithRules(root, nil, rules)
-}
-
-// ScanPathsWithRules scans only the named project-relative files or directories
-// using rules while resolving cross-file references from root. Missing paths are
-// skipped so callers can pass git diff lists directly.
-func ScanPathsWithRules(root string, paths []string, rules []Rule) ([]Warning, error) {
 	byID, err := validateRules(rules)
 	if err != nil {
 		return nil, err
@@ -126,25 +112,29 @@ func ScanPathsWithRules(root string, paths []string, rules []Rule) ([]Warning, e
 	module, _ := gomod.ImportPath(root)
 	prog := newProgram(root, module)
 	var warnings []Warning
-	seen := map[string]bool{}
-	scanFile := func(path string) error {
-		clean := filepath.Clean(path)
-		if seen[clean] {
-			return nil
-		}
-		seen[clean] = true
-		selected := extensions[filepath.Ext(clean)]
-		if strings.HasSuffix(clean, "_test.go") {
-			selected = slices.DeleteFunc(slices.Clone(selected), func(r Rule) bool { return !r.Tests })
-		}
-		if len(selected) == 0 || strings.HasSuffix(clean, "_templ.go") {
-			return nil
-		}
-		data, err := os.ReadFile(clean)
+	err = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		name, _ := filepath.Rel(root, clean)
+		if entry.IsDir() {
+			switch entry.Name() {
+			case ".git", ".gantry", ".cache", "node_modules", "vendor", "built", "testdata":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		selected := extensions[filepath.Ext(path)]
+		if strings.HasSuffix(path, "_test.go") {
+			selected = slices.DeleteFunc(slices.Clone(selected), func(r Rule) bool { return !r.Tests })
+		}
+		if len(selected) == 0 || !entry.Type().IsRegular() || strings.HasSuffix(path, "_templ.go") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		name, _ := filepath.Rel(root, path)
 		source := &Source{Path: filepath.ToSlash(name), Text: string(data), Module: module, prog: prog}
 		for _, rule := range selected {
 			var reportErr error
@@ -166,62 +156,9 @@ func ScanPathsWithRules(root string, paths []string, rules []Rule) ([]Warning, e
 			}
 		}
 		return nil
-	}
-	walkTarget := func(target string) error {
-		return filepath.WalkDir(target, func(path string, entry fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if entry.IsDir() {
-				switch entry.Name() {
-				case ".git", ".gantry", ".cache", "node_modules", "vendor", "built", "testdata":
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !entry.Type().IsRegular() {
-				return nil
-			}
-			return scanFile(path)
-		})
-	}
-	if len(paths) == 0 {
-		if err := walkTarget(root); err != nil {
-			return nil, err
-		}
-	} else {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			return nil, err
-		}
-		for _, p := range paths {
-			target := p
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(absRoot, target)
-			}
-			info, err := os.Stat(target)
-			if err != nil {
-				if os.IsNotExist(err) {
-					continue
-				}
-				return nil, err
-			}
-			if info.IsDir() {
-				if err := walkTarget(target); err != nil {
-					return nil, err
-				}
-				continue
-			}
-			rel, relErr := filepath.Rel(absRoot, target)
-			if relErr == nil && hasIgnoredSegment(filepath.ToSlash(rel)) {
-				continue
-			}
-			if info.Mode().IsRegular() {
-				if err := scanFile(target); err != nil {
-					return nil, err
-				}
-			}
-		}
+	})
+	if err != nil {
+		return nil, err
 	}
 	warnings, err = applyExceptions(root, warnings, byID)
 	if err != nil {
@@ -238,14 +175,4 @@ func ScanPathsWithRules(root string, paths []string, rules []Rule) ([]Warning, e
 		return a.Rule < b.Rule
 	})
 	return warnings, nil
-}
-
-func hasIgnoredSegment(rel string) bool {
-	for _, seg := range strings.Split(rel, "/") {
-		switch seg {
-		case ".git", ".gantry", ".cache", "node_modules", "vendor", "built", "testdata":
-			return true
-		}
-	}
-	return false
 }

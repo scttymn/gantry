@@ -11,45 +11,6 @@ import (
 	"github.com/scttymn/gantry/testkit"
 )
 
-func TestCheckPathsAndChanged(t *testing.T) {
-	root := t.TempDir()
-	for rel, body := range map[string]string{
-		"app/a.js": "document.querySelector('form');\n",
-		"app/b.js": "document.querySelector('form');\n",
-	} {
-		p := filepath.Join(root, rel)
-		os.MkdirAll(filepath.Dir(p), 0o755)
-		os.WriteFile(p, []byte(body), 0o644)
-	}
-	code, out, stderr := gantry(t, root, "check", "app/a.js")
-	if code != 0 || stderr != "" {
-		t.Fatalf("exit %d stderr=%q out=%q", code, stderr, out)
-	}
-	if !strings.Contains(out, "app/a.js") || strings.Contains(out, "app/b.js") {
-		t.Errorf("expected only app/a.js finding, got:\n%s", out)
-	}
-
-	origGit := gitOutputIn
-	t.Cleanup(func() { gitOutputIn = origGit })
-	gitOutputIn = func(dir string, args ...string) ([]byte, error) {
-		switch {
-		case len(args) >= 2 && args[0] == "rev-parse":
-			return []byte("true\n"), nil
-		case len(args) >= 2 && args[0] == "diff" && args[1] == "--name-only" && len(args) == 3 && strings.Contains(args[2], "..."):
-			return []byte("app/b.js\n"), nil
-		default:
-			return nil, nil
-		}
-	}
-	code, out, stderr = gantry(t, root, "check", "--changed")
-	if code != 0 || stderr != "" {
-		t.Fatalf("check --changed exit %d stderr=%q", code, stderr)
-	}
-	if !strings.Contains(out, "app/b.js") || strings.Contains(out, "app/a.js") {
-		t.Errorf("expected only app/b.js finding, got:\n%s", out)
-	}
-}
-
 func TestVerifyFeatureAndChanged(t *testing.T) {
 	const fmap = `features:
   - name: home
