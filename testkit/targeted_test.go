@@ -225,6 +225,63 @@ features:
 	}
 }
 
+type loggingTB struct {
+	silentTB
+	logs []string
+}
+
+func (l *loggingTB) Logf(format string, args ...any) {
+	l.logs = append(l.logs, fmt.Sprintf(format, args...))
+}
+
+func TestTheSelectionIsLoggedOnceWhereItIsRead(t *testing.T) {
+	t.Setenv("GANTRY_ENV", "test")
+	fmap := features(t, `
+features:
+  - name: home
+    routes: ["GET /{$}", GET /up, GET /login, /news]
+    role: public
+    visit:
+      - path: /
+        selector: h1
+  - name: account
+    routes: [/account/, /admin/]
+    role: signed-in
+    visit:
+      - path: /account/
+        selector: main h1
+`)
+	signIn := Roles{SignedIn: func(v *Visitor, n int) string {
+		v.Get("/login?as=member0")
+		return "member0"
+	}}
+	chose := func(logs []string) int {
+		return len(slices.DeleteFunc(slices.Clone(logs), func(l string) bool { return !strings.Contains(l, "GANTRY_VERIFY_FEATURES chose") }))
+	}
+	for _, tc := range []struct {
+		env  string
+		want int
+	}{{"", 0}, {"home", 1}} {
+		cdpSrv, _ := startFakeCDP(t, fakeCDPScenario{})
+		t.Setenv("GANTRY_VERIFY_FEATURES", tc.env)
+		t.Setenv("GANTRY_VERIFY_BROWSER", "1")
+		t.Setenv("GANTRY_CDP_URL", cdpSrv.URL)
+		rt := club(&web.PageCache{})
+		rec := &loggingTB{silentTB: silentTB{TB: t}}
+		Verify(rec, rt.Handler(), rt.Routes(), fmap, signIn)
+		if got := chose(rec.logs); got != tc.want {
+			t.Errorf("verify --browser with GANTRY_VERIFY_FEATURES=%q logged the selection %d times, want %d: %q", tc.env, got, tc.want, rec.logs)
+		}
+	}
+	t.Setenv("GANTRY_VERIFY_FEATURES", "")
+	cdpSrv, _ := startFakeCDP(t, fakeCDPScenario{})
+	rec := &loggingTB{silentTB: silentTB{TB: t}}
+	VerifyBrowser(rec, club(&web.PageCache{}).Handler(), fmap, signIn, BrowserOptions{CDPURL: cdpSrv.URL, Features: []string{"home"}})
+	if got := chose(rec.logs); got != 0 {
+		t.Errorf("BrowserOptions.Features was credited to GANTRY_VERIFY_FEATURES: %q", rec.logs)
+	}
+}
+
 func TestVerifyReportsFailuresOfFeaturesLeftOut(t *testing.T) {
 	t.Setenv("GANTRY_ENV", "test")
 	t.Setenv("GANTRY_VERIFY_FEATURES", "posts")

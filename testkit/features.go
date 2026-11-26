@@ -208,6 +208,9 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 	allFeatures := Features(t, path)
 	selection := parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES"))
 	features := filterFeatures(t, path, allFeatures, selection)
+	if len(selection) > 0 {
+		t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selection, ", "), len(allFeatures), path)
+	}
 	report := VerifyReport{
 		Passed:         true,
 		UnmappedRoutes: []string{},
@@ -323,15 +326,11 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		}
 	}
 	if os.Getenv("GANTRY_VERIFY_BROWSER") == "1" {
-		selectedNames := make([]string, 0, len(features))
-		for _, f := range features {
-			selectedNames = append(selectedNames, f.Name)
-		}
 		bm := VerifyBrowser(t, h, path, roles, BrowserOptions{
 			ArtifactsDir: os.Getenv("GANTRY_VERIFY_ARTIFACTS"),
 			CDPURL:       os.Getenv("GANTRY_CDP_URL"),
 			ChromePath:   os.Getenv("GANTRY_CHROME_BIN"),
-			Features:     selectedNames,
+			Features:     selection,
 		})
 		report.Browser = &bm
 		if !bm.Passed {
@@ -379,7 +378,6 @@ func filterFeatures(t testing.TB, path string, all []Feature, selected []string)
 		}
 		want[name] = true
 	}
-	t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selected, ", "), len(all), path)
 	var filtered []Feature
 	for _, f := range all {
 		if want[f.Name] {
