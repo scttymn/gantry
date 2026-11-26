@@ -5,16 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
 	"strings"
-
-	"gopkg.in/yaml.v3"
-
-	"github.com/scttymn/gantry/testkit"
 )
 
 type goListPackage struct {
@@ -171,85 +166,6 @@ func affectedGoPackages(root string, changed []string) ([]string, bool, error) {
 	}
 	slices.Sort(pkgs)
 	return pkgs, false, nil
-}
-
-func affectedFeatures(root string, changed []string) ([]string, bool, error) {
-	if len(changed) == 0 {
-		return nil, false, nil
-	}
-	raw, err := os.ReadFile(filepath.Join(root, "test", "features.yaml"))
-	if err != nil {
-		return nil, true, err
-	}
-	var doc struct {
-		Features []testkit.Feature `yaml:"features"`
-	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
-		return nil, true, err
-	}
-	selected := map[string]bool{}
-	for _, f := range changed {
-		if isDocOrMetaFile(f) {
-			continue
-		}
-		if f == "go.mod" || f == "go.sum" || f == "Dockerfile" || f == "compose.yml" ||
-			f == "app/routes.go" || f == "test/features.yaml" ||
-			strings.HasPrefix(f, "app/shared/") || strings.HasPrefix(f, "assets/") ||
-			strings.HasPrefix(f, "config/") || strings.HasPrefix(f, "db/") ||
-			strings.HasPrefix(f, "app/models/") || strings.HasPrefix(f, "test/") {
-			return nil, true, nil
-		}
-		matched := false
-		if rest, ok := strings.CutPrefix(f, "app/"); ok {
-			parts := strings.Split(rest, "/")
-			if len(parts) >= 2 {
-				candidates := []string{parts[0]}
-				if len(parts) >= 3 {
-					candidates = append(candidates, parts[0]+"/"+parts[1], parts[1])
-				}
-				for _, feat := range doc.Features {
-					if featureMatchesCandidates(feat, candidates) {
-						selected[feat.Name] = true
-						matched = true
-					}
-				}
-			}
-		}
-		if !matched {
-			return nil, true, nil
-		}
-	}
-	if len(selected) == 0 {
-		return nil, false, nil
-	}
-	var out []string
-	for _, feat := range doc.Features {
-		if selected[feat.Name] {
-			out = append(out, feat.Name)
-		}
-	}
-	return out, false, nil
-}
-
-func featureMatchesCandidates(feat testkit.Feature, candidates []string) bool {
-	featName := strings.ToLower(feat.Name)
-	for _, c := range candidates {
-		lc := strings.ToLower(c)
-		if featName == lc || strings.ReplaceAll(featName, "-", "/") == lc {
-			return true
-		}
-		for _, route := range feat.Routes {
-			r := route
-			if _, after, ok := strings.Cut(r, " "); ok {
-				r = after
-			}
-			r = strings.ToLower(strings.Trim(r, "/"))
-			if r == lc || strings.HasPrefix(r, lc+"/") || strings.HasSuffix(r, "/"+lc) || strings.Contains(r, "/"+lc+"/") {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 func normalizeRelDir(dir string) string {

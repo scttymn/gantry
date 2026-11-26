@@ -261,7 +261,7 @@ func TestVerifyBrowserCLI(t *testing.T) {
 
 	t.Run("artifacts without browser is a usage error", func(t *testing.T) {
 		code, _, stderr := gantry(t, dir, "verify", "--artifacts", "proof")
-		if code != 2 || !strings.Contains(stderr, "usage: gantry verify [--artifacts DIR] [--base REF] [--browser] [--changed] [--feature NAME] [--json] [--local]") {
+		if code != 2 || !strings.Contains(stderr, "usage: gantry verify [--artifacts DIR] [--browser] [--feature NAME[,NAME...]] [--json] [--local]") {
 			t.Errorf("exit %d: %s", code, stderr)
 		}
 	})

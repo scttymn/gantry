@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -30,54 +31,40 @@ const (
 
 const verifyCopy = ".gantry-verify-*.yml"
 
-func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser, changed *bool, artifacts, feature, base *string) {
+func verifyFlags() (fs *flag.FlagSet, local, asJSON, browser *bool, artifacts, feature *string) {
 	fs, local = appFlags()
 	asJSON = fs.Bool("json", false, "a JSON report of features, visits, cache and leak checks")
 	browser = fs.Bool("browser", false, "also render each feature in headless Chrome via CDP and capture screenshots")
 	artifacts = fs.String("artifacts", "", "output `DIR` for --browser screenshots and manifest.json (default "+defaultVerifyArtifacts+")")
-	feature = fs.String("feature", "", "comma-separated feature `NAME`s from test/features.yaml to verify")
-	changed = fs.Bool("changed", false, "verify only features affected by git changes")
-	base = fs.String("base", "", "base `REF` for --changed (default origin/main or main)")
-	return fs, local, asJSON, browser, changed, artifacts, feature, base
+	feature = fs.String("feature", "", "only these features from test/features.yaml, `NAME[,NAME...]`")
+	return fs, local, asJSON, browser, artifacts, feature
 }
 
 func verify(root string, args []string, out, errOut io.Writer) error {
-	fs, local, asJSON, browser, changed, artifacts, feature, base := verifyFlags()
+	fs, local, asJSON, browser, artifacts, feature := verifyFlags()
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || (*artifacts != "" && !*browser) || (*base != "" && !*changed) || (*changed && *feature != "") {
+	if fs.NArg() > 0 || *artifacts != "" && !*browser {
 		return usageError{}
 	}
+	var names []string
+	for _, name := range strings.Split(*feature, ",") {
+		if name = strings.TrimSpace(name); name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	featureGiven := false
+	fs.Visit(func(f *flag.Flag) { featureGiven = featureGiven || f.Name == "feature" })
+	if featureGiven && len(names) == 0 {
+		return usageError{errors.New("--feature names no feature")}
+	}
+	selectedFeatures := strings.Join(names, ",")
 	if _, err := os.Stat(filepath.Join(root, "test", "features.yaml")); err != nil {
 		return errors.New("no test/features.yaml here: run gantry at the app's root; an app made before gantry verify writes one with bin/gantry g features, and adds its test (docs/development.md#an-app-made-before-the-feature-map)")
 	}
 	if !hasTestFeatures(filepath.Join(root, "app")) {
 		return errors.New("app/ has no TestFeatures, so go test would run nothing and pass: copy a new app's app/features_test.go (docs/development.md#an-app-made-before-the-feature-map)")
-	}
-	selectedFeatures := strings.TrimSpace(*feature)
-	if *changed {
-		files, _, ok := gitChangedFiles(root, *base)
-		if ok {
-			names, all, err := affectedFeatures(root, files)
-			if err != nil {
-				return err
-			}
-			if !all {
-				if len(names) == 0 {
-					if *asJSON {
-						return json.NewEncoder(out).Encode(testkit.VerifyReport{
-							Passed:         true,
-							UnmappedRoutes: []string{},
-							Features:       []testkit.FeatureResult{},
-						})
-					}
-					fmt.Fprintln(out, "gantry verify --changed: no features affected")
-					return nil
-				}
-				selectedFeatures = strings.Join(names, ",")
-			}
-		}
 	}
 	artifactsDir := *artifacts
 	if *browser && artifactsDir == "" {

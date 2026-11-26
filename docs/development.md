@@ -344,7 +344,8 @@ with stable field names, exiting nonzero on a failure after printing:
       "leaks": [],
       "errors": []
     }
-  ]
+  ],
+  "errors": []
 }
 ```
 

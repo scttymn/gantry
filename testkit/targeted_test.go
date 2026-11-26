@@ -1,12 +1,14 @@
 package testkit
 
 import (
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -132,5 +134,51 @@ func TestFilterFeaturesRejectsUnknownName(t *testing.T) {
 	<-done
 	if !rec.failed || len(rec.errs) == 0 || !strings.Contains(rec.errs[0], `no feature "missing"`) {
 		t.Fatalf("expected fatal on unknown feature, got failed=%v errs=%v", rec.failed, rec.errs)
+	}
+}
+
+func TestVerifyReportsFailuresOfFeaturesLeftOut(t *testing.T) {
+	t.Setenv("GANTRY_ENV", "test")
+	t.Setenv("GANTRY_VERIFY_FEATURES", "posts")
+	page := func(w http.ResponseWriter, r *http.Request) error {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("<h1>Page</h1>"))
+		return nil
+	}
+	rt := web.NewRouter(slog.New(slog.DiscardHandler), nil)
+	rt.Handle("GET /{$}", page)
+	rt.Handle("GET /posts", page)
+	fmap := filepath.Join(t.TempDir(), "features.yaml")
+	body := `features:
+  - name: home
+    routes: ["GET /{$}", "GET /up"]
+    role: public
+    cacheable: true
+  - name: posts
+    routes: ["GET /posts"]
+    role: public
+    visit:
+      - path: /posts
+        selector: h1
+`
+	if err := os.WriteFile(fmap, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rec := &silentTB{TB: t}
+	report := Verify(rec, rt.Handler(), rt.Routes(), fmap, nil)
+	if report.Passed || report.Failures != 2 || len(report.Errors) != 2 {
+		t.Fatalf("report = %+v, want home's two uncached routes in Errors", report)
+	}
+	for _, msg := range report.Errors {
+		if !strings.Contains(msg, "home is cacheable") {
+			t.Errorf("error %q doesn't name home's failure", msg)
+		}
+	}
+	if !slices.Equal(report.Errors, rec.errs) {
+		t.Errorf("Errors = %q, the test reported %q", report.Errors, rec.errs)
+	}
+	raw, err := json.Marshal(report)
+	if err != nil || !strings.Contains(string(raw), `"errors":["`) {
+		t.Errorf("JSON %s has no top-level errors (%v)", raw, err)
 	}
 }

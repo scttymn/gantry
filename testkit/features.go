@@ -125,7 +125,10 @@ type VerifyReport struct {
 	Routes         int              `json:"routes"`
 	UnmappedRoutes []string         `json:"unmapped_routes"`
 	Features       []FeatureResult  `json:"features"`
-	Browser        *BrowserManifest `json:"browser,omitempty"`
+	// failures of features GANTRY_VERIFY_FEATURES left out, which have no
+	// entry in Features
+	Errors  []string         `json:"errors"`
+	Browser *BrowserManifest `json:"browser,omitempty"`
 }
 
 // FeatureResult is one feature's verification outcome in VerifyReport.
@@ -205,6 +208,7 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		Passed:         true,
 		UnmappedRoutes: []string{},
 		Features:       make([]FeatureResult, len(features)),
+		Errors:         []string{},
 	}
 	indexByName := make(map[string]int, len(features))
 	for i, f := range features {
@@ -227,10 +231,12 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		t.Errorf("%s", msg)
 		report.Passed = false
 		report.Failures++
-		if i >= 0 {
-			report.Features[i].Passed = false
-			report.Features[i].Errors = append(report.Features[i].Errors, msg)
+		if i < 0 {
+			report.Errors = append(report.Errors, msg)
+			return
 		}
+		report.Features[i].Passed = false
+		report.Features[i].Errors = append(report.Features[i].Errors, msg)
 	}
 	for _, r := range routes {
 		if r.Mounted {

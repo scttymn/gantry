@@ -7,11 +7,9 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/scttymn/gantry/testkit"
 )
 
-func TestVerifyFeatureAndChanged(t *testing.T) {
+func TestVerifyFeature(t *testing.T) {
 	const fmap = `features:
   - name: home
     routes: ["GET /{$}"]
@@ -25,64 +23,26 @@ func TestVerifyFeatureAndChanged(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "app"), 0o755)
 	os.WriteFile(filepath.Join(root, "app", "features_test.go"), []byte("package app_test\n\nimport \"testing\"\n\nfunc TestFeatures(t *testing.T) {}\n"), 0o644)
 
-	t.Run("explicit --feature passes env locally", func(t *testing.T) {
+	for _, tc := range []struct{ flag, want string }{
+		{"posts", "posts"},
+		{" posts, home,posts ", "posts,home"},
+	} {
 		ran := steps(t, "")
-		code, _, stderr := gantry(t, root, "verify", "--local", "--feature", "posts")
+		code, _, stderr := gantry(t, root, "verify", "--local", "--feature", tc.flag)
 		if code != 0 || stderr != "" {
-			t.Fatalf("exit %d stderr=%q", code, stderr)
+			t.Fatalf("--feature %q: exit %d stderr=%q", tc.flag, code, stderr)
 		}
-		if want := [][]string{{base, "env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=posts", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}}; !reflect.DeepEqual(*ran, want) {
-			t.Errorf("ran %q, want %q", *ran, want)
+		if want := [][]string{{base, "env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=" + tc.want, "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}}; !reflect.DeepEqual(*ran, want) {
+			t.Errorf("--feature %q: ran %q, want %q", tc.flag, *ran, want)
 		}
-	})
-
-	t.Run("--changed targets matching resource feature", func(t *testing.T) {
-		origGit := gitOutputIn
-		t.Cleanup(func() { gitOutputIn = origGit })
-		gitOutputIn = func(dir string, args ...string) ([]byte, error) {
-			if len(args) >= 1 && args[0] == "rev-parse" {
-				return []byte("true\n"), nil
-			}
-			if len(args) == 3 && args[0] == "diff" && strings.Contains(args[2], "...") {
-				return []byte("app/posts/actions.go\n"), nil
-			}
-			return nil, nil
-		}
+	}
+	for _, empty := range []string{"", " , "} {
 		ran := steps(t, "")
-		code, _, stderr := gantry(t, root, "verify", "--local", "--changed")
-		if code != 0 || stderr != "" {
-			t.Fatalf("exit %d stderr=%q", code, stderr)
+		code, _, stderr := gantry(t, root, "verify", "--local", "--feature", empty)
+		if code != 2 || !strings.Contains(stderr, "--feature names no feature") || len(*ran) != 0 {
+			t.Errorf("--feature %q: exit %d, ran %q, stderr %q; want a usage error that runs nothing, not every feature", empty, code, *ran, stderr)
 		}
-		if want := [][]string{{base, "env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=posts", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}}; !reflect.DeepEqual(*ran, want) {
-			t.Errorf("ran %q, want %q", *ran, want)
-		}
-	})
-
-	t.Run("--changed skips when only docs changed", func(t *testing.T) {
-		origGit := gitOutputIn
-		t.Cleanup(func() { gitOutputIn = origGit })
-		gitOutputIn = func(dir string, args ...string) ([]byte, error) {
-			if len(args) >= 1 && args[0] == "rev-parse" {
-				return []byte("true\n"), nil
-			}
-			if len(args) == 3 && args[0] == "diff" && strings.Contains(args[2], "...") {
-				return []byte("README.md\n"), nil
-			}
-			return nil, nil
-		}
-		ran := steps(t, "")
-		code, out, stderr := gantry(t, root, "verify", "--local", "--changed", "--json")
-		if code != 0 || stderr != "" {
-			t.Fatalf("exit %d stderr=%q", code, stderr)
-		}
-		if len(*ran) != 0 {
-			t.Errorf("expected no test execution for docs-only change, ran %q", *ran)
-		}
-		var rep testkit.VerifyReport
-		if err := json.Unmarshal([]byte(out), &rep); err != nil || !rep.Passed {
-			t.Errorf("out=%q err=%v", out, err)
-		}
-	})
+	}
 }
 
 func TestTargetedAppTestCommand(t *testing.T) {
