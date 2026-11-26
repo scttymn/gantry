@@ -347,7 +347,7 @@ func testLimitExpires(t *testing.T, engine string) {
 		t.Fatal("nothing claimed")
 	}
 	clock.Advance(3*time.Minute + time.Second)
-	if err := q.maintain(ctx); err != nil {
+	if err := q.maintain(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok, _ := q.claim(ctx, "default", "test"); !ok {
@@ -370,7 +370,7 @@ func testLimitOutlived(t *testing.T, engine string) {
 		t.Fatal("nothing claimed")
 	}
 	clock.Advance(3*time.Minute + time.Second)
-	if err := q.maintain(ctx); err != nil {
+	if err := q.maintain(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
 	next, ok, _ := q.claim(ctx, "default", "test")
@@ -457,7 +457,7 @@ func testStaleWorkerLimit(t *testing.T, engine string) {
 		t.Fatal("nothing claimed")
 	}
 	clock.Advance(6 * time.Minute)
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	q.beat(ctx, "alive")
 	if _, ok, _ := q.claim(ctx, "default", "alive"); !ok {
 		t.Fatal("the stalled worker's job didn't go back")
@@ -544,7 +544,7 @@ func testStaleWorker(t *testing.T, engine string) {
 				t.Fatal("nothing claimed")
 			}
 			clock.Advance(6 * time.Minute)
-			q.maintain(ctx)
+			q.maintain(ctx, nil)
 			q.beat(ctx, again)
 			fresh, ok, _ := q.claim(ctx, "default", again)
 			if !ok {
@@ -691,7 +691,7 @@ func testRecurringStalledPastKeep(t *testing.T, engine string) {
 	clock.Advance(time.Hour)
 	drain(t, q)
 	clock.Advance(25 * time.Hour)
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	if err := stalled.Drain(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -713,15 +713,15 @@ func testTicksCleared(t *testing.T, engine string) {
 		d.Read.QueryRow(`SELECT COUNT(*) FROM gantry_job_ticks`).Scan(&n)
 		return n
 	}
-	clock.Advance(23 * time.Hour)
-	q.maintain(ctx)
+	clock.Advance(25*time.Hour - time.Second)
+	q.maintain(ctx, nil)
 	if ticks() != 1 {
-		t.Fatalf("%d ticks before a day; want 1", ticks())
+		t.Fatalf("%d ticks a second before a day and an hour; want 1: kept an hour past Keep, so a tick that read its clock just inside Keep finds it", ticks())
 	}
-	clock.Advance(2 * time.Hour)
-	q.maintain(ctx)
+	clock.Advance(2 * time.Second)
+	q.maintain(ctx, nil)
 	if ticks() != 0 {
-		t.Errorf("%d ticks after a day; want 0", ticks())
+		t.Errorf("%d ticks a second after a day and an hour; want 0", ticks())
 	}
 }
 
@@ -739,12 +739,12 @@ func testClearing(t *testing.T, engine string) {
 		return n
 	}
 	clock.Advance(23 * time.Hour)
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	if count() != 2 {
 		t.Fatalf("%d jobs before a day", count())
 	}
 	clock.Advance(2 * time.Hour)
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	if failed, _ := q.Failed(ctx); count() != 1 || len(failed) != 1 {
 		t.Errorf("%d jobs after a day, failed %+v", count(), failed)
 	}
@@ -768,14 +768,14 @@ func testCrashedProcess(t *testing.T, engine string) {
 		}
 	}
 	clock.Advance(4 * time.Minute)
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	drain(t, q)
 	if r.Load() != 0 {
 		t.Fatal("released while its process might be alive")
 	}
 	clock.Advance(2 * time.Minute)
 	q.beat(ctx, "alive")
-	q.maintain(ctx)
+	q.maintain(ctx, nil)
 	drain(t, q)
 	if r.Load() != 1 {
 		t.Errorf("%d jobs went back; want the crashed process's one, not the live one's", r.Load())

@@ -76,6 +76,21 @@ func TestBinCIRunsTheCIWorkflow(t *testing.T) {
 const fakeDocker = `#!/bin/sh
 echo "$*" >>"$FAKE_DOCKER_LOG"
 case "$*" in *"${FAKE_FAIL:-no such call}"*) exit 1 ;; esac
+case "$*" in *tlc2.TLC*)
+	while [ "$1" != tlc ]; do shift; done
+	shift 3
+	for cfg; do
+		read -r expect <"spec/$cfg"
+		[ -z "${FAKE_TLC_PASSES:-}" ] || expect=pass
+		echo "@@ start $cfg 1000000000"
+		[ -z "${FAKE_TLC_SILENT:-}" ] || { echo "@@ end $cfg 255 1500000000"; continue; }
+		case "$expect" in
+		*violates*) echo "Error: Invariant ${expect##* } is violated."; echo "9 states generated, 5 distinct states found, 2 states left on queue."; echo "@@ end $cfg 12 1500000000" ;;
+		*) echo "7 states generated, 5 distinct states found, 0 states left on queue."; echo "@@ end $cfg 0 1500000000" ;;
+		esac
+	done
+	exit 0 ;;
+esac
 case "$1 $2" in
 "ps "*) exit "${FAKE_DOCKER_PS:-0}" ;;
 "network create") exit "${FAKE_POSTGRES:-1}" ;;
@@ -301,6 +316,162 @@ func TestScriptsRunTheirOwnBuild(t *testing.T) {
 			ownBuild(t, string(out), strings.Split(strings.TrimSpace(string(calls)), "\n"))
 		})
 	}
+}
+
+var specExpect = regexp.MustCompile(`^\\\* expect: (pass|violates ([A-Za-z_][A-Za-z0-9_]*))$`)
+
+func TestSpecConfigsSayWhatTheyExpect(t *testing.T) {
+	cfgs, err := filepath.Glob("spec/*.cfg")
+	if err != nil || len(cfgs) == 0 {
+		t.Fatalf("no spec/*.cfg: %v", err)
+	}
+	for _, cfg := range cfgs {
+		text, err := os.ReadFile(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		base, variant, _ := strings.Cut(strings.TrimSuffix(filepath.Base(cfg), ".cfg"), ".")
+		variant, _, _ = strings.Cut(variant, ".")
+		spec, err := os.ReadFile(filepath.Join("spec", base+".tla"))
+		if err != nil {
+			t.Errorf("%s has no spec: bin/tlc runs spec/<Name>.cfg and spec/<Name>.*.cfg with spec/<Name>.tla, and there's no spec/%s.tla", cfg, base)
+			continue
+		}
+		first, _, _ := strings.Cut(string(text), "\n")
+		m := specExpect.FindStringSubmatch(first)
+		if m == nil {
+			t.Errorf("%s's first line is %q; bin/tlc wants \\* expect: pass or \\* expect: violates <Invariant>", cfg, first)
+			continue
+		}
+		violated := m[2]
+		switch {
+		case strings.HasPrefix(variant, "Mut") && (violated == "" || !regexp.MustCompile(`(?m)^\s+`+variant+` = TRUE$`).Match(text)):
+			t.Errorf("%s is a control: it sets %s = TRUE and expects the invariant that catches it violated", cfg, variant)
+		case strings.HasPrefix(variant, "Reach") && violated != variant:
+			t.Errorf("%s is a reachability witness: it expects %s violated", cfg, variant)
+		case violated != "" && !regexp.MustCompile(`(?m)^INVARIANT `+violated+`$`).Match(text):
+			t.Errorf("%s expects %s violated, so that's its one invariant (INVARIANT %s): TLC stops at the first it finds", cfg, violated, violated)
+		case violated != "" && !regexp.MustCompile(`(?m)^`+violated+` ==`).Match(spec):
+			t.Errorf("%s expects %s violated, and spec/%s.tla doesn't define it", cfg, violated, base)
+		}
+	}
+}
+
+func TestBinTLC(t *testing.T) {
+	script, err := os.ReadFile("bin/tlc")
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := map[string]string{
+		"M.tla":      "---- MODULE M ----\n====\n",
+		"M.cfg":      "\\* expect: pass\nSPECIFICATION Spec\n",
+		"M.MutX.cfg": "\\* expect: violates Safe\nSPECIFICATION Spec\nINVARIANT Safe\n",
+		"N.tla":      "---- MODULE N ----\n====\n",
+		"N.cfg":      "\\* expect: pass\nSPECIFICATION Spec\n",
+	}
+	tlc := func(t *testing.T, extra map[string]string, env []string, args ...string) (string, []string, error) {
+		t.Helper()
+		root, bin, home := t.TempDir(), t.TempDir(), t.TempDir()
+		files := map[string]string{"bin/tlc": string(script)}
+		for name, text := range spec {
+			files["spec/"+name] = text
+		}
+		for name, text := range extra {
+			files["spec/"+name] = text
+		}
+		for name, text := range files {
+			path := filepath.Join(root, name)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(text), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		stubs := map[string]string{
+			"docker":    fakeDocker,
+			"curl":      "#!/bin/sh\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) : >\"$2\"; shift ;; esac; shift; done\n",
+			"sha256sum": "#!/bin/sh\nprintf '" + pins.TLASHA256 + "  %s\\n' \"$1\"\n",
+		}
+		for _, tool := range []string{"docker", "curl", "sha256sum", "bash", "sh", "awk", "basename", "dirname", "mkdir", "mktemp", "mv", "rm", "timeout", "uname"} {
+			dst := filepath.Join(bin, tool)
+			if stub, ok := stubs[tool]; ok {
+				if err := os.WriteFile(dst, []byte(stub), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				continue
+			}
+			src, err := exec.LookPath(tool)
+			if err != nil {
+				t.Skipf("no %s here to run bin/tlc with", tool)
+			}
+			if err := os.Symlink(src, dst); err != nil {
+				t.Fatal(err)
+			}
+		}
+		log := filepath.Join(home, "docker.log")
+		cmd := exec.Command(filepath.Join(root, "bin/tlc"), args...)
+		cmd.Env = append([]string{"PATH=" + bin, "HOME=" + home, "FAKE_DOCKER_LOG=" + log}, env...)
+		out, err := cmd.CombinedOutput()
+		calls, _ := os.ReadFile(log)
+		return string(out), strings.Split(strings.TrimSpace(string(calls)), "\n"), err
+	}
+	t.Run("each config as it expects", func(t *testing.T) {
+		out, calls, err := tlc(t, nil, nil)
+		if err != nil {
+			t.Fatalf("bin/tlc: %v\n%s", err, out)
+		}
+		for _, cfg := range []string{"M.cfg", "M.MutX.cfg", "N.cfg"} {
+			if !regexp.MustCompile(`(?m)^ok +` + regexp.QuoteMeta(cfg) + ` .* 5 states +0\.5s$`).MatchString(out) {
+				t.Errorf("no line saying %s did as it expects, with its states and time:\n%s", cfg, out)
+			}
+		}
+		if runs, m := called(calls, "--name gantry-tlc-"), called(calls, ".jar M.tla M.cfg M.MutX.cfg"); len(runs) != 2 || len(m) != 1 {
+			t.Errorf("want one named container a spec, M's with both its configs: runs %q, M's %q", runs, m)
+		}
+	})
+	t.Run("a control that passes fails", func(t *testing.T) {
+		out, _, err := tlc(t, nil, []string{"FAKE_TLC_PASSES=1"})
+		if err == nil || !regexp.MustCompile(`(?m)^MISMATCH +M\.MutX\.cfg +expect violates Safe +got pass`).MatchString(out) {
+			t.Errorf("bin/tlc with a control that found nothing: err %v\n%s", err, out)
+		}
+	})
+	t.Run("TLC that prints nothing", func(t *testing.T) {
+		out, _, err := tlc(t, nil, []string{"FAKE_TLC_SILENT=1"})
+		if err == nil || !regexp.MustCompile(`(?m)^MISMATCH +M\.cfg +expect pass +got exit 255`).MatchString(out) || !strings.Contains(out, "in TLC") {
+			t.Errorf("bin/tlc whose TLC said nothing: err %v\n%s", err, out)
+		}
+	})
+	t.Run("a config with no expect line", func(t *testing.T) {
+		out, calls, err := tlc(t, map[string]string{"M.Bad.cfg": "SPECIFICATION Spec\n"}, nil)
+		if err == nil || !strings.Contains(out, "M.Bad.cfg's first line") || len(called(calls, "tlc2.TLC")) > 0 {
+			t.Errorf("bin/tlc with a config that says nothing: err %v, runs %q\n%s", err, called(calls, "tlc2.TLC"), out)
+		}
+	})
+	t.Run("a config without its spec", func(t *testing.T) {
+		out, _, err := tlc(t, map[string]string{"Gone.Reach.cfg": "\\* expect: pass\n"}, nil)
+		if err == nil || !strings.Contains(out, "has no spec (spec/Gone.tla)") {
+			t.Errorf("bin/tlc with a config whose spec isn't there: err %v\n%s", err, out)
+		}
+	})
+	t.Run("a failed run's container is removed", func(t *testing.T) {
+		out, calls, err := tlc(t, nil, []string{"FAKE_FAIL=tlc2.TLC"})
+		if err == nil || len(called(calls, "rm -f gantry-tlc-")) == 0 {
+			t.Errorf("bin/tlc whose TLC container failed: err %v, calls %q\n%s", err, calls, out)
+		}
+	})
+	t.Run("SPEC... checks only those", func(t *testing.T) {
+		out, calls, err := tlc(t, nil, nil, "spec/N.tla")
+		if runs := called(calls, "--name gantry-tlc-"); err != nil || len(runs) != 1 || len(called(calls, ".jar N.tla N.cfg")) != 1 {
+			t.Errorf("bin/tlc spec/N.tla: err %v, runs %q\n%s", err, runs, out)
+		}
+	})
+	t.Run("--list", func(t *testing.T) {
+		out, _, err := tlc(t, nil, nil, "--list")
+		if err != nil || out != "spec/M.tla\nspec/N.tla\n" {
+			t.Errorf("bin/tlc --list: %v\n%s", err, out)
+		}
+	})
 }
 
 func TestPrePushHook(t *testing.T) {
