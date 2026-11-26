@@ -53,6 +53,8 @@ func TestUsage(t *testing.T) {
 		{[]string{"test", "--changed", "./app/..."}, []string{"usage: gantry test [ARGS...]"}},
 		{[]string{"test", "--changed", "-count=1"}, []string{"-count", "usage: gantry test [ARGS...]"}},
 		{[]string{"test", "--local", "--base"}, []string{"-base", "usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--base", ""}, []string{"usage: gantry test [ARGS...]"}},
+		{[]string{"test", "--changed", "--base", " "}, []string{"--base names no ref", "usage: gantry test [ARGS...]"}},
 		{[]string{"test", "--local", "./app/posts"}, []string{"usage: gantry test [ARGS...]"}},
 		{[]string{"g", "features", "posts"}, []string{"usage: gantry g features [--local]"}},
 		{[]string{"check", "--rules", "--strict"}, []string{"usage: gantry check"}},
@@ -92,8 +94,12 @@ func TestCommandHelp(t *testing.T) {
 				args = append(strings.Fields(c.name), "Work Sans", help)
 			}
 			var out, errOut strings.Builder
+			want := "usage: " + c.synopsis() + "\n"
+			if c.help != "" {
+				want += c.help + "\n"
+			}
 			code := run(args, t.TempDir(), &out, &errOut)
-			if code != 0 || out.String() != "usage: "+c.synopsis()+"\n" || errOut.String() != "" {
+			if code != 0 || out.String() != want || errOut.String() != "" {
 				t.Errorf("%q: exit %d\nstdout: %s\nstderr: %s", args, code, out.String(), errOut.String())
 			}
 		}

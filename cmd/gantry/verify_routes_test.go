@@ -41,7 +41,7 @@ func TestVerifyJSONLocal(t *testing.T) {
 		if code != 0 || stderr != "" {
 			t.Fatalf("exit %d, stderr %q, out %q", code, stderr, out)
 		}
-		if want := []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_JSON=1", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}; !reflect.DeepEqual(ran, want) {
+		if want := []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_JSON=1", "GANTRY_VERIFY_FEATURES=", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}; !reflect.DeepEqual(ran, want) {
 			t.Errorf("ran %q, want %q", ran, want)
 		}
 		var got testkit.VerifyReport
@@ -224,7 +224,7 @@ func TestVerifyBrowserCLI(t *testing.T) {
 			t.Fatalf("exit %d: %s", code, stderr)
 		}
 		wantDir, _ := filepath.Abs(filepath.Join(dir, "proof"))
-		want := []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS=" + wantDir, "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}
+		want := []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=", "GANTRY_VERIFY_BROWSER=1", "GANTRY_VERIFY_ARTIFACTS=" + wantDir, "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}
 		if len(*got) != 1 || !reflect.DeepEqual((*got)[0][1:], want) {
 			t.Errorf("ran %q, want %q", *got, want)
 		}

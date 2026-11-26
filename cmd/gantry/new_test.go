@@ -521,7 +521,7 @@ func TestAppCommands(t *testing.T) {
 		{[]string{"db", "migrate", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "db", "migrate"}},
 		{[]string{"routes"}, []string{"houston", "exec", "go", "run", "./cmd/shop", "routes"}},
 		{[]string{"routes", "--json", "--local"}, []string{"env", "GANTRY_ENV=development", "go", "run", "./cmd/shop", "routes", "--json"}},
-		{[]string{"verify", "--local"}, []string{"env", "GANTRY_ENV=test", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
+		{[]string{"verify", "--local"}, []string{"env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=", "go", "test", "-count=1", "-v", "-run", "^TestFeatures$", "./app/"}},
 		{[]string{"dev", "--as", "login"}, []string{"houston", "dev", "--as", "login"}},
 		{[]string{"test"}, []string{"houston", "test"}},
 		{[]string{"deploy", "--server"}, []string{"houston", "deploy", "--server"}},

@@ -1,11 +1,11 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -35,8 +35,13 @@ func testCommand(root string, args []string, out, errOut io.Writer) error {
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if fs.NArg() > 0 || *base != "" && !*changed {
+	baseGiven := false
+	fs.Visit(func(f *flag.Flag) { baseGiven = baseGiven || f.Name == "base" })
+	if fs.NArg() > 0 || baseGiven && !*changed {
 		return usageError{}
+	}
+	if baseGiven && strings.TrimSpace(*base) == "" {
+		return usageError{errors.New("--base names no ref")}
 	}
 	pkgs := []string{"./..."}
 	if *changed {
@@ -52,10 +57,11 @@ func testCommand(root string, args []string, out, errOut io.Writer) error {
 		}
 	}
 	if *local {
-		if err := exitError(runIn(root, "env", append([]string{"GANTRY_ENV=test", "go", "vet"}, pkgs...)...)); err != nil {
+		localEnv := []string{"GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES="}
+		if err := exitError(runIn(root, "env", slices.Concat(localEnv, []string{"go", "vet"}, pkgs)...)); err != nil {
 			return err
 		}
-		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=test", "go", "test"}, pkgs...)...))
+		return exitError(runIn(root, "env", slices.Concat(localEnv, []string{"go", "test"}, pkgs)...))
 	}
 	if slices.Equal(pkgs, []string{"./..."}) {
 		return houston(root, []string{"test"}, errOut)
@@ -66,10 +72,10 @@ func testCommand(root string, args []string, out, errOut io.Writer) error {
 	}
 	command, ok := narrowed(houstonTestCommand(compose), pkgs)
 	if !ok {
-		fmt.Fprintln(errOut, "gantry test --changed: compose.yml's x-houston.commands.test has a ./... that isn't go vet's or go test's, so it runs whole")
+		fmt.Fprintln(errOut, "gantry test --changed: can't narrow compose.yml's x-houston.commands.test to the packages, so it runs whole")
 		return houston(root, []string{"test"}, errOut)
 	}
-	return runInHoustonTestStack(root, compose, command, errOut)
+	return inTestStack(root, compose, command, func(houstonArgs []string) error { return houston(root, houstonArgs, errOut) })
 }
 
 func houstonTestCommand(compose []byte) string {
@@ -112,27 +118,4 @@ func narrowed(command string, pkgs []string) (string, bool) {
 		}
 	}
 	return strings.Join(parts, strings.Join(pkgs, " ")), true
-}
-
-func runInHoustonTestStack(root string, compose []byte, command string, errOut io.Writer) error {
-	copied, err := featuresCompose(compose, command)
-	if err != nil {
-		return err
-	}
-	f, err := os.CreateTemp(root, verifyCopy)
-	if err != nil {
-		return err
-	}
-	defer os.Remove(f.Name())
-	if _, err := f.Write(copied); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	interrupted := make(chan os.Signal, 1)
-	signal.Notify(interrupted, os.Interrupt)
-	defer signal.Stop(interrupted)
-	return houston(root, []string{"-f", filepath.Base(f.Name()), "test"}, errOut)
 }

@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -44,6 +45,42 @@ func TestVerifyFeature(t *testing.T) {
 			t.Errorf("--feature %q: exit %d, ran %q, stderr %q; want a usage error that runs nothing, not every feature", empty, code, *ran, stderr)
 		}
 	}
+
+	t.Run("a GANTRY_VERIFY_FEATURES left in the shell doesn't narrow a full run", func(t *testing.T) {
+		t.Setenv("GANTRY_VERIFY_FEATURES", "posts")
+		ran := steps(t, "")
+		if code, _, stderr := gantry(t, root, "verify", "--local"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		if len(*ran) != 1 || !slices.Contains((*ran)[0], "GANTRY_VERIFY_FEATURES=") {
+			t.Errorf("ran %q, want GANTRY_VERIFY_FEATURES= set empty", *ran)
+		}
+	})
+
+	t.Run("in Houston's test stack", func(t *testing.T) {
+		put(t, root, map[string]string{"compose.yml": "x-houston:\n  commands:\n    test: go test ./...\n"})
+		steps(t, "")
+		var command string
+		runIn = func(dir, name string, args ...string) error {
+			if name == "houston" && len(args) == 3 && args[0] == "-f" {
+				command = houstonTestCommand(must(os.ReadFile(filepath.Join(dir, args[1]))))
+			}
+			return nil
+		}
+		if code, _, stderr := gantry(t, root, "verify", "--feature", "health check,posts"); code != 0 {
+			t.Fatalf("exit %d: %s", code, stderr)
+		}
+		if want := "GANTRY_VERIFY_FEATURES='health check,posts' " + featuresTestCommand; command != want {
+			t.Errorf("the test stack runs %q, want %q", command, want)
+		}
+	})
+}
+
+func must[T any](v T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return v
 }
 
 var targetedApp = map[string]string{
@@ -311,6 +348,16 @@ func TestTestCommand(t *testing.T) {
 			}
 		}
 	})
+	t.Run("its help says where houston test's arguments are, and offers no package mode", func(t *testing.T) {
+		code, out, _ := gantry(t, t.TempDir(), "test", "--help")
+		if code != 0 || !strings.Contains(out, "houston test --help") {
+			t.Errorf("exit %d, help %q doesn't point at houston test --help", code, out)
+		}
+		code, out, _ = gantry(t, t.TempDir(), "--help")
+		if code != 0 || strings.Contains(out, "targeted packages") || !strings.Contains(out, "--changed: only the packages a change affects") {
+			t.Errorf("exit %d, gantry --help describes test as\n%s", code, out)
+		}
+	})
 	t.Run("--changed narrows the app's own test command", func(t *testing.T) {
 		root := changed(t)
 		steps(t, "")
@@ -355,8 +402,8 @@ func TestTestCommand(t *testing.T) {
 		}
 		pkgs := []string{"./app", "./app/models", "./app/posts", "./cmd/shop"}
 		want := [][]string{
-			append([]string{filepath.Base(root), "env", "GANTRY_ENV=test", "go", "vet"}, pkgs...),
-			append([]string{filepath.Base(root), "env", "GANTRY_ENV=test", "go", "test"}, pkgs...),
+			append([]string{filepath.Base(root), "env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=", "go", "vet"}, pkgs...),
+			append([]string{filepath.Base(root), "env", "GANTRY_ENV=test", "GANTRY_VERIFY_FEATURES=", "go", "test"}, pkgs...),
 		}
 		if !reflect.DeepEqual(*ran, want) {
 			t.Errorf("ran %q, want %q", *ran, want)

@@ -125,6 +125,9 @@ type VerifyReport struct {
 	Routes         int             `json:"routes"`
 	UnmappedRoutes []string        `json:"unmapped_routes"`
 	Features       []FeatureResult `json:"features"`
+	// the features GANTRY_VERIFY_FEATURES chose; empty when it verified
+	// every one
+	Selected []string `json:"selected"`
 	// failures of features GANTRY_VERIFY_FEATURES left out, which have no
 	// entry in Features
 	Errors  []string         `json:"errors"`
@@ -203,11 +206,13 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 		t.Fatalf("testkit: Verify runs the app as GANTRY_ENV=development, whose reload script takes the page cache's ETag and Last-Modified off every page: run it as GANTRY_ENV=test, as bin/gantry verify does")
 	}
 	allFeatures := Features(t, path)
-	features := filterFeatures(t, path, allFeatures, parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES")))
+	selection := parseVerifyFeatures(os.Getenv("GANTRY_VERIFY_FEATURES"))
+	features := filterFeatures(t, path, allFeatures, selection)
 	report := VerifyReport{
 		Passed:         true,
 		UnmappedRoutes: []string{},
 		Features:       make([]FeatureResult, len(features)),
+		Selected:       append([]string{}, selection...),
 		Errors:         []string{},
 	}
 	indexByName := make(map[string]int, len(features))
@@ -270,9 +275,13 @@ func Verify(t testing.TB, h http.Handler, routes []web.Route, path string, roles
 			report.UnmappedRoutes = append(report.UnmappedRoutes, name)
 		}
 	}
-	for i, f := range features {
+	for _, f := range allFeatures {
 		if f.Role != Public && roles[f.Role] == nil {
-			failFeature(i, "%s: %s is for %s visitors, and Verify has no SignIn for %s", path, f.Name, f.Role, f.Role)
+			idx, selected := indexByName[f.Name]
+			if !selected {
+				idx = -1
+			}
+			failFeature(idx, "%s: %s is for %s visitors, and Verify has no SignIn for %s", path, f.Name, f.Role, f.Role)
 		}
 	}
 	for i, f := range features {
@@ -370,6 +379,7 @@ func filterFeatures(t testing.TB, path string, all []Feature, selected []string)
 		}
 		want[name] = true
 	}
+	t.Logf("testkit: GANTRY_VERIFY_FEATURES chose %s, of the %d features in %s", strings.Join(selected, ", "), len(all), path)
 	var filtered []Feature
 	for _, f := range all {
 		if want[f.Name] {

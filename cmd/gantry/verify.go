@@ -75,9 +75,7 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 		if *asJSON {
 			envVars = append(envVars, "GANTRY_VERIFY_JSON=1")
 		}
-		if selectedFeatures != "" {
-			envVars = append(envVars, "GANTRY_VERIFY_FEATURES="+selectedFeatures)
-		}
+		envVars = append(envVars, "GANTRY_VERIFY_FEATURES="+selectedFeatures)
 		if *browser {
 			absArtifacts := artifactsDir
 			if !filepath.IsAbs(absArtifacts) {
@@ -98,6 +96,18 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 		return fmt.Errorf("no compose.yml here, for Houston's test stack: %w (or run it on this machine, with --local)", err)
 	}
 	command := verifyTestCommand(*asJSON, *browser, artifactsDir, selectedFeatures)
+	return inTestStack(root, compose, command, func(houstonArgs []string) error {
+		if *asJSON {
+			if err := needHouston(errOut); err != nil {
+				return err
+			}
+			return runVerifyJSON(root, "houston", houstonArgs, out, errOut)
+		}
+		return houston(root, houstonArgs, errOut)
+	})
+}
+
+func inTestStack(root string, compose []byte, command string, run func(houstonArgs []string) error) error {
 	copied, err := featuresCompose(compose, command)
 	if err != nil {
 		return err
@@ -117,14 +127,7 @@ func verify(root string, args []string, out, errOut io.Writer) error {
 	interrupted := make(chan os.Signal, 1)
 	signal.Notify(interrupted, os.Interrupt)
 	defer signal.Stop(interrupted)
-	houstonArgs := []string{"-f", filepath.Base(f.Name()), "test"}
-	if *asJSON {
-		if err := needHouston(errOut); err != nil {
-			return err
-		}
-		return runVerifyJSON(root, "houston", houstonArgs, out, errOut)
-	}
-	return houston(root, houstonArgs, errOut)
+	return run([]string{"-f", filepath.Base(f.Name()), "test"})
 }
 
 func verifyTestCommand(asJSON, browser bool, artifactsDir, features string) string {

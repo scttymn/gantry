@@ -345,6 +345,7 @@ with stable field names, exiting nonzero on a failure after printing:
       "errors": []
     }
   ],
+  "selected": [],
   "errors": []
 }
 ```
@@ -365,7 +366,10 @@ an existing headless Chrome endpoint (for example, a container in CI) or
 those features, and takes screenshots of only those with `--browser`. Every
 route still needs a feature, and a route whose cache doesn't match its
 feature's still fails the run, named in the report's `errors`, whichever
-features were chosen. It's for working on one feature; CI verifies them all.
+features were chosen. The report's `selected` lists them (empty when it
+verified every feature), and `--local` sets `GANTRY_VERIFY_FEATURES` every
+time, so one left exported in the shell doesn't narrow a full run. It's for
+working on one feature; CI verifies them all.
 
 `bin/gantry test --changed` runs the app's own test command
 (`x-houston.commands.test` in `compose.yml`) on the Go packages a change

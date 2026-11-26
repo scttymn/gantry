@@ -27,6 +27,7 @@ type command struct {
 	flags   func() *flag.FlagSet
 	run     func(root string, args []string, out, errOut io.Writer) error
 	houston bool
+	help    string
 }
 
 var commands = []command{
@@ -56,7 +57,8 @@ var commands = []command{
 	{name: "tasks", about: "the tasks there are", flags: localFlag, run: appCommand("tasks")},
 	{name: "routes", about: "the app's routes, as its router has them", flags: func() *flag.FlagSet { fs, _, _, _ := routesFlags(); return fs }, run: routes},
 	{name: "verify", about: "visit each feature in test/features.yaml as each role", flags: func() *flag.FlagSet { fs, _, _, _, _, _ := verifyFlags(); return fs }, run: verify},
-	{name: "test", args: "[ARGS...]", about: "run app tests (all, --changed, or targeted packages)", flags: func() *flag.FlagSet { fs, _, _, _ := testFlags(); return fs }, run: testCommand},
+	{name: "test", args: "[ARGS...]", about: "the tests, in Houston's test stack (--changed: only the packages a change affects)", flags: func() *flag.FlagSet { fs, _, _, _ := testFlags(); return fs }, run: testCommand,
+		help: "Without --local, --changed or --base, ARGS go to houston test: houston test --help lists them."},
 	{name: "dev", houston: true, run: func(root string, args []string, _, errOut io.Writer) error {
 		if err := developmentCheck(root, nil, errOut); err != nil {
 			fmt.Fprintln(errOut, "gantry check:", err)
@@ -200,6 +202,9 @@ func run(args []string, root string, out, errOut io.Writer) int {
 		return 0
 	case errors.Is(err, flag.ErrHelp):
 		fmt.Fprintln(out, "usage:", c.synopsis())
+		if c.help != "" {
+			fmt.Fprintln(out, c.help)
+		}
 		return 0
 	case errors.As(err, &wrong):
 		if wrong.why != nil {
