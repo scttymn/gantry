@@ -23,12 +23,16 @@ var checkout = filepath.Join("..", "..")
 
 func git(t *testing.T, root string, args ...string) []byte {
 	t.Helper()
-	out, err := exec.Command("git", append([]string{"-C", root, "-c", "safe.directory=*"}, args...)...).Output()
+	cmd := exec.Command("git", append([]string{"-C", root, "-c", "safe.directory=*"}, args...)...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		if ci, _ := strconv.ParseBool(os.Getenv("CI")); ci {
-			t.Fatalf("git %s: %v", strings.Join(args, " "), err)
+		_, checkout := os.Stat(filepath.Join(root, ".git"))
+		if ci, _ := strconv.ParseBool(os.Getenv("CI")); ci || checkout == nil {
+			t.Fatalf("git %s in %s, a checkout: %v: %s (in a container, a worktree's repository must be mounted, as bin/ci and bin/go do)", strings.Join(args, " "), root, err, stderr.Bytes())
 		}
-		t.Skipf("git %s: %v", strings.Join(args, " "), err)
+		t.Skipf("git %s: %v: %s", strings.Join(args, " "), err, stderr.Bytes())
 	}
 	return out
 }
@@ -109,6 +113,13 @@ func TestShellcheckListsScripts(t *testing.T) {
 	want := []string{"bin/shellcheck", "bin/tool", "cmd/gantry/templates/x/run.sh.tmpl", "hooks/pre-commit", "scripts/env-s", "scripts/ksh", "setup.sh", "testdata/golden/x/bin/run.golden"}
 	if got := shellchecked(t, root); !slices.Equal(got, want) {
 		t.Errorf("bin/shellcheck --list: %q, want %q", got, want)
+	}
+}
+
+func TestShellcheckRefusesAFileThatIsnt(t *testing.T) {
+	out, err := exec.Command(filepath.Join(checkout, "bin/shellcheck"), "bin/gone").CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "no such file: bin/gone") {
+		t.Errorf("bin/shellcheck bin/gone: %v, %s; want it to fail, not check nothing", err, out)
 	}
 }
 

@@ -1,12 +1,11 @@
-# Every pull request and every push to main: gantry's tests as the release runs
-# them (pure Go, then as an app builds: with cgo, linked statically) on SQLite
-# and Postgres, that build again under the race detector, then every module
-# tidy, vet, gofmt, golangci-lint (staticcheck among its linters) and
-# govulncheck (each on the app's build too, and golangci-lint on the bench
-# modules), shellcheck on the shell scripts, the bench modules' tests, and the
-# release's build and probe. A broken main shows here, not once the tag exists. CI reaches the tests, so a
-# missing Postgres fails them rather than skipping (internal/testenv).
-# No path is ignored: a required check has to report on every pull request.
+# Every pull request and every push to main. Each job plans its own checks
+# first (internal/ciplan): a push to main plans every check, and a pull request
+# those its diff from its base needs: the Go packages it can break, their
+# importers and the generated apps', the cgo and race passes, TLA+ specs, fuzz
+# targets, shell scripts, linters, bench modules and release build. A planning
+# failure fails the job, and a change to CI itself plans every check. Each
+# job reports on every pull request; no path is ignored. CI reaches the tests,
+# so a missing Postgres fails them rather than skipping (internal/testenv).
 # Actions are pinned by commit, and no checkout keeps the token in .git/config.
 name: ci
 
@@ -29,39 +28,73 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
-        env:
-          POSTGRES_PASSWORD: gantry-tests
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: |
+          if [ -n "$BASE" ]; then
+            go run ./internal/ciplan/cmd/ciplan -base "$BASE" -format github >"$RUNNER_TEMP/plan"
+          else
+            go run ./internal/ciplan/cmd/ciplan -full -format github >"$RUNNER_TEMP/plan"
+          fi
+          cat "$RUNNER_TEMP/plan" >>"$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/plan"
+      - name: Postgres
+        # Only when a planned test reaches one (internal/testenv).
+        if: steps.plan.outputs.need_postgres == 'true'
+        run: |
+          docker run -d --name postgres -p 5432:5432 -e POSTGRES_PASSWORD=gantry-tests postgres:17@sha256:223efeb196329b55b3b9a13db144956411dbc18e727e59f681c3e0aede6475cf
+          for _ in $(seq 60); do
+            docker exec postgres pg_isready -q -U postgres -h 127.0.0.1 && exit 0
+            sleep 1
+          done
+          docker logs postgres
+          exit 1
       - name: Go tests
+        if: steps.plan.outputs.packages != '' || steps.plan.outputs.runs_cmd != ''
+        env:
+          PLAN_PACKAGES: ${{ steps.plan.outputs.packages }}
+          PLAN_NEED_CGO: ${{ steps.plan.outputs.need_cgo }}
+          PLAN_RUNS_CMD: ${{ steps.plan.outputs.runs_cmd }}
         run: |
           docker build -q --target toolchain -t gantry-toolchain .
           mkdir -p .cache && [ -f .cache/go.mod ] || printf 'module cache\n' > .cache/go.mod
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache -e CI \
-            gantry-toolchain sh -c 'go test ./... &&
-              echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically" &&
-              CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
+            -e PLAN_PACKAGES -e PLAN_NEED_CGO -e PLAN_RUNS_CMD \
+            gantry-toolchain sh -c 'set -e
+              if [ -n "$PLAN_PACKAGES" ]; then
+                go test $PLAN_PACKAGES
+              fi
+              if [ -n "$PLAN_RUNS_CMD" ]; then
+                eval "$PLAN_RUNS_CMD"
+              fi
+              if [ "$PLAN_NEED_CGO" = "true" ] && [ -n "$PLAN_PACKAGES" ]; then
+                echo "== again, as an app builds: with cgo (SQLite compiled from C), linked statically"
+                CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" $PLAN_PACKAGES
+              fi'
       - name: Race detector, on the app's build
         # -race needs cgo, which bin/go's toolchain leaves off.
+        if: steps.plan.outputs.need_race == 'true' && steps.plan.outputs.packages != ''
+        env:
+          PLAN_PACKAGES: ${{ steps.plan.outputs.packages }}
         run: |
           docker run --rm --network host -v "$PWD:/src" -w /src \
             -e GANTRY_TEST_POSTGRES_URL="postgres://postgres:gantry-tests@localhost:5432/postgres?sslmode=disable" \
             -e GOMODCACHE=/src/.cache/go/mod -e GOCACHE=/src/.cache/go/cache -e CI \
-            gantry-toolchain sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -race -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" ./...'
+            -e PLAN_PACKAGES \
+            gantry-toolchain sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go test -race -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 -ldflags "-linkmode external -extldflags -static" $PLAN_PACKAGES'
 
   check:
     runs-on: ubuntu-24.04
@@ -70,19 +103,41 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: |
+          if [ -n "$BASE" ]; then
+            go run ./internal/ciplan/cmd/ciplan -base "$BASE" -format github >"$RUNNER_TEMP/plan"
+          else
+            go run ./internal/ciplan/cmd/ciplan -full -format github >"$RUNNER_TEMP/plan"
+          fi
+          cat "$RUNNER_TEMP/plan" >>"$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/plan"
       - name: Modules tidy
         # First, and by name: a module go mod tidy would change fails the
         # steps after it as "updates to go.mod needed", or golangci-lint's
         # "no go files to analyze". A bump at the root changes bench/feed's
         # (replace => ../..) too.
+        if: steps.plan.outputs.need_tidy == 'true'
         run: |
           for module in . bench bench/feed bench/sqlite3way; do
             GANTRY_DIR=$module bin/go go mod tidy -diff ||
               { echo "$module isn't tidy: run go mod tidy there (GANTRY_DIR=$module bin/go go mod tidy) and commit its go.mod and go.sum"; exit 1; }
           done
       - name: go vet
-        run: bin/go go vet ./...
+        if: steps.plan.outputs.need_vet == 'true' && steps.plan.outputs.lint_packages != ''
+        env:
+          PLAN_LINT_PACKAGES: ${{ steps.plan.outputs.lint_packages }}
+        run: bin/go sh -c "go vet $PLAN_LINT_PACKAGES"
       - name: gofmt
+        if: steps.plan.outputs.need_fmt == 'true'
         run: |
           unformatted=$(bin/go find . -name "*.go" -not -path "./.cache/*" -exec gofmt -l {} +)
           [ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted"; exit 1; }
@@ -90,36 +145,67 @@ jobs:
         # Every shell script git tracks, found by its #! line or its name: an
         # app's bin/gantry's template and goldens too, and one added anywhere
         # (TestEveryScriptIsShellchecked).
-        run: bin/shellcheck
+        if: steps.plan.outputs.full == 'true' || steps.plan.outputs.shell_scripts != ''
+        env:
+          PLAN_FULL: ${{ steps.plan.outputs.full }}
+          PLAN_SHELL_SCRIPTS: ${{ steps.plan.outputs.shell_scripts }}
+        run: |
+          if [ "$PLAN_FULL" = "true" ]; then
+            bin/shellcheck
+          else
+            # shellcheck disable=SC2086
+            bin/shellcheck $PLAN_SHELL_SCRIPTS
+          fi
       - name: TLA+ specs
         # Formal model checks for jobs, web.PageCache and auth (spec/*.tla).
-        run: bin/tlc
-      - name: Fuzz smoke
+        if: steps.plan.outputs.full == 'true' || steps.plan.outputs.tla_specs != ''
+        env:
+          PLAN_FULL: ${{ steps.plan.outputs.full }}
+          PLAN_TLA_SPECS: ${{ steps.plan.outputs.tla_specs }}
         run: |
-          bin/go sh -c 'go test -fuzz=^FuzzSignVerify$ -fuzztime=1s ./sign &&
-            go test -fuzz=^FuzzSent$ -fuzztime=1s ./web &&
-            go test -fuzz=^FuzzProxies$ -fuzztime=1s ./web &&
-            go test -fuzz=^FuzzPageCache$ -fuzztime=1s ./web &&
-            go test -fuzz=^FuzzDimensionsAndResize$ -fuzztime=1s ./images &&
-            go test -fuzz=^FuzzJSAndHTMLRules$ -fuzztime=1s ./devcheck &&
-            go test -fuzz=^FuzzCovers$ -fuzztime=1s ./internal/featuremap'
+          if [ "$PLAN_FULL" = "true" ]; then
+            bin/tlc
+          else
+            # shellcheck disable=SC2086
+            bin/tlc $PLAN_TLA_SPECS
+          fi
+      - name: Fuzz smoke
+        if: steps.plan.outputs.fuzz_cmd != ''
+        env:
+          PLAN_FUZZ_CMD: ${{ steps.plan.outputs.fuzz_cmd }}
+        run: bin/go sh -c "$PLAN_FUZZ_CMD"
       - name: golangci-lint
         # .golangci.yml's linters, staticcheck's checks among them, on gantry
         # and the bench modules. Built by the toolchain's Go, as gantry's
         # go.mod needs a Go no older than its own.
+        if: steps.plan.outputs.need_lint == 'true'
+        env:
+          PLAN_LINT_PACKAGES: ${{ steps.plan.outputs.lint_packages }}
+          PLAN_BENCH_MODULES: ${{ steps.plan.outputs.bench_modules }}
         run: |
-          bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
-          GANTRY_DIR=bench bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
-          GANTRY_DIR=bench/feed bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...
+          if [ -n "$PLAN_LINT_PACKAGES" ]; then
+            bin/go sh -c "go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run $PLAN_LINT_PACKAGES"
+          fi
+          case " $PLAN_BENCH_MODULES " in
+            *" bench "*) GANTRY_DIR=bench bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./... ;;
+          esac
+          case " $PLAN_BENCH_MODULES " in
+            *" bench/feed "*) GANTRY_DIR=bench/feed bin/go go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./... ;;
+          esac
       - name: go vet and golangci-lint, on the app's build
         # bin/go builds without cgo, which leaves out db/sqlite_c.go, the
         # SQLite an app runs. This is the app's build, as in the test job.
+        if: steps.plan.outputs.need_lint_cgo == 'true' && steps.plan.outputs.lint_packages != ''
+        env:
+          PLAN_LINT_PACKAGES: ${{ steps.plan.outputs.lint_packages }}
         run: |
+          # shellcheck disable=SC2086
           bin/go sh -c 'export CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" GOFLAGS="-buildvcs=false -tags=nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4" &&
-            go vet ./... && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run ./...'
+            go vet "$@" && go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 run "$@"' _ $PLAN_LINT_PACKAGES
       - name: govulncheck
         # Both builds: the CLI's (bin/go's, without cgo) and an app's. Any
         # vulnerability gantry's code reaches fails the job.
+        if: steps.plan.outputs.need_vuln == 'true'
         run: |
           bin/go go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json ./... > "$RUNNER_TEMP/vulns.json"
           bin/go sh -c 'CGO_ENABLED=1 CGO_CFLAGS="-O2 -g -DSQLITE_SOUNDEX -DSQLITE_LIKE_DOESNT_MATCH_BLOBS -DSQLITE_ENABLE_OFFSET_SQL_FUNC -DSQLITE_ENABLE_DBPAGE_VTAB -DSQLITE_ENABLE_GEOPOLY" go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 -format json -tags nodynamic,timetzdata,netgo,osusergo,sqlite_omit_load_extension,sqlite_fts5,sqlite_math_functions,sqlite_dbstat,sqlite_stat4 ./...' >> "$RUNNER_TEMP/vulns.json"
@@ -127,9 +213,16 @@ jobs:
           echo "reached: ${reached:-none}"
           [ -z "$reached" ] || { echo "vulnerable (https://pkg.go.dev/vuln/<id>): $reached"; exit 1; }
       - name: The bench modules' tests
+        if: steps.plan.outputs.bench_modules != ''
+        env:
+          PLAN_BENCH_MODULES: ${{ steps.plan.outputs.bench_modules }}
         run: |
-          GANTRY_DIR=bench bin/go go test ./...
-          GANTRY_DIR=bench/feed bin/go go test ./...
+          case " $PLAN_BENCH_MODULES " in
+            *" bench "*) GANTRY_DIR=bench bin/go go test ./... ;;
+          esac
+          case " $PLAN_BENCH_MODULES " in
+            *" bench/feed "*) GANTRY_DIR=bench/feed bin/go go test ./... ;;
+          esac
 
   # The release job's build and probe, on a made-up tag: the four CLI binaries
   # cross-compiled by the Dockerfile, and the tag set in them by -X
@@ -144,9 +237,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || '' }}
+        run: |
+          if [ -n "$BASE" ]; then
+            go run ./internal/ciplan/cmd/ciplan -base "$BASE" -format github >"$RUNNER_TEMP/plan"
+          else
+            go run ./internal/ciplan/cmd/ciplan -full -format github >"$RUNNER_TEMP/plan"
+          fi
+          cat "$RUNNER_TEMP/plan" >>"$GITHUB_OUTPUT"
+          cat "$RUNNER_TEMP/plan"
       - name: CLI binaries
+        if: steps.plan.outputs.need_release == 'true'
         run: docker build --build-arg VERSION="$VERSION" --target release --output type=local,dest=dist .
       - name: The binary's new app requires its release
+        if: steps.plan.outputs.need_release == 'true'
         run: |
           probe=$(mktemp -d)
           (cd "$probe" && "$GITHUB_WORKSPACE/dist/gantry-linux-amd64" new probe --skip-houston)
@@ -155,6 +267,7 @@ jobs:
       - name: The binary pins its Houston release's digests
         # As the release checks them: a Houston bump without its digests
         # (houstonSHA256SUMS) fails here, not once the tag is pushed.
+        if: steps.plan.outputs.need_release == 'true'
         run: |
           houston=$(dist/gantry-linux-amd64 houston-release)
           published=$(curl -fsSL --proto =https --retry 3 "https://github.com/scttymn/houston/releases/download/$houston/SHA256SUMS" | grep '  houston-')

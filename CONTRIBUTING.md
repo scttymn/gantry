@@ -61,8 +61,8 @@ passes in (`internal/testenv`), e.g.
 `GANTRY_TEST_POSTGRES_URL=postgres://postgres:pw@host.docker.internal:5432/postgres?sslmode=disable bin/go go test ./...`.
 Without it they skip, except under `CI=true`, where they fail.
 
-Every pull request and push to `main` runs the `ci` workflow: both passes on
-SQLite and Postgres, the cgo one again with `-race`, every module tidy, `go vet`, gofmt,
+Every push to `main` runs the whole `ci` workflow, and a pull request the
+part of it its change needs (below): both passes on SQLite and Postgres, the cgo one again with `-race`, every module tidy, `go vet`, gofmt,
 golangci-lint and govulncheck (`go vet`, golangci-lint and govulncheck on the
 cgo build too, golangci-lint on the bench modules), shellcheck on every shell
 script git tracks (`bin/shellcheck`, which finds them by their `#!` line or
@@ -92,11 +92,36 @@ boundaries (#33) alongside `errcheck`, `bodyclose`, `rowserrcheck`,
 `sqlclosecheck` and `staticcheck`. An exception names the
 file, the linter and why, in `.golangci.yml` or a `//nolint:<linter> // why`.
 
-`bin/ci` runs those checks here, step by step under the workflow's names, and
-stops at the first that fails; `bin/ci --fast` leaves out the race detector and
-the release's build. Its Postgres is `GANTRY_TEST_POSTGRES_URL`'s, or a
-throwaway `postgres:17` it removes when it's done; with neither, it says loudly
-that the Postgres tests skipped. Go's caches are one for every checkout
+Each of the workflow's jobs plans its checks first, with `internal/ciplan`: a
+push to `main` plans every one, and a pull request those its diff from its base
+(`git diff --no-renames`) needs. That's the tests of each changed package and of
+every package that imports it, `cmd/gantry`'s too when a generated app imports
+it (`TestGeneratorMatrix`), with both builds' imports (cgo's `db/sqlite_c.go`
+imports `internal/pins`); the TLA+ specs that model it, its fuzz targets, its
+shell scripts, the linters, tidy and govulncheck on a Go change, the bench
+modules that build it and the release build when `cmd/gantry` is among them,
+the cgo passes when one is a package an app's cgo build builds other files of
+(`db`), and the tests of another package that read a changed file
+(`TestCrossPackageReadsArePlanned` finds them). Every change also runs the
+checks of the whole repo (the root package, `internal/hygiene`,
+`internal/pins`, `internal/ciplan` and
+`TestGantryPassesStrict`, under a second together). A change to CI itself
+(`ci.yml`, `bin/ci`, `bin/go`, `bin/shellcheck`, `internal/ciplan`), to
+`go.mod`, `go.sum` or the `Dockerfile` runs every check, and so does one git
+can't say the diff of. A planning failure fails the job, and no job waits on
+another's plan: a skipped job would pass.
+
+`bin/ci` runs those checks here, step by step under the workflow's names, as
+`ciplan` plans them, and stops at the first that fails: every check, or with
+`--changed [BASE]` those the changes since `BASE` (`origin/main`) and in the
+tree need. `bin/ci --fast` leaves out the race detector and the release's build
+(and combines with `--changed`). In a git worktree, `bin/ci` and `bin/go` mount
+the repository's `.git` read-only into the container, so git works there as
+outside it; `internal/hygiene`'s tests fail, not skip, in a checkout git can't
+read. Its Postgres is
+`GANTRY_TEST_POSTGRES_URL`'s, or a throwaway `postgres:17` it removes when it's
+done (none when no planned test needs one); with neither, it says
+loudly that the Postgres tests skipped. Go's caches are one for every checkout
 (`~/Library/Caches/gantry` on macOS, `~/.cache/gantry` elsewhere), cleaned once
 the build cache passes 5 GB, though never while another checkout's `bin/ci`
 is running (a clean under a build takes its files), and `bin/ci` won't start
@@ -108,8 +133,10 @@ Have every push run it first, once per clone:
 git config core.hooksPath .githooks
 ```
 
-The hook (`.githooks/pre-push`) runs `bin/ci` and blocks the push when it
-fails. `bin/ci` checks the checkout, so the hook refuses a push of any commit
+The hook (`.githooks/pre-push`) runs every check for a push to `main` or with
+`GANTRY_CI_FULL=1`, and otherwise `bin/ci --changed` since the remote branch's
+commit, or `origin/main` for a new branch; it blocks the push when they fail.
+`bin/ci` checks the checkout, so the hook refuses a push of any commit
 but `HEAD`, or from a tree with changes or untracked files; a push that only
 deletes refs skips it.
 `TestBinCIRunsTheCIWorkflow` fails when `ci.yml` has a step, tool version or
