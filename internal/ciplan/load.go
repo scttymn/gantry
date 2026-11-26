@@ -146,11 +146,19 @@ func listPackages(root string) ([]Package, error) {
 				Imports         []string
 				UnitImports     []string `json:"testimports"`
 				XUnitImports    []string `json:"xtestimports"`
+				Error           *struct{ Err string }
+				DepsErrors      []struct{ Err string }
 			}
 			if err := dec.Decode(&p); errors.Is(err, io.EOF) {
 				break
 			} else if err != nil {
 				return nil, err
+			}
+			if p.Error != nil {
+				return nil, fmt.Errorf("%s: %s", p.ImportPath, p.Error.Err)
+			}
+			if len(p.DepsErrors) > 0 {
+				return nil, fmt.Errorf("%s: %s", p.ImportPath, p.DepsErrors[0].Err)
 			}
 			rel, err := filepath.Rel(root, p.Dir)
 			if err != nil {
@@ -190,12 +198,16 @@ func listBenchFeedImports(root, module string) ([]string, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	out, err := command(dir, []string{"CGO_ENABLED=0"}, "go", "list", "-buildvcs=false", "-f", `{{join .Deps "\n"}}`, "./...")
+	out, err := command(dir, []string{"CGO_ENABLED=0"}, "go", "list", "-buildvcs=false",
+		"-f", `{{with .Error}}error: {{.Err}}{{"\n"}}{{end}}{{range .DepsErrors}}error: {{.Err}}{{"\n"}}{{end}}{{join .Deps "\n"}}`, "./...")
 	if err != nil {
 		return nil, err
 	}
 	var imports []string
 	for _, imp := range lines(out) {
+		if problem, ok := strings.CutPrefix(imp, "error: "); ok {
+			return nil, fmt.Errorf("bench/feed: %s", problem)
+		}
 		if (imp == module || strings.HasPrefix(imp, module+"/")) && !slices.Contains(imports, imp) {
 			imports = append(imports, imp)
 		}

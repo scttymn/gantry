@@ -102,6 +102,14 @@ func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
 	}{
 		"scripts not listed": {map[string]string{"bin/shellcheck": "#!/bin/sh\nexit 1\n"}, "bin/shellcheck --list"},
 		"go list fails":      {map[string]string{"go.mod": "module example.com/m\n\ngo 1.22\n\nrequire (\n"}, "go list"},
+		"an import of a package that isn't": {
+			map[string]string{"a/a.go": "package a\n\nimport _ \"example.com/m/gone\"\n"},
+			"example.com/m/a: ",
+		},
+		"bench/feed's import of a package that isn't": {
+			map[string]string{"bench/feed/go.mod": "module feed\n\ngo 1.22\n", "bench/feed/f.go": "package feed\n\nimport _ \"feed/gone\"\n"},
+			"bench/feed: ",
+		},
 		"template imports a package that isn't": {
 			map[string]string{"cmd/gantry/templates/x.go.tmpl": "import \"example.com/m/gone\"\n"},
 			"cmd/gantry/templates/x.go.tmpl imports example.com/m/gone",
