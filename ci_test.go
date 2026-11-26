@@ -629,6 +629,7 @@ func TestPrePushHook(t *testing.T) {
 	git("commit", "-q", "--allow-empty", "-m", "two")
 	head := git("rev-parse", "HEAD")
 	zero := strings.Repeat("0", len(head))
+	ahead := git("commit-tree", head+"^{tree}", "-p", head, "-m", "three, since reset away")
 
 	push := func(t *testing.T, lines string) (string, string, bool, error) {
 		t.Helper()
@@ -650,6 +651,7 @@ func TestPrePushHook(t *testing.T) {
 	}{
 		{"HEAD, clean: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + zero + "\n", true, true, ""},
 		{"HEAD, incremental remote base: bin/ci --changed", false, "refs/heads/feat " + head + " refs/heads/feat " + first + "\n", true, true, "--changed " + first},
+		{"HEAD behind its remote branch (reset, force-pushed): not --changed from it", false, "refs/heads/feat " + head + " refs/heads/feat " + ahead + "\n", true, true, ""},
 		{"HEAD to main, which has a commit: bin/ci", false, "refs/heads/main " + head + " refs/heads/main " + first + "\n", true, true, ""},
 		{"HEAD to a branch and main: bin/ci", false, "refs/heads/feat " + head + " refs/heads/feat " + first + "\nrefs/heads/main " + head + " refs/heads/main " + first + "\n", true, true, ""},
 		{"deletes only: nothing to check", true, "(delete) " + zero + " refs/heads/gone " + head + "\n", true, false, ""},

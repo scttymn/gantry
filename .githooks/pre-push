@@ -36,7 +36,9 @@ fi
 if [ -n "$main" ] || [ "${GANTRY_CI_FULL:-}" = 1 ]; then
 	exec bin/ci </dev/null
 fi
-if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+# Only from a remote commit HEAD is built on: from one HEAD is behind (a
+# branch reset and force-pushed), the diff since their merge base is empty.
+if [ -n "$base" ] && git merge-base --is-ancestor "$base" HEAD 2>/dev/null; then
 	exec bin/ci --changed "$base" </dev/null
 fi
 if git rev-parse --verify -q origin/main >/dev/null 2>&1 && [ "$(git rev-parse origin/main)" != "$head" ]; then
