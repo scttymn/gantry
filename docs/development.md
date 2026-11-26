@@ -381,7 +381,8 @@ can't be sure about runs everything:
 - a file in no package's directory that isn't documentation
 - no base to compare with, no history shared with it, or any error from git
 - a Go file it can't read the imports of
-- a test command with no `./...` in it, which runs unchanged
+- a test command with a `./...` that isn't `go vet`'s or `go test`'s (or no
+  `./...` at all), which runs as it is
 
 Documentation (`*.md`, `docs/`, `.github/`, `LICENSE`, `.gitignore`,
 `.golangci.yml`, `.gantry-check.json`) outside a package's directory affects

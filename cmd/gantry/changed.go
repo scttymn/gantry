@@ -2,209 +2,271 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
-	"io"
+	"fmt"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"maps"
+	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+
+	"github.com/scttymn/gantry/internal/gomod"
 )
 
-type goListPackage struct {
-	ImportPath   string   `json:"importpath"`
-	Dir          string   `json:"dir"`
-	Imports      []string `json:"imports"`
-	UnitImports  []string `json:"testimports"`
-	XUnitImports []string `json:"xtestimports"`
+type affected struct {
+	everythingBecause string
+	pkgs              []string
 }
 
-var gitOutputIn = func(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	return cmd.Output()
+func everything(format string, args ...any) affected {
+	return affected{everythingBecause: fmt.Sprintf(format, args...)}
 }
 
-var goListIn = func(dir string) ([]byte, error) {
-	cmd := exec.Command("go", "list", "-json", "./...")
-	cmd.Dir = dir
-	return cmd.Output()
+func affectedPackages(root, base string) affected {
+	inside, outside, err := changedFiles(root, base)
+	if err != nil {
+		return everything("%v", err)
+	}
+	for _, f := range outside {
+		if !documentation(f) {
+			return everything("%s changed, outside the app", f)
+		}
+	}
+	graph, err := importGraph(root)
+	if err != nil {
+		return everything("%v", err)
+	}
+	changed, testsChanged := map[string]bool{}, map[string]bool{}
+	for _, f := range inside {
+		if runsEverything(f) {
+			return everything("%s changed", f)
+		}
+		dir, ok := graph.packageOf(root, f)
+		switch {
+		case ok && strings.HasSuffix(f, "_test.go"):
+			testsChanged[dir] = true
+		case ok:
+			changed[dir] = true
+		case documentation(f):
+		default:
+			return everything("%s is in no package", f)
+		}
+	}
+	return affected{pkgs: graph.toTest(changed, testsChanged)}
 }
 
-func gitChangedFiles(root, base string) ([]string, string, bool) {
-	if _, err := gitOutputIn(root, "rev-parse", "--is-inside-work-tree"); err != nil {
-		return nil, "", false
+func changedFiles(root, base string) (inside, outside []string, err error) {
+	git := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("git %s: %v %s", strings.Join(args, " "), err, strings.TrimSpace(stderr.String()))
+		}
+		return out, nil
+	}
+	prefix, err := git("rev-parse", "--show-prefix")
+	if err != nil {
+		return nil, nil, err
 	}
 	if base == "" {
-		for _, cand := range []string{"origin/main", "main"} {
-			if _, err := gitOutputIn(root, "rev-parse", "--verify", "-q", cand+"^{commit}"); err == nil {
-				base = cand
+		for _, candidate := range []string{"origin/main", "main"} {
+			if _, err := git("rev-parse", "--verify", "--quiet", candidate+"^{commit}"); err == nil {
+				base = candidate
 				break
 			}
 		}
-	} else if _, err := gitOutputIn(root, "rev-parse", "--verify", "-q", base+"^{commit}"); err != nil {
-		return nil, "", false
-	}
-	seen := map[string]bool{}
-	var files []string
-	collect := func(args ...string) {
-		raw, err := gitOutputIn(root, args...)
-		if err != nil {
-			return
+		if base == "" {
+			return nil, nil, errors.New("no origin/main or main to compare with: pass --base REF")
 		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			clean := path.Clean(strings.TrimSpace(strings.ReplaceAll(line, "\\", "/")))
-			clean = strings.TrimPrefix(clean, "./")
-			if clean == "" || clean == "." || seen[clean] {
-				continue
-			}
-			seen[clean] = true
-			files = append(files, clean)
-		}
+	} else if _, err := git("rev-parse", "--verify", "--quiet", base+"^{commit}"); err != nil {
+		return nil, nil, fmt.Errorf("--base %s isn't a commit here", base)
 	}
-	if base != "" {
-		collect("diff", "--name-only", base+"...HEAD")
-	}
-	collect("diff", "--name-only", "--cached")
-	collect("diff", "--name-only")
-	collect("ls-files", "--others", "--exclude-standard")
-	slices.Sort(files)
-	return files, base, true
-}
-
-func affectedGoPackages(root string, changed []string) ([]string, bool, error) {
-	if len(changed) == 0 {
-		return nil, false, nil
-	}
-	hasCode := false
-	for _, f := range changed {
-		if f == "go.mod" || f == "go.sum" || f == "Dockerfile" ||
-			f == "db/schema.sql" || strings.HasPrefix(f, "db/migrations/") ||
-			strings.HasPrefix(f, "config/") || strings.HasPrefix(f, "test/") {
-			return nil, true, nil
-		}
-		switch path.Ext(f) {
-		case ".go", ".templ", ".sql", ".html", ".css", ".js", ".yaml", ".yml", ".json":
-			if !strings.HasPrefix(f, ".github/") {
-				hasCode = true
-			}
-		}
-	}
-	if !hasCode {
-		return nil, false, nil
-	}
-	absRoot, err := filepath.Abs(root)
+	since, err := git("merge-base", base, "HEAD")
 	if err != nil {
-		return nil, true, err
+		return nil, nil, fmt.Errorf("HEAD shares no history with %s (a shallow clone needs fetch-depth: 0): %w", base, err)
 	}
-	raw, err := goListIn(absRoot)
+	changed, err := git("diff", "--name-only", "-z", "--no-renames", "--no-relative", strings.TrimSpace(string(since)), "--")
 	if err != nil {
-		return nil, true, nil
+		return nil, nil, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dirToImport := map[string]string{}
-	importToDir := map[string]string{}
-	revDeps := map[string][]string{}
-	for {
-		var lp goListPackage
-		if err := dec.Decode(&lp); err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-			return nil, true, nil
-		}
-		rel, err := filepath.Rel(absRoot, lp.Dir)
-		if err != nil {
+	untracked, err := git("ls-files", "-z", "--others", "--exclude-standard", "--full-name", "--", ":/")
+	if err != nil {
+		return nil, nil, err
+	}
+	in := strings.TrimSpace(string(prefix))
+	all := strings.Split(string(changed)+string(untracked), "\x00")
+	slices.Sort(all)
+	for _, f := range slices.Compact(all) {
+		if f == "" {
 			continue
 		}
-		d := normalizeRelDir(filepath.ToSlash(rel))
-		dirToImport[d] = lp.ImportPath
-		importToDir[lp.ImportPath] = d
-		for _, imp := range slices.Concat(lp.Imports, lp.UnitImports, lp.XUnitImports) {
-			revDeps[imp] = append(revDeps[imp], lp.ImportPath)
-		}
-	}
-	if len(dirToImport) == 0 {
-		return nil, true, nil
-	}
-	seeds := map[string]bool{}
-	for _, f := range changed {
-		if imp, ok := matchPackageDir(f, dirToImport); ok {
-			seeds[imp] = true
-		} else if !isDocOrMetaFile(f) {
-			return nil, true, nil
-		}
-	}
-	if len(seeds) == 0 {
-		return nil, false, nil
-	}
-	visited := map[string]bool{}
-	queue := make([]string, 0, len(seeds))
-	for imp := range seeds {
-		visited[imp] = true
-		queue = append(queue, imp)
-	}
-	for len(queue) > 0 {
-		cur := queue[0]
-		queue = queue[1:]
-		for _, dep := range revDeps[cur] {
-			if !visited[dep] {
-				visited[dep] = true
-				queue = append(queue, dep)
-			}
-		}
-	}
-	pkgs := make([]string, 0, len(visited))
-	for imp := range visited {
-		d := importToDir[imp]
-		if d == "" {
-			pkgs = append(pkgs, ".")
+		if rest, ok := strings.CutPrefix(f, in); ok {
+			inside = append(inside, rest)
 		} else {
-			pkgs = append(pkgs, "./"+d)
+			outside = append(outside, f)
 		}
 	}
-	slices.Sort(pkgs)
-	return pkgs, false, nil
+	return inside, outside, nil
 }
 
-func normalizeRelDir(dir string) string {
-	dir = path.Clean(strings.TrimSpace(strings.ReplaceAll(dir, "\\", "/")))
-	dir = strings.TrimPrefix(dir, "./")
-	if dir == "." {
-		return ""
+func runsEverything(f string) bool {
+	switch f {
+	case "go.mod", "go.sum", "go.work", "go.work.sum", "Dockerfile", "compose.yml", ".dockerignore":
+		return true
 	}
-	return dir
+	for _, dir := range []string{"config/", "db/", "test/"} {
+		if strings.HasPrefix(f, dir) {
+			return true
+		}
+	}
+	return false
 }
 
-func matchPackageDir(file string, dirToImport map[string]string) (string, bool) {
-	cur := path.Dir(file)
-	if cur == "." {
-		cur = ""
-	}
-	for {
-		if imp, ok := dirToImport[cur]; ok {
-			return imp, true
-		}
-		if cur == "" {
-			return "", false
-		}
-		next := path.Dir(cur)
-		if next == "." || next == cur {
-			cur = ""
-		} else {
-			cur = next
-		}
-	}
-}
-
-func isDocOrMetaFile(f string) bool {
-	if strings.HasPrefix(f, ".github/") || strings.HasPrefix(f, "docs/") {
+func documentation(f string) bool {
+	if strings.HasPrefix(f, "docs/") || strings.HasPrefix(f, ".github/") || strings.HasSuffix(f, ".md") {
 		return true
 	}
 	switch path.Base(f) {
-	case "README.md", "AGENTS.md", "CONTRIBUTING.md", "LICENSE", ".gitignore", ".dockerignore", ".gantry-check.json", ".golangci.yml":
+	case "LICENSE", ".gitignore", ".golangci.yml", ".gantry-check.json":
 		return true
 	}
-	return strings.HasSuffix(f, ".md")
+	return false
+}
+
+type imports struct {
+	dirs          map[string]string
+	importers     map[string][]string
+	testImporters map[string][]string
+}
+
+func importGraph(root string) (imports, error) {
+	module, err := gomod.ImportPath(root)
+	if err != nil {
+		return imports{}, fmt.Errorf("no go.mod for %s: %w", root, err)
+	}
+	g := imports{dirs: map[string]string{}, importers: map[string][]string{}, testImporters: map[string][]string{}}
+	fset := token.NewFileSet()
+	err = filepath.WalkDir(root, func(p string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			name := entry.Name()
+			if rel != "." && (strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" || name == "node_modules") {
+				return filepath.SkipDir
+			}
+			if _, err := os.Stat(filepath.Join(p, "go.mod")); err == nil && rel != "." {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		file, err := parser.ParseFile(fset, p, nil, parser.ImportsOnly)
+		if err != nil {
+			return fmt.Errorf("reading the imports of %s: %w", rel, err)
+		}
+		dir := path.Dir(rel)
+		importPath := module + "/" + dir
+		if dir == "." {
+			dir, importPath = "", module
+		}
+		g.dirs[dir] = importPath
+		importers := g.importers
+		if strings.HasSuffix(p, "_test.go") {
+			importers = g.testImporters
+		}
+		for _, spec := range file.Imports {
+			imported, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				return fmt.Errorf("reading the imports of %s: %w", rel, err)
+			}
+			if !slices.Contains(importers[imported], importPath) {
+				importers[imported] = append(importers[imported], importPath)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return imports{}, err
+	}
+	return g, nil
+}
+
+func (g imports) packageOf(root, f string) (string, bool) {
+	dir := parent(f)
+	if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(f))); err != nil && strings.HasSuffix(f, ".go") {
+		_, ok := g.dirs[dir]
+		return dir, ok
+	}
+	for {
+		if _, ok := g.dirs[dir]; ok {
+			return dir, true
+		}
+		if dir == "" {
+			return "", false
+		}
+		dir = parent(dir)
+	}
+}
+
+func parent(p string) string {
+	if dir := path.Dir(p); dir != "." {
+		return dir
+	}
+	return ""
+}
+
+func (g imports) toTest(changed, testsChanged map[string]bool) []string {
+	byPath := map[string]string{}
+	for dir, importPath := range g.dirs {
+		byPath[importPath] = dir
+	}
+	seen := map[string]bool{}
+	var queue []string
+	for dir := range changed {
+		seen[g.dirs[dir]] = true
+		queue = append(queue, g.dirs[dir])
+	}
+	for len(queue) > 0 {
+		next := queue[0]
+		queue = queue[1:]
+		for _, importer := range g.importers[next] {
+			if !seen[importer] {
+				seen[importer] = true
+				queue = append(queue, importer)
+			}
+		}
+	}
+	tested := maps.Clone(seen)
+	for dir := range testsChanged {
+		tested[g.dirs[dir]] = true
+	}
+	for importPath := range seen {
+		for _, importer := range g.testImporters[importPath] {
+			tested[importer] = true
+		}
+	}
+	var pkgs []string
+	for importPath := range tested {
+		if dir := byPath[importPath]; dir == "" {
+			pkgs = append(pkgs, ".")
+		} else {
+			pkgs = append(pkgs, "./"+dir)
+		}
+	}
+	slices.Sort(pkgs)
+	return pkgs
 }

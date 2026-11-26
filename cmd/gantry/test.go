@@ -7,110 +7,114 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 func testFlags() (fs *flag.FlagSet, local, changed *bool, base *string) {
 	fs, local = appFlags()
-	changed = fs.Bool("changed", false, "run vet and tests only for Go packages affected by git changes")
-	base = fs.String("base", "", "base `REF` for --changed (default origin/main or main)")
+	changed = fs.Bool("changed", false, "only the packages a change affects, and those that import them")
+	base = fs.String("base", "", "compare with where the branch left `REF` (default origin/main, or main)")
 	return fs, local, changed, base
 }
 
 func testCommand(root string, args []string, out, errOut io.Writer) error {
+	fs, local, changed, base := testFlags()
 	if len(args) > 0 && helpFlag(args[0]) {
 		return flag.ErrHelp
 	}
-	_, local, changed, base := testFlags()
-	var pass []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "--" {
-			pass = append(pass, args[i+1:]...)
-			break
-		}
+	if !slices.ContainsFunc(args, func(arg string) bool {
+		name, _, _ := strings.Cut(strings.TrimLeft(arg, "-"), "=")
+		return strings.HasPrefix(arg, "-") && fs.Lookup(name) != nil
+	}) {
+		return houston(root, append([]string{"test"}, args...), errOut)
+	}
+	if err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if fs.NArg() > 0 || *base != "" && !*changed {
+		return usageError{}
+	}
+	pkgs := []string{"./..."}
+	if *changed {
+		scope := affectedPackages(root, *base)
 		switch {
-		case a == "--local":
-			*local = true
-		case a == "--changed":
-			*changed = true
-		case a == "--base" && i+1 < len(args):
-			i++
-			*base = args[i]
-		case strings.HasPrefix(a, "--base="):
-			*base = strings.TrimPrefix(a, "--base=")
+		case scope.everythingBecause != "":
+			fmt.Fprintf(errOut, "gantry test --changed: %s, so every package runs\n", scope.everythingBecause)
+		case len(scope.pkgs) == 0:
+			fmt.Fprintln(out, "gantry test --changed: no Go packages affected")
+			return nil
 		default:
-			pass = append(pass, a)
+			pkgs = scope.pkgs
 		}
 	}
-	if *base != "" && !*changed {
-		return usageError{}
+	if *local {
+		if err := exitError(runIn(root, "env", append([]string{"GANTRY_ENV=test", "go", "vet"}, pkgs...)...)); err != nil {
+			return err
+		}
+		return exitError(runIn(root, "env", append([]string{"GANTRY_ENV=test", "go", "test"}, pkgs...)...))
 	}
-	if *changed && len(pass) > 0 {
-		return usageError{}
-	}
-	if !*local && !*changed && len(pass) == 0 {
+	if slices.Equal(pkgs, []string{"./..."}) {
 		return houston(root, []string{"test"}, errOut)
 	}
-
-	pkgs := pass
-	runVet := false
-	if *changed {
-		files, _, ok := gitChangedFiles(root, *base)
-		if !ok {
-			pkgs = []string{"./..."}
-			runVet = true
-		} else {
-			affected, all, err := affectedGoPackages(root, files)
-			if err != nil {
-				return err
-			}
-			if all {
-				pkgs = []string{"./..."}
-				runVet = true
-			} else if len(affected) == 0 {
-				fmt.Fprintln(out, "gantry test --changed: no Go packages affected")
-				return nil
-			} else {
-				pkgs = affected
-				runVet = true
-			}
-		}
-	} else if len(pkgs) == 0 {
-		pkgs = []string{"./..."}
-		runVet = true
-	}
-
-	if *local {
-		if runVet {
-			vetArgs := append([]string{"GANTRY_ENV=test", "go", "vet"}, pkgs...)
-			if err := exitError(runIn(root, "env", vetArgs...)); err != nil {
-				return err
-			}
-		}
-		testArgs := append([]string{"GANTRY_ENV=test", "go", "test"}, pkgs...)
-		return exitError(runIn(root, "env", testArgs...))
-	}
-
-	var cmdParts []string
-	quoted := make([]string, len(pkgs))
-	for i, p := range pkgs {
-		quoted[i] = shellQuote(p)
-	}
-	joined := strings.Join(quoted, " ")
-	if runVet {
-		cmdParts = append(cmdParts, "go vet "+joined)
-	}
-	cmdParts = append(cmdParts, "go test "+joined)
-	command := "sh -c " + shellQuote(strings.Join(cmdParts, " && "))
-	return runInHoustonTestStack(root, command, errOut)
-}
-
-func runInHoustonTestStack(root, command string, errOut io.Writer) error {
 	compose, err := os.ReadFile(filepath.Join(root, "compose.yml"))
 	if err != nil {
 		return fmt.Errorf("no compose.yml here, for Houston's test stack: %w (or run it on this machine, with --local)", err)
 	}
+	command, ok := narrowed(houstonTestCommand(compose), pkgs)
+	if !ok {
+		fmt.Fprintln(errOut, "gantry test --changed: compose.yml's x-houston.commands.test has a ./... that isn't go vet's or go test's, so it runs whole")
+		return houston(root, []string{"test"}, errOut)
+	}
+	return runInHoustonTestStack(root, compose, command, errOut)
+}
+
+func houstonTestCommand(compose []byte) string {
+	var doc yaml.Node
+	if yaml.Unmarshal(compose, &doc) != nil || len(doc.Content) != 1 {
+		return ""
+	}
+	test := doc.Content[0]
+	for _, key := range []string{"x-houston", "commands", "test"} {
+		if test = value(test, key); test == nil {
+			return ""
+		}
+	}
+	if test.Kind != yaml.ScalarNode {
+		return ""
+	}
+	return test.Value
+}
+
+var (
+	goVetOrTest = regexp.MustCompile(`^\s*go (vet|test)\s`)
+	plainPkg    = regexp.MustCompile(`^[A-Za-z0-9._~+/-]+$`)
+)
+
+func narrowed(command string, pkgs []string) (string, bool) {
+	if slices.ContainsFunc(pkgs, func(p string) bool { return !plainPkg.MatchString(p) }) {
+		return "", false
+	}
+	const all = "./..."
+	parts := strings.Split(command, all)
+	if len(parts) < 2 {
+		return "", false
+	}
+	for i := range parts[:len(parts)-1] {
+		before := strings.Join(parts[:i+1], all)
+		after := parts[i+1]
+		segment := before[strings.LastIndexAny(before, "&|;\"'(\n")+1:]
+		if !goVetOrTest.MatchString(segment) || !strings.HasSuffix(before, " ") || after != "" && !strings.ContainsAny(after[:1], " \"';&|)\n") {
+			return "", false
+		}
+	}
+	return strings.Join(parts, strings.Join(pkgs, " ")), true
+}
+
+func runInHoustonTestStack(root string, compose []byte, command string, errOut io.Writer) error {
 	copied, err := featuresCompose(compose, command)
 	if err != nil {
 		return err

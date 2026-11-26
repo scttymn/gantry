@@ -120,11 +120,11 @@ func rank(r Role) int { return slices.Index(allRoles, r) }
 // line prefixed with VerifyJSONPrefix when GANTRY_VERIFY_JSON=1 (for
 // `bin/gantry verify --json`).
 type VerifyReport struct {
-	Passed         bool             `json:"passed"`
-	Failures       int              `json:"failures"`
-	Routes         int              `json:"routes"`
-	UnmappedRoutes []string         `json:"unmapped_routes"`
-	Features       []FeatureResult  `json:"features"`
+	Passed         bool            `json:"passed"`
+	Failures       int             `json:"failures"`
+	Routes         int             `json:"routes"`
+	UnmappedRoutes []string        `json:"unmapped_routes"`
+	Features       []FeatureResult `json:"features"`
 	// failures of features GANTRY_VERIFY_FEATURES left out, which have no
 	// entry in Features
 	Errors  []string         `json:"errors"`
