@@ -114,6 +114,16 @@ func TestLoadFailsRatherThanPlanNothing(t *testing.T) {
 			}
 		})
 	}
+	t.Run("with GOFLAGS set, in a repository git can't read", func(t *testing.T) {
+		root := tempModule(t, map[string]string{"cmd/m/main.go": "package main\n\nfunc main() {}\n"})
+		bin := t.TempDir()
+		write(t, bin, map[string]string{"git": "#!/bin/sh\necho 'fatal: detected dubious ownership' >&2\nexit 128\n"})
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+		t.Setenv("GOFLAGS", "-tags=nodynamic")
+		if _, err := Load(root); err != nil {
+			t.Errorf("Load: %v; listing packages needs no VCS stamp", err)
+		}
+	})
 	t.Run("a template's import that is", func(t *testing.T) {
 		root := tempModule(t, map[string]string{"cmd/gantry/templates/x.go.tmpl": "import \"example.com/m/a\"\n"})
 		in, err := Load(root)

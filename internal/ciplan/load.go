@@ -131,11 +131,11 @@ func listScripts(root string) ([]string, error) {
 func listPackages(root string) ([]Package, error) {
 	byPath := map[string]*Package{}
 	var order []string
-	for _, env := range [][]string{
-		{"CGO_ENABLED=0", "GOFLAGS="},
-		{"CGO_ENABLED=1", "GOFLAGS=-tags=" + pins.SQLiteTags},
+	for _, build := range []struct{ env, flags []string }{
+		{[]string{"CGO_ENABLED=0"}, nil},
+		{[]string{"CGO_ENABLED=1"}, []string{"-tags=" + pins.SQLiteTags}},
 	} {
-		out, err := command(root, env, "go", "list", "-json", "./...")
+		out, err := command(root, build.env, "go", slices.Concat([]string{"list", "-buildvcs=false", "-json"}, build.flags, []string{"./..."})...)
 		if err != nil {
 			return nil, err
 		}
@@ -190,7 +190,7 @@ func listBenchFeedImports(root, module string) ([]string, error) {
 	} else if err != nil {
 		return nil, err
 	}
-	out, err := command(dir, []string{"CGO_ENABLED=0", "GOFLAGS="}, "go", "list", "-f", `{{join .Deps "\n"}}`, "./...")
+	out, err := command(dir, []string{"CGO_ENABLED=0"}, "go", "list", "-buildvcs=false", "-f", `{{join .Deps "\n"}}`, "./...")
 	if err != nil {
 		return nil, err
 	}
