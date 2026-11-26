@@ -11,6 +11,14 @@
 // name, not the Go type, identifies it, so renaming code doesn't strand the
 // jobs queued. Defaults are Rails': no retries unless asked, three workers
 // a queue, finished jobs kept a day.
+//
+// A job runs at least once. When a process dies running jobs (a kill, the
+// OOM killer, a panic outside a job), another process puts them back once
+// the dead one has been silent for Dead. A job whose process died 3 times
+// fails instead ("its process died 3 times"), and its OnExhausted runs: a job
+// that kills its process can't take down one worker after another forever.
+// A crash counts against every job the dead process was running, and never
+// against Retry.Attempts.
 package jobs
 
 import (
@@ -43,11 +51,14 @@ type Options struct {
 	Poll time.Duration
 	// on shutdown, what running jobs get before their contexts end: 5 s
 	Grace time.Duration
-	// how often this process says it's alive: 60 s
+	// how often this process says it's alive: 60 s, and shorter than Dead
 	Heartbeat time.Duration
-	// a process silent this long crashed, and its jobs go back: 5 min
+	// a process silent this long crashed, and its jobs go back (or fail, the
+	// third time their process died): 5 min
 	Dead time.Duration
-	// how long finished jobs are kept: a day
+	// how long finished jobs are kept: a day. A recurring job's runs are
+	// remembered an hour past it, so a process stalled about Keep that
+	// ticks a run another process ran doesn't run it again.
 	Keep time.Duration
 }
 
@@ -60,9 +71,18 @@ type Queue struct {
 	defs  map[string]runner
 	recur []*recurring
 	wake  map[string]chan struct{}
+	runs  map[string]*tracker
 }
 
-// New is a queue set on d, its tables brought up to date.
+const (
+	maxCrashes = 3
+	tickMargin = time.Hour
+)
+
+var errCrashed = fmt.Errorf("its process died %d times", maxCrashes)
+
+// New is a queue set on d, its tables brought up to date. It refuses a
+// Heartbeat that isn't shorter than Dead.
 func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 	if o.Queues == nil {
 		o.Queues = map[string]int{"default": 3}
@@ -78,6 +98,9 @@ func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 			*p = v
 		}
 	}
+	if o.Heartbeat >= o.Dead {
+		return nil, fmt.Errorf("jobs: Heartbeat (%s) must be shorter than Dead (%s): a process would look dead between its beats, and its running jobs go to another", o.Heartbeat, o.Dead)
+	}
 	engine := "sqlite"
 	if d.Engine == db.Postgres {
 		engine = "postgres"
@@ -86,7 +109,7 @@ func New(ctx context.Context, d *db.DB, o Options) (*Queue, error) {
 	if err := d.Migrate(ctx, sub, "gantry_jobs_migrations"); err != nil {
 		return nil, err
 	}
-	q := &Queue{d: d, o: o, defs: map[string]runner{}, wake: map[string]chan struct{}{}}
+	q := &Queue{d: d, o: o, defs: map[string]runner{}, wake: map[string]chan struct{}{}, runs: map[string]*tracker{}}
 	for name := range o.Queues {
 		q.wake[name] = make(chan struct{}, 1)
 	}
@@ -148,7 +171,9 @@ type Opts[A any] struct {
 	// the job's context ends after it; none by default
 	Timeout time.Duration
 	Limit   *Limit[A]
-	// OnExhausted runs when the last attempt fails (Rails' retry_on block).
+	// OnExhausted runs when the last attempt fails (Rails' retry_on block),
+	// and when the job's process died 3 times running it: then in whichever
+	// process puts it away, and only if that process defines the job.
 	OnExhausted func(ctx context.Context, a A, err error)
 }
 
@@ -315,10 +340,10 @@ func (q *Queue) list(ctx context.Context, where string) ([]Entry, error) {
 	return out, rows.Err()
 }
 
-// Retry puts a failed job back in the queue, to run now with its attempts
-// counted afresh.
+// Retry puts a failed job back in the queue, to run now with its attempts,
+// and the times its process died, counted afresh.
 func (q *Queue) Retry(ctx context.Context, id int64) error {
-	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, error = '', finished_at = NULL, run_at = $1
+	res, err := q.d.Write.ExecContext(ctx, `UPDATE gantry_jobs SET state = 'ready', attempts = 0, crashes = 0, error = '', finished_at = NULL, run_at = $1, claimed_by = '', claimed_at = NULL
 		WHERE id = $2 AND state = 'failed'`, q.now(), id)
 	if err != nil {
 		return err
